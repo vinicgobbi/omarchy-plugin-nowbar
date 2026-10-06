@@ -1471,8 +1471,21 @@ Item {
     })
   }
 
+  // Asks the bar widget to show its options (IPC `settings`).
+  signal settingsRequested(string tab)
+
   IpcHandler {
     target: "nowbar"
+
+    // Open the popup on the options: settings [activities|look|timers|weather]
+    function settings(tab: string): string {
+      var t = String(tab || "")
+      if (t !== "" && ["activities", "look", "timers", "weather"].indexOf(t) === -1)
+        return "unknown tab: use activities, look, timers or weather"
+      root.settingsRequested(t)
+      if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
+      return "ok"
+    }
 
     function status(): string { return root.statusJson() }
     function next(): string { return root.step(1) ? "ok" : "empty" }

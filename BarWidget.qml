@@ -69,9 +69,24 @@ Panel {
     && (!focused.ambient || realCount > 0 || prefs.whenEmpty === "brief") ? focused : null
 
   property bool settingsOpen: false
+
+  // `nowbar settings` reaches every monitor's widget; only the one whose popup
+  // opens right after (or is already open) shows the options.
+  property double settingsRequestedAt: 0
+
+  Connections {
+    target: root.service
+    ignoreUnknownSignals: true
+    function onSettingsRequested(tab) {
+      if (tab !== "") settingsView.tab = tab
+      root.settingsRequestedAt = Date.now()
+      if (root.opened) root.settingsOpen = true
+    }
+  }
   onOpenedChanged: {
-    if (!opened) settingsOpen = false
-    else if (service) service.refreshWeatherIfStale()
+    if (!opened) { settingsOpen = false; return }
+    if (Date.now() - settingsRequestedAt < 2000) settingsOpen = true
+    if (service) service.refreshWeatherIfStale()
   }
 
   readonly property bool shown: realCount > 0 || prefs.whenEmpty !== "hide"
@@ -404,7 +419,8 @@ Panel {
         if (!root.settingsOpen && dx !== 0 && root.service) root.service.step(dx)
       }
       onTabRequested: function(direction) {
-        if (!root.settingsOpen && root.service) root.service.step(direction)
+        if (root.settingsOpen) settingsView.cycleTab(direction)
+        else if (root.service) root.service.step(direction)
       }
       onActivateRequested: {
         if (!root.settingsOpen && root.focused && root.service) root.service.primary(root.focused.id)
@@ -440,6 +456,8 @@ Panel {
           fontFamily: root.family
           onChanged: function(name, value) { root.setPref(name, value) }
           onResetRequested: root.resetPrefs()
+          // Each tab starts at its top.
+          onTabChanged: settingsFlick.contentY = 0
           weatherWidgetState: root.service ? root.service.weatherWidgetState : ""
           onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
           onBackRequested: root.settingsOpen = false
