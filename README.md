@@ -256,7 +256,7 @@ restart.
 omarchy plugin add https://github.com/vinicgobbi/omarchy-plugin-nowbar --enable
 ```
 
-The pill goes in the center of the bar by default. No step needs `sudo`,
+The pill goes on the left of the bar by default. No step needs `sudo`,
 polkit or the keyring.
 
 - **Camera detection** reads which of *your own* processes have
