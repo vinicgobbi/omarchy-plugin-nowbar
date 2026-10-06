@@ -142,6 +142,9 @@ Item {
   // don't fill the bar, but pausing from a card keeps the card to resume.
   property var playedKeys: ({})
   readonly property int maxPausedCards: 3
+  // Any app can register an MPRIS player (sandboxed ones too); a pile of fake
+  // "playing" players mustn't turn into a pile of cards.
+  readonly property int maxPlayingCards: 6
 
   function playerKey(p) {
     return p ? String(p.dbusName || p.desktopEntry || p.identity || "") : ""
@@ -193,6 +196,7 @@ Item {
       else if (!isProxy(p) && playedKeys[playerKey(p)] !== undefined) paused.push(p)
     }
     if (list.length === 0) list = proxies.slice(0, 1)
+    list = list.slice(0, maxPlayingCards)
     // Most recently played first.
     paused.sort(function(a, b) { return playedKeys[playerKey(b)] - playedKeys[playerKey(a)] })
     return list.concat(paused.slice(0, maxPausedCards))
@@ -281,7 +285,26 @@ Item {
     "  [ \"$size\" -le \"$4\" ] || exit 1",
     "  head -c \"$4\" -- \"$src\" > \"$tmp\" || exit 1",
     "else",
-    "  curl -fsS --proto =https --connect-timeout 3 --max-time 8 --max-filesize \"$4\" -- \"$1\" 2>/dev/null | head -c \"$4\" > \"$tmp\"",
+    // The URL passed safeArtUrl (https, a public-looking host), but a name
+    // can still resolve to this machine or the LAN. Resolve it once, refuse
+    // local addresses, and make curl connect to that address only, so a page
+    // playing audio can't send the shell's requests into the local network.
+    "  hp=${1#https://}; hp=${hp%%[/?#]*}; h=${hp%%:*}; p=443",
+    "  [ \"$hp\" != \"$h\" ] && p=${hp##*:}",
+    "  ip=$(getent ahostsv4 \"$h\" 2>/dev/null | awk '{ print $1; exit }')",
+    "  [ -n \"$ip\" ] || ip=$(getent ahostsv6 \"$h\" 2>/dev/null | awk '{ print $1; exit }')",
+    "  [ -n \"$ip\" ] || exit 1",
+    "  case \"$ip\" in",
+    "    *:*)",
+    // IPv6: global unicast (2000::/3) only, and not v4-mapped.
+    "      case \"$ip\" in [23]*:*) ;; *) exit 1 ;; esac",
+    "      pin=\"[$ip]\" ;;",
+    "    *)",
+    "      ok=$(printf '%s\\n' \"$ip\" | awk -F. 'NF == 4 { a = $1 + 0; b = $2 + 0; if (a == 0 || a == 10 || a == 127 || a >= 224 || (a == 169 && b == 254) || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || (a == 100 && b >= 64 && b <= 127) || (a == 198 && (b == 18 || b == 19))) print \"no\"; else print \"yes\" }')",
+    "      [ \"$ok\" = yes ] || exit 1",
+    "      pin=$ip ;;",
+    "  esac",
+    "  curl -fsS --proto =https --connect-timeout 3 --max-time 8 --max-filesize \"$4\" --resolve \"$h:$p:$pin\" -- \"$1\" 2>/dev/null | head -c \"$4\" > \"$tmp\"",
     "  [ -s \"$tmp\" ] || { rm -f -- \"$tmp\"; exit 1; }",
     "fi",
     // Only real PNG/JPEG/GIF/WebP, told apart by their first bytes, and
@@ -402,7 +425,7 @@ Item {
     accentProcess.command = ["sh", "-c",
       "sig=$(head -c 12 -- \"$1\" | od -An -tx1 | tr -d ' \\n'); "
       + "case \"$sig\" in 89504e470d0a1a0a*) f=png;; ffd8ff*) f=jpeg;; 474946383761*|474946383961*) f=gif;; 52494646????????57454250) f=webp;; *) exit 1;; esac; "
-      + "exec timeout 5 magick -limit area 64MB -limit memory 64MB -limit map 64MB \"$f:$1[0]\" -resize 64x64 -colors 12 -format %c histogram:info:-",
+      + "exec timeout 5 magick -limit area 64MB -limit memory 64MB -limit map 64MB \"$f:$1[0]\" -resize 64x64 -colors 12 -depth 8 -format %c histogram:info:-",
       "_", path]
     accentProcess.running = true
   }
