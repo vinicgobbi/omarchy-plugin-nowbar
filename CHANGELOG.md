@@ -1,3 +1,13 @@
+## v0.4.0 (2026-10-06)
+
+### Feat
+
+- aba Quick nas opções para configurar Quick toggles (mostrar, quais botões e trocar os indicadores do Omarchy) e Quick start (mostrar, timers, extras e Pomodoro); popup mostra só os itens escolhidos
+
+### Fix
+
+- **security**: aviso de câmera/microfone não pode ser escondido por IPC, gravação só conta a do próprio usuário, screenshots ignoram links simbólicos, título gigante de mídia é cortado antes de ser tratado, título do nowbar-run não vira opção da notificação, decodificador da capa fixado pelos bytes e Restore do clima preserva bindings.lua simbólico
+
 ## v0.3.0 (2026-10-06)
 
 ### Feat
