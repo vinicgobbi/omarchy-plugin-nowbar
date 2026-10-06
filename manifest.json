@@ -16,6 +16,9 @@
     "service": "Service.qml",
     "barWidget": "BarWidget.qml"
   },
+  "omarchy": {
+    "clonedFrom": "omarchy.media"
+  },
   "barWidget": {
     "displayName": "Now Bar",
     "description": "Pill with the current live activity: scroll to switch, left click for the details, middle click for the main action",

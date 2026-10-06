@@ -458,12 +458,195 @@ Item {
   function mediaAction(key, action) {
     var p = playerForKey(key)
     if (!p) return
+    preferredMediaKey = key
     if (action === "playPause") {
       if (p.canTogglePlaying) p.togglePlaying()
       else if (p.isPlaying && p.canPause) p.pause()
       else if (p.canPlay) p.play()
     } else if (action === "next" && p.canGoNext) p.next()
     else if (action === "previous" && p.canGoPrevious) p.previous()
+  }
+
+  // --- the "media" IPC target ---------------------------------------------------
+  // The Now Bar is a clone of omarchy.media (manifest), so the shell turns the
+  // built-in media service off and Omarchy's media keys
+  // (`omarchy-shell media playPause|next|previous`, `sourceSwitch` from
+  // omarchy-audio-source-switch) land here. Same methods and answers as
+  // omarchy.media / omarchy-plugin-media, plus the OSD on each action.
+
+  // The player the last media key or media card was about.
+  property string preferredMediaKey: ""
+
+  function canHandle(p, action) {
+    if (!p) return false
+    if (action === "next") return !!p.canGoNext
+    if (action === "previous") return !!p.canGoPrevious
+    if (action === "play") return !!(p.canPlay || p.canTogglePlaying)
+    if (action === "pause") return !!(p.canPause || p.canTogglePlaying)
+    if (action === "playPause") return !!(p.canTogglePlaying || p.canPlay || p.canPause)
+    return false
+  }
+
+  // Players a source switch cycles through: with a track, playing or able
+  // to play; real players before playerctld's proxy.
+  readonly property var cyclePlayers: {
+    var real = []
+    var proxies = []
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i]
+      if (!hasTrack(p) || !(p.isPlaying || p.canPlay || p.canTogglePlaying)) continue
+      (isProxy(p) ? proxies : real).push(p)
+    }
+    real.sort(function(a, b) { return playerKey(a).localeCompare(playerKey(b)) })
+    return real.concat(proxies)
+  }
+
+  // Which player a media key acts on.
+  function mediaKeyPlayer(action) {
+    var focusedPlayer = focused && focused.module === "media" ? playerForKey(focused.target) : null
+    var preferred = playerForKey(preferredMediaKey)
+    var playing = null
+    for (var i = 0; i < players.length && !playing; i++)
+      if (players[i].isPlaying && !isProxy(players[i])) playing = players[i]
+    for (var j = 0; j < players.length && !playing; j++)
+      if (players[j].isPlaying) playing = players[j]
+    // Pausing goes to what is playing: a paused card in focus shouldn't
+    // swallow the key while music goes on elsewhere.
+    if ((action === "pause" || action === "playPause") && playing) {
+      if (focusedPlayer && focusedPlayer.isPlaying) return focusedPlayer
+      if (preferred && preferred.isPlaying) return preferred
+      return playing
+    }
+    var order = [focusedPlayer, preferred, playing].concat(mediaPlayers).concat(cyclePlayers).concat(players)
+    for (var k = 0; k < order.length; k++) if (order[k] && hasTrack(order[k]) && canHandle(order[k], action)) return order[k]
+    for (var m = 0; m < order.length; m++) if (order[m] && canHandle(order[m], action)) return order[m]
+    return null
+  }
+
+  function trackSignature(p) {
+    return p ? [p.trackTitle || "", p.trackArtist || "", p.trackAlbum || ""].join("\u001f") : ""
+  }
+
+  function osdMessage(p, fallback) {
+    if (!p) return fallback
+    var title = Model.clean(p.trackTitle || p.identity || p.desktopEntry || "", 120)
+    var artist = Model.clean(p.trackArtist || "", 80)
+    return title && artist ? title + " - " + artist : (title || fallback)
+  }
+
+  function showOsd(label, icon, p) {
+    if (!shell) return
+    shell.summon("omarchy.osd", JSON.stringify({ icon: icon, message: osdMessage(p, label) }))
+  }
+
+  // After next/previous, wait for the new track before showing it.
+  property var pendingOsd: null
+
+  Timer {
+    id: osdWait
+    interval: 120
+    onTriggered: {
+      var w = root.pendingOsd
+      if (!w) return
+      var p = root.playerForKey(w.key)
+      if (!p || root.trackSignature(p) !== w.before || w.tries >= 10) {
+        root.pendingOsd = null
+        root.showOsd(w.label, w.icon, p)
+        return
+      }
+      w.tries += 1
+      osdWait.restart()
+    }
+  }
+
+  function runMediaKey(action, feedback) {
+    var p = mediaKeyPlayer(action)
+    if (!p || !canHandle(p, action)) return false
+    var before = trackSignature(p)
+    var label = "Play/pause"
+    var icon = "media"
+    if (action === "next") { p.next(); label = "Next"; icon = "media-next" }
+    else if (action === "previous") { p.previous(); label = "Previous"; icon = "media-previous" }
+    else if (action === "play") {
+      if (p.canPlay) p.play(); else p.togglePlaying()
+      label = "Play"; icon = "media-play"
+    } else if (action === "pause") {
+      if (p.canPause) p.pause(); else p.togglePlaying()
+      label = "Pause"; icon = "media-pause"
+    } else {
+      var wasPlaying = p.isPlaying
+      if (wasPlaying && p.canPause) p.pause()
+      else if (!wasPlaying && p.canPlay) p.play()
+      else p.togglePlaying()
+      label = wasPlaying ? "Pause" : "Play"
+      icon = wasPlaying ? "media-pause" : "media-play"
+    }
+    preferredMediaKey = playerKey(p)
+    root.now = Date.now()
+    if (feedback !== false) {
+      if (action === "next" || action === "previous") {
+        pendingOsd = { key: playerKey(p), before: before, label: label, icon: icon, tries: 0 }
+        osdWait.restart()
+      } else {
+        showOsd(label, icon, p)
+      }
+    }
+    return true
+  }
+
+  // Cycle which player the keys (and the pill) follow; with `transfer`, the
+  // one that was playing pauses and the next one plays.
+  function switchSource(delta, transfer) {
+    var list = cyclePlayers
+    if (list.length === 0) return false
+    var current = mediaKeyPlayer("playPause")
+    var index = 0
+    for (var i = 0; i < list.length; i++) if (playerKey(list[i]) === playerKey(current)) { index = i; break }
+    var next = list[((index + delta) % list.length + list.length) % list.length]
+    preferredMediaKey = playerKey(next)
+    if (transfer && current && current.isPlaying && next && playerKey(next) !== playerKey(current)) {
+      if (next.canPlay) next.play(); else if (next.canTogglePlaying && !next.isPlaying) next.togglePlaying()
+      if (current.canPause) current.pause(); else if (current.canTogglePlaying) current.togglePlaying()
+    }
+    // Follow it in the pill too, once its card is there.
+    var target = Model.mediaId(playerKey(next))
+    Qt.callLater(function() { root.focusOn(target) })
+    showOsd("Source", "media-source", next)
+    return true
+  }
+
+  function mediaStatusJson() {
+    var p = mediaKeyPlayer("playPause")
+    return JSON.stringify({
+      hasPlayer: p !== null,
+      hasMedia: !!(p && (p.trackTitle || p.trackArtist)),
+      playing: p ? !!p.isPlaying : false,
+      identity: p ? (p.identity || "") : "",
+      desktopEntry: p ? (p.desktopEntry || "") : "",
+      title: p ? (p.trackTitle || "") : "",
+      artist: p ? (p.trackArtist || "") : "",
+      album: p && p.trackAlbum ? p.trackAlbum : "",
+      artUrl: p && p.trackArtUrl ? p.trackArtUrl : "",
+      canGoNext: p ? !!p.canGoNext : false,
+      canGoPrevious: p ? !!p.canGoPrevious : false,
+      canTogglePlaying: p ? !!p.canTogglePlaying : false
+    })
+  }
+
+  IpcHandler {
+    target: "media"
+
+    function status(): string { return root.mediaStatusJson() }
+    function playPause(): string { return root.runMediaKey("playPause") ? "ok" : "unhandled" }
+    function next(): string { return root.runMediaKey("next") ? "ok" : "unhandled" }
+    function previous(): string { return root.runMediaKey("previous") ? "ok" : "unhandled" }
+    function play(): string { return root.runMediaKey("play") ? "ok" : "unhandled" }
+    function pause(): string { return root.runMediaKey("pause") ? "ok" : "unhandled" }
+    function sourceNext(): string { return root.switchSource(1, false) ? "ok" : "unhandled" }
+    function sourcePrevious(): string { return root.switchSource(-1, false) ? "ok" : "unhandled" }
+    function sourceSwitch(): string { return root.switchSource(1, true) ? "ok" : "unhandled" }
+    function sourceSwitchPrevious(): string { return root.switchSource(-1, true) ? "ok" : "unhandled" }
+    function ping(): string { return "ok" }
   }
 
   function findActivity(activityId) {
@@ -509,6 +692,33 @@ Item {
       onStreamFinished: root.reminders = Model.parseReminders(text)
     }
     onExited: function(exitCode) { if (exitCode !== 0) root.reminders = [] }
+  }
+
+  // omarchy-reminder creates (and clears) transient systemd user timers; their
+  // unit files show up here, so a new reminder appears at once instead of on
+  // the next poll. Needs inotifywait; the poll below covers the rest.
+  Process {
+    id: remindersWatch
+    command: ["sh", "-c",
+      "command -v inotifywait >/dev/null 2>&1 || exit 3; d=\"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/systemd/transient\"; "
+      + "[ -d \"$d\" ] || exit 4; exec setpriv --pdeathsig TERM inotifywait -mq -e create,delete,moved_to --format %f -- \"$d\""]
+    running: root.modules.reminders
+    stdout: SplitParser {
+      onRead: function(name) { if (String(name).indexOf("omarchy-reminder-") === 0) remindersDebounce.restart() }
+    }
+    onExited: function(exitCode) { if (exitCode !== 3 && root.modules.reminders) remindersWatchRetry.restart() }
+  }
+
+  Timer {
+    id: remindersDebounce
+    interval: 300
+    onTriggered: root.refreshReminders()
+  }
+
+  Timer {
+    id: remindersWatchRetry
+    interval: 60000
+    onTriggered: if (root.modules.reminders && !remindersWatch.running) remindersWatch.running = true
   }
 
   Timer {
