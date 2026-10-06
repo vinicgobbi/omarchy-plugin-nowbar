@@ -58,14 +58,18 @@ omarchy-shell nowbar status
   see `tests/`
 - `Service.qml` — reads every source (MPRIS, PipeWire, UPower,
   `omarchy-reminder`, `gpu-screen-recorder`, `omarchy-voxtype-status`,
-  `/dev/video*` users, the shell's DND/idle/night light IPC), keeps
-  the list of activities and the focus, saves the timer/stopwatch to
+  `/dev/video*` users, the shell's DND/idle/night light IPC, `nmcli` and
+  `tailscale`, Bluetooth, the screenshots folder, wttr.in and
+  `omarchy-update-available`), keeps
+  the list of activities and the focus, saves the timer/stopwatch/Pomodoro/sleep timer to
   `~/.local/state/vinicgobbi.nowbar/state.json`, and owns the `nowbar`
   IPC target
 - `BarWidget.qml` — the pill and the carousel popup. It follows the
   service, so every monitor shows the same activity, and hands the
   widget's settings to the service
 - `AdvancedSettings.qml` — the options view inside the popup
+- `bin/nowbar-run` — runs a command and shows it in the pill through
+  `omarchy-shell nowbar push` (payload built with `jq`)
 
 A third-party plugin can't read the shell's own services (`serviceFor`
 only returns the plugin's own), so everything is read directly. Every
