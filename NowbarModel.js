@@ -1362,6 +1362,7 @@ function defaultPrefs() {
     whenEmpty: "brief",     // "brief": weather/next reminder/updates; "icon": empty pill; "hide": no pill
     showProgress: true,     // thin progress line under the pill text
     showCount: true,        // "2/4" when there is more than one activity
+    showQuickToggles: true, // the popup's Quick toggles (DND, night light, stay awake...)
     coverAccent: true,      // media: accent color taken from the cover art
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
     maxWidth: 220,          // width of the text area: the pill always has this size

@@ -44,6 +44,7 @@
       "whenEmpty": "brief",
       "showProgress": true,
       "showCount": true,
+      "showQuickToggles": true,
       "textMode": "scroll",
       "maxWidth": 220,
       "timerPresets": "1,5,10,25",
@@ -179,6 +180,13 @@
         "key": "showCount",
         "type": "boolean",
         "label": "Position (2/4)",
+        "defaultValue": true
+      },
+      {
+        "key": "showQuickToggles",
+        "type": "boolean",
+        "label": "Quick toggles",
+        "description": "Do Not Disturb, night light, stay awake, screen recording, reminder and dictation buttons in the popup.",
         "defaultValue": true
       },
       {

@@ -996,6 +996,128 @@ Item {
     modesFollowUp.restart()
   }
 
+  // --- quick toggles: what Omarchy's indicators do, both ways -------------------------
+  // The indicators widget turns things on as well as off; so do these (the
+  // popup's Quick toggles, and IPC `quick <id>`).
+
+  property bool hasVoxtype: false
+
+  Process {
+    id: voxtypeCheck
+    command: ["sh", "-c", "command -v voxtype >/dev/null 2>&1"]
+    onExited: function(exitCode) { root.hasVoxtype = exitCode === 0 }
+  }
+
+  readonly property var quickIds: ["dnd", "nightlight", "stayAwake", "record", "reminder", "dictation"]
+
+  // Whether each toggle is on right now.
+  readonly property var quickStates: ({
+    dnd: modesState.dnd === true,
+    nightlight: modesState.nightlight === true,
+    stayAwake: modesState.stayAwake === true,
+    record: recording.active === true,
+    reminder: reminders.length > 0,
+    dictation: dictationState !== "idle"
+  })
+
+  // Returns true when it opened something else (a menu, a panel), so the
+  // popup can step aside.
+  function quickToggle(id) {
+    if (id === "dnd") Quickshell.execDetached(["omarchy-shell", "-q", "notifications", "toggleDnd"])
+    else if (id === "nightlight") Quickshell.execDetached(["omarchy-shell", "-q", "nightlight", "toggle"])
+    else if (id === "stayAwake") Quickshell.execDetached(["omarchy-toggle-idle", "toggle"])
+    else if (id === "record") {
+      if (recording.active) {
+        Quickshell.execDetached(["omarchy-capture-screenrecording", "--stop-recording"])
+        recordingFollowUp.restart()
+        return false
+      }
+      Quickshell.execDetached(["omarchy-menu", "toggle", "trigger.capture.screenrecord"])
+      return true
+    } else if (id === "reminder") {
+      Quickshell.execDetached(["omarchy-reminder", "-i"])
+      return true
+    } else if (id === "dictation") {
+      Quickshell.execDetached(["omarchy-voxtype-config"])
+      return true
+    } else return false
+    modesFollowUp.restart()
+    return false
+  }
+
+  // --- replacing Omarchy's indicators widget (opt-in, from a button) -----------------
+  // The Now Bar shows everything the indicators show, and the Quick toggles
+  // turn them on. With the widget off, the Now Bar also answers its
+  // `omarchy.indicators refresh` IPC (called by omarchy-reminder and the
+  // screen recorder), so those show up at once.
+
+  // bin/nowbar-indicators turns the widget off (remembering its place in the
+  // bar) or back on where it was.
+  readonly property string indicatorsScript: decodeURIComponent(String(Qt.resolvedUrl("bin/nowbar-indicators")).replace(/^file:\/\//, ""))
+  // "replaced" (the widget is off), "native", or "" before the first check.
+  property string indicatorsState: ""
+  property string indicatorsAction: ""
+
+  function checkIndicators() {
+    if (indicatorsProcess.running) return
+    indicatorsAction = "status"
+    indicatorsProcess.command = [indicatorsScript, "status"]
+    indicatorsProcess.running = true
+  }
+
+  function setIndicators(replace) {
+    if (indicatorsProcess.running) return false
+    indicatorsAction = replace ? "replace" : "restore"
+    indicatorsProcess.command = [indicatorsScript, indicatorsAction]
+    indicatorsProcess.running = true
+    return true
+  }
+
+  Process {
+    id: indicatorsProcess
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var t = String(text || "").trim()
+        if (root.indicatorsAction !== "status") return
+        if (t === "native" || t === "replaced") root.indicatorsState = t
+        // `omarchy plugin list` asks the shell over IPC, which doesn't answer
+        // yet while the shell is starting: try again in a moment.
+        else if (root.indicatorsState === "") indicatorsRetry.restart()
+      }
+    }
+    onExited: function(exitCode) {
+      var action = root.indicatorsAction
+      root.indicatorsAction = ""
+      if (action === "status") return
+      if (exitCode !== 0) root.notify("\u{f009b}", "Indicators", "Couldn't " + action + " them (exit " + exitCode + ")")
+      else if (action === "replace") root.notify("\u{f009b}", "Indicators are in the Now Bar now", "Omarchy's indicators widget is off; Quick toggles are in the Now Bar popup")
+      else root.notify("\u{f009b}", "Indicators restored", "Omarchy's indicators widget is back in the bar")
+      root.checkIndicators()
+    }
+  }
+
+  Timer {
+    id: indicatorsRetry
+    interval: 3000
+    onTriggered: root.checkIndicators()
+  }
+
+  function refreshAll() {
+    refreshReminders()
+    refreshRecording()
+    refreshModes()
+    refreshCamera()
+  }
+
+  // Only while the indicators widget is off: two handlers can't share a target.
+  IpcHandler {
+    target: "omarchy.indicators"
+    enabled: root.indicatorsState === "replaced"
+
+    function refresh(): void { root.refreshAll() }
+  }
+
   // --- charging (UPower) -----------------------------------------------------------
 
   readonly property var chargingInfo: {
@@ -1447,6 +1569,8 @@ Item {
   Component.onCompleted: {
     stateDirProcess.running = true
     checkWeatherWidget()
+    checkIndicators()
+    voxtypeCheck.running = true
     syncLastPlaying()
     initArtCache()
   }
@@ -1508,6 +1632,12 @@ Item {
     }
     function stopwatch(): string { root.startStopwatch(); return "ok" }
     function pomodoro(): string { root.startPomodoro(); return "ok" }
+    // Same as the Quick toggles: dnd, nightlight, stayAwake, record, reminder, dictation.
+    function quick(id: string): string {
+      if (root.quickIds.indexOf(String(id)) === -1) return "unknown: use " + root.quickIds.join(", ")
+      root.quickToggle(String(id))
+      return "ok"
+    }
     // Open the popup on the weather card (Omarchy's weather shortcut can
     // point here once the weather widget is off).
     function weather(): string {

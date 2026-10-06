@@ -244,6 +244,8 @@ test("prefs normalize and store only non-defaults", () => {
   assert.equal(p.modules.media, true)
   assert.equal(p.whenEmpty, "brief")
   assert.equal(p.weatherUnit, "auto")
+  assert.equal(p.showQuickToggles, true)
+  assert.equal(M.normalizePrefs({ showQuickToggles: false }).showQuickToggles, false)
   assert.equal(p.modules.weather, true)
   assert.equal(M.normalizePrefs({ whenEmpty: "icon" }).whenEmpty, "icon")
   assert.equal(p.textMode, "scroll")

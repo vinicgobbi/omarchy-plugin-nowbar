@@ -459,6 +459,8 @@ Panel {
           // Each tab starts at its top.
           onTabChanged: settingsFlick.contentY = 0
           weatherWidgetState: root.service ? root.service.weatherWidgetState : ""
+          indicatorsState: root.service ? root.service.indicatorsState : ""
+          onIndicatorsRequested: function(replace) { if (root.service) root.service.setIndicators(replace) }
           onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
           onBackRequested: root.settingsOpen = false
         }
@@ -865,6 +867,63 @@ Panel {
         }
 
         PanelSeparator { foreground: root.popupFg }
+
+        // Everything Omarchy's indicators widget does, both ways: lit when on.
+        PanelSectionHeader {
+          text: "QUICK TOGGLES"
+          foreground: root.popupFg
+          fontFamily: root.family
+          visible: root.prefs.showQuickToggles
+        }
+
+        Flow {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.prefs.showQuickToggles
+
+          Repeater {
+            model: [
+              { id: "dnd", icon: "\u{f009b}", label: "DND", tip: "Do Not Disturb" },
+              { id: "nightlight", icon: "\u{f050e}", label: "Night", tip: "Night light" },
+              { id: "stayAwake", icon: "\u{f0176}", label: "Awake", tip: "Stay awake (no idle lock or screensaver)" },
+              { id: "record", icon: "\u{f0ec2}", label: "Record", tip: "Screen recording: start (opens the menu) or stop" },
+              { id: "reminder", icon: "\u{f088c}", label: "Remind", tip: "Set a reminder" },
+              { id: "dictation", icon: "\u{f036c}", label: "Dictate", tip: "Dictation (voxtype) settings" }
+            ]
+
+            Button {
+              required property var modelData
+              readonly property bool on: root.service !== null && root.service.quickStates[modelData.id] === true
+              visible: modelData.id !== "dictation" || (root.service !== null && root.service.hasVoxtype)
+              iconText: modelData.icon
+              text: modelData.label
+              foreground: root.popupFg
+              accent: modelData.id === "record" && on ? Color.urgent : Color.accent
+              selected: on
+              tooltipText: modelData.tip + (on ? " (on)" : "")
+              onClicked: {
+                if (!root.service) return
+                // Recording, reminders and dictation open their own UI.
+                if (root.service.quickToggle(modelData.id)) root.close()
+              }
+            }
+          }
+        }
+
+        // One click to take over from Omarchy's indicators widget (opt-in).
+        Button {
+          visible: root.prefs.showQuickToggles && root.service !== null && root.service.indicatorsState === "native"
+          iconText: "\u{f009b}"
+          text: "Use instead of Omarchy's indicators"
+          foreground: Qt.darker(root.popupFg, 1.2)
+          tooltipText: "Turns Omarchy's indicators widget off; these toggles do the same (undo in the options)"
+          onClicked: root.service.setIndicators(true)
+        }
+
+        PanelSeparator {
+          foreground: root.popupFg
+          visible: root.prefs.showQuickToggles
+        }
 
         PanelSectionHeader {
           text: "QUICK START"

@@ -41,9 +41,11 @@ Column {
   // "replaced" / "native" / "" (unknown) — see bin/nowbar-weather-widget and
   // Service.qml's setIndicators.
   property string weatherWidgetState: ""
+  property string indicatorsState: ""
 
   signal changed(string name, var value)
   signal weatherWidgetRequested(bool replace)
+  signal indicatorsRequested(bool replace)
   signal resetRequested()
   signal backRequested()
 
@@ -343,6 +345,20 @@ Column {
       label: "Focus new activities"
       hint: "Something that just started takes the pill, unless you switched by hand a moment ago."
     }
+
+    Section { text: "OMARCHY'S INDICATORS" }
+
+    WidgetSwap {
+      swapState: root.indicatorsState
+      glyph: "\u{f009b}"
+      replacedTitle: "Replaced by the Now Bar"
+      nativeTitle: "Omarchy's indicators are in use"
+      replacedText: "The indicators widget is off. Its toggles are the popup's Quick toggles, and what's on shows up as activities. Restore puts the widget back."
+      nativeText: "The Now Bar shows everything the indicators show (recording, dictation, reminders, Do Not Disturb, night light, stay awake) and its Quick toggles turn them on. Replace turns the indicators widget off."
+      replaceLabel: "Replace the indicators"
+      restoreLabel: "Restore Omarchy's indicators"
+      onRequested: function(replace) { root.indicatorsRequested(replace) }
+    }
   }
 
   // --- Look ------------------------------------------------------------------------
@@ -386,6 +402,11 @@ Column {
 
     SwitchOption { key: "showProgress"; label: "Progress line" }
     SwitchOption { key: "showCount"; label: "Position (2/4)" }
+    SwitchOption {
+      key: "showQuickToggles"
+      label: "Quick toggles"
+      hint: "DND, night light, stay awake, recording, reminder and dictation buttons in the popup."
+    }
 
     Option {
       label: "When idle"
