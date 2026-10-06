@@ -71,10 +71,14 @@ omarchy-shell nowbar status
   `NowbarModel.parseWttr`)
 - `AdvancedSettings.qml` — the options view inside the popup
 - `bin/nowbar-weather-widget` — `replace` / `restore` / `status`: turns
-  `omarchy.weather` off (or back on) and adds (or removes) a marked block in
+  `omarchy.weather` off (or back on, where it was) and adds (or removes) a marked block in
   `~/.config/hypr/bindings.lua` pointing SUPER+CTRL+ALT+W at
   `omarchy-shell nowbar weather`; run only from the options/weather card
   buttons or by hand
+- `bin/nowbar-indicators` — `replace` / `restore` / `status`: turns
+  `omarchy.indicators` off (remembering its place in the bar) or back on
+  where it was. `Service.qml` answers `omarchy.indicators refresh` only
+  while that widget is off (two handlers can't share an IPC target)
 - `bin/nowbar-run` — runs a command and shows it in the pill through
   `omarchy-shell nowbar push` (payload built with `jq`)
 

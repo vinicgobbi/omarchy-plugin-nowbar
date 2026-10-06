@@ -16,6 +16,9 @@ activities and click it to see the details and controls.
 - **New activities take the pill** when they matter more than the current one
   (camera on, recording started...). Switching by hand pauses this for a few
   seconds.
+- **Quick toggles:** everything Omarchy's indicators widget does, on and off:
+  Do Not Disturb, night light, stay awake, screen recording, reminder and
+  dictation. It can replace that widget.
 - **Quick start:** timers (1, 5, 10 and 25 minutes by default, configurable),
   stopwatch, Pomodoro and a 30 minute sleep timer, one click away in the popup.
 - **Weather card** (the Now Brief): current conditions, the next hours and 3
@@ -96,9 +99,11 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `stopwatch`               | Start the stopwatch                                             |
 | `pomodoro`                | Start a Pomodoro                                                |
 | `weather`                 | Open the popup on the weather card                              |
+| `quick <id>`              | A Quick toggle: `dnd`, `nightlight`, `stayAwake`, `record`, `reminder`, `dictation` |
 | `sleep <duration>`        | Pause the media after `30` (minutes), `1h`, or at `23:00`       |
 | `push <id> <json>`        | Add or update an activity from a script                         |
 | `remove <id>`             | Remove a pushed activity                                        |
+| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `timers`, `weather`) |
 | `status`                  | JSON with the activities, the focused one, the cover color and the brief |
 
 Keyboard shortcuts go in `~/.config/hypr/bindings.lua`. These keys are free
@@ -132,7 +137,7 @@ To use it in place of Omarchy's weather widget, click **Use instead of the
 weather widget** on the weather card (or **Replace** next to "Weather widget"
 in the options). That turns `omarchy.weather` off and points Omarchy's weather
 shortcut, SUPER+CTRL+ALT+W, at the weather card. **Restore**, in the same
-place, undoes both.
+place, undoes both and puts the widget back where it was in the bar.
 
 > **This edits your config:** the shortcut goes in
 > `~/.config/hypr/bindings.lua`, inside a block marked
@@ -143,6 +148,34 @@ place, undoes both.
 
 ```bash
 ~/.config/omarchy/plugins/vinicgobbi.nowbar/bin/nowbar-weather-widget replace   # or restore, status
+```
+
+## Indicators
+
+The Now Bar does what Omarchy's indicators widget does. What is on shows up
+as an activity (recording, dictation, reminders; Do Not Disturb, night light
+and stay awake in the Modes card), and the popup's **Quick toggles** turn each
+one on or off:
+
+| Toggle  | On                                     | Off                     |
+| ------- | -------------------------------------- | ----------------------- |
+| DND     | Silences notifications                 | Allows them again       |
+| Night   | Night light                            | Day light               |
+| Awake   | No idle lock or screensaver            | Normal idle             |
+| Record  | Opens Omarchy's screen recording menu  | Stops the recording     |
+| Remind  | Opens Omarchy's reminder panel         |                         |
+| Dictate | Opens voxtype's settings (if installed)|                         |
+
+To use it in place of the indicators widget, click **Use instead of Omarchy's
+indicators** under the Quick toggles (or **Replace the indicators** in the
+options, Activities tab). That turns `omarchy.indicators` off; its place in
+the bar is remembered, and **Restore** puts it back there. With the widget
+off, the Now Bar also answers `omarchy-shell omarchy.indicators refresh`
+(called by `omarchy-reminder` and the screen recorder), so those show up at
+once. Nothing here needs `sudo`. From a terminal:
+
+```bash
+~/.config/omarchy/plugins/vinicgobbi.nowbar/bin/nowbar-indicators replace   # or restore, status
 ```
 
 ## Media keys
@@ -254,23 +287,23 @@ polkit or the keyring.
 
 ## Options
 
-Use the gear in the popup (or `c`), or the widget's settings. You can:
+The gear in the popup (or `c`, or `omarchy-shell nowbar settings`) opens the
+options, one tab at a time (Tab / Shift+Tab to switch):
 
-- switch each activity type on or off;
-- turn off "focus new activities";
-- turn off "dynamic colors": weather takes the sky's color, and media takes
-  its colors from the album cover (the highlight is the most vivid color that
-  covers a good part of it; the popup gets it on its border, and a tint of the
-  cover's main color as its background; both stay readable, and
-  black/white/gray covers keep the theme's colors);
-- hide the progress line or the `2/4` marker;
-- choose what the pill shows when nothing is going on: the weather card
-  (Brief, default), an empty pill, or no pill;
-- choose °C, °F or automatic for the weather;
-- set the quick start timers (minutes, comma separated) and the Pomodoro
-  focus, break and long break lengths;
-- set the pill's text width: the pill always keeps the same size, and text
-  that doesn't fit either scrolls around (default) or is cut with "…".
+- **Activities:** which activities can show up (live ones: media, timers,
+  reminders, recording, dictation, camera/mic; system ones: modes and VPN,
+  battery, Bluetooth, screenshots, weather, scripts), whether a new activity
+  takes the pill, and replacing (or restoring) Omarchy's indicators widget.
+- **Look:** the pill's text width, scrolling or cutting long text, the
+  progress line, the `2/4` marker, the Quick toggles, what it shows when idle (the weather card,
+  an empty pill, or nothing), and the dynamic colors (media from the album
+  cover, weather from the sky).
+- **Timers:** the Quick start timers (minutes, comma separated) and the
+  Pomodoro focus, break and long break lengths.
+- **Weather:** °C, °F or automatic, and replacing (or restoring) Omarchy's
+  weather widget.
+
+The same options are in the widget's settings. **Reset** restores them all.
 
 ## License
 
