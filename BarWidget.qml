@@ -70,6 +70,11 @@ Panel {
 
   property bool settingsOpen: false
 
+  // What the bottom of the popup shows (Quick tab of the options).
+  readonly property bool quickTogglesShown: prefs.showQuickToggles && prefs.quickToggles.length > 0
+  readonly property bool quickStartShown: prefs.showQuickStart && prefs.moduleTimer
+    && (presets.length > 0 || prefs.quickStartExtras.length > 0)
+
   // `nowbar settings` reaches every monitor's widget; only the one whose popup
   // opens right after (or is already open) shows the options.
   property double settingsRequestedAt: 0
@@ -438,11 +443,11 @@ Panel {
       onTextKey: function(t) {
         if (t === "q" || t === "Q") { if (root.settingsOpen) root.settingsOpen = false; else root.close(); return }
         if (t === "c" || t === "C") { root.settingsOpen = !root.settingsOpen; return }
-        if (root.settingsOpen || !root.service) return
+        if (root.settingsOpen || !root.service || !root.quickStartShown) return
         var n = parseInt(t, 10)
         if (n >= 1 && n <= root.presets.length) root.service.startTimer(root.presets[n - 1])
-        else if (t === "s" || t === "S") root.service.startStopwatch()
-        else if (t === "p" || t === "P") root.service.startPomodoro()
+        else if ((t === "s" || t === "S") && root.prefs.quickStartExtras.indexOf("stopwatch") !== -1) root.service.startStopwatch()
+        else if ((t === "p" || t === "P") && root.prefs.quickStartExtras.indexOf("pomodoro") !== -1) root.service.startPomodoro()
       }
 
       Flickable {
@@ -879,13 +884,13 @@ Panel {
           text: "QUICK TOGGLES"
           foreground: root.popupFg
           fontFamily: root.family
-          visible: root.prefs.showQuickToggles
+          visible: root.quickTogglesShown
         }
 
         Flow {
           width: parent.width
           spacing: Style.space(6)
-          visible: root.prefs.showQuickToggles
+          visible: root.quickTogglesShown
 
           Repeater {
             model: [
@@ -900,7 +905,8 @@ Panel {
             Button {
               required property var modelData
               readonly property bool on: root.service !== null && root.service.quickStates[modelData.id] === true
-              visible: modelData.id !== "dictation" || (root.service !== null && root.service.hasVoxtype)
+              visible: root.prefs.quickToggles.indexOf(modelData.id) !== -1
+                && (modelData.id !== "dictation" || (root.service !== null && root.service.hasVoxtype))
               iconText: modelData.icon
               text: modelData.label
               foreground: root.popupFg
@@ -918,7 +924,7 @@ Panel {
 
         // One click to take over from Omarchy's indicators widget (opt-in).
         Button {
-          visible: root.prefs.showQuickToggles && root.service !== null && root.service.indicatorsState === "native"
+          visible: root.quickTogglesShown && root.service !== null && root.service.indicatorsState === "native"
           iconText: "\u{f009b}"
           text: "Use instead of Omarchy's indicators"
           foreground: Qt.darker(root.popupFg, 1.2)
@@ -928,20 +934,20 @@ Panel {
 
         PanelSeparator {
           foreground: root.popupFg
-          visible: root.prefs.showQuickToggles
+          visible: root.quickTogglesShown && root.quickStartShown
         }
 
         PanelSectionHeader {
           text: "QUICK START"
           foreground: root.popupFg
           fontFamily: root.family
-          visible: root.prefs.moduleTimer
+          visible: root.quickStartShown
         }
 
         Flow {
           width: parent.width
           spacing: Style.space(6)
-          visible: root.prefs.moduleTimer
+          visible: root.quickStartShown
 
           Repeater {
             model: root.presets
@@ -958,6 +964,7 @@ Panel {
           }
 
           Button {
+            visible: root.prefs.quickStartExtras.indexOf("stopwatch") !== -1
             iconText: "\u{f520}"
             text: "Stopwatch"
             foreground: root.popupFg
@@ -966,6 +973,7 @@ Panel {
           }
 
           Button {
+            visible: root.prefs.quickStartExtras.indexOf("pomodoro") !== -1
             iconText: "\u{f04fe}"
             text: "Pomodoro"
             foreground: root.popupFg
@@ -974,7 +982,7 @@ Panel {
           }
 
           Button {
-            visible: root.prefs.moduleMedia
+            visible: root.prefs.moduleMedia && root.prefs.quickStartExtras.indexOf("sleep") !== -1
             iconText: "\u{f04b2}"
             text: "Sleep 30 min"
             foreground: root.popupFg

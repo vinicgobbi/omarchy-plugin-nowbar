@@ -45,6 +45,9 @@
       "showProgress": true,
       "showCount": true,
       "showQuickToggles": true,
+      "quickToggleItems": "dnd,nightlight,stayAwake,record,reminder,dictation",
+      "showQuickStart": true,
+      "quickStartItems": "stopwatch,pomodoro,sleep",
       "textMode": "scroll",
       "maxWidth": 220,
       "timerPresets": "1,5,10,25",
@@ -188,6 +191,27 @@
         "label": "Quick toggles",
         "description": "Do Not Disturb, night light, stay awake, screen recording, reminder and dictation buttons in the popup.",
         "defaultValue": true
+      },
+      {
+        "key": "quickToggleItems",
+        "type": "string",
+        "label": "Quick toggles shown",
+        "description": "Comma separated: dnd, nightlight, stayAwake, record, reminder, dictation. Empty: none.",
+        "defaultValue": "dnd,nightlight,stayAwake,record,reminder,dictation"
+      },
+      {
+        "key": "showQuickStart",
+        "type": "boolean",
+        "label": "Quick start",
+        "description": "Timers, stopwatch, Pomodoro and the media sleep timer in the popup.",
+        "defaultValue": true
+      },
+      {
+        "key": "quickStartItems",
+        "type": "string",
+        "label": "Quick start extras",
+        "description": "Comma separated: stopwatch, pomodoro, sleep. Empty: none.",
+        "defaultValue": "stopwatch,pomodoro,sleep"
       },
       {
         "key": "textMode",

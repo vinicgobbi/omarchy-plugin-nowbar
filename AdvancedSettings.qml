@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Ui
 import qs.Commons
+import "NowbarModel.js" as Model
 
 // Options view shown inside the popup (gear button or "c"). It only reads the
 // preferences it is given and reports changes upward; BarWidget.qml stores
@@ -10,7 +11,8 @@ import qs.Commons
 // One tab at a time, so it stays short:
 //   Activities  what can show up, and whether new ones take the pill
 //   Look        what the pill shows and the dynamic colors
-//   Timers      quick start timers and the Pomodoro lengths
+//   Quick       the popup's Quick toggles and Quick start (and Omarchy's
+//               indicators widget, which the Quick toggles replace)
 //   Weather     temperature unit and taking over Omarchy's weather widget
 Column {
   id: root
@@ -19,12 +21,12 @@ Column {
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
 
-  // "activities" | "look" | "timers" | "weather"
+  // "activities" | "look" | "quick" | "weather"
   property string tab: "activities"
   readonly property var tabs: [
     { value: "activities", label: "Activities" },
     { value: "look", label: "Look" },
-    { value: "timers", label: "Timers" },
+    { value: "quick", label: "Quick" },
     { value: "weather", label: "Weather" }
   ]
 
@@ -153,6 +155,60 @@ Column {
       foreground: root.foreground
       checked: root.prefs[cell.key] === true
       onToggled: root.changed(cell.key, !checked)
+    }
+  }
+
+  // Half-width "glyph Name [switch]" cell for one item of a list preference
+  // ("a,b,c" in settings, like quickToggleItems).
+  component ListCell: Item {
+    id: lc
+    property string label: ""
+    property string glyph: ""
+    property string listKey: ""       // the setting, e.g. "quickToggleItems"
+    property var list: []             // its parsed value (prefs.quickToggles...)
+    property var allowed: []          // every id, in order
+    property string itemId: ""
+    property bool active: true        // the section itself is shown
+    readonly property bool on: list.indexOf(itemId) !== -1
+
+    width: parent ? (parent.width - parent.columnSpacing) / 2 : 0
+    height: Math.max(lcLabel.implicitHeight, lcSwitch.implicitHeight)
+    opacity: active ? 1 : 0.45
+
+    Text {
+      id: lcGlyph
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(20)
+      textFormat: Text.PlainText
+      text: lc.glyph
+      color: lc.on ? root.foreground : Qt.darker(root.foreground, 1.8)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+    }
+
+    Text {
+      id: lcLabel
+      textFormat: Text.PlainText
+      anchors.left: lcGlyph.right
+      anchors.right: lcSwitch.left
+      anchors.rightMargin: Style.space(6)
+      anchors.verticalCenter: parent.verticalCenter
+      text: lc.label
+      color: lc.on ? root.foreground : Qt.darker(root.foreground, 1.5)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      elide: Text.ElideRight
+    }
+
+    ToggleSwitch {
+      id: lcSwitch
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      foreground: root.foreground
+      interactive: lc.active
+      checked: lc.on
+      onToggled: root.changed(lc.listKey, Model.toggleIdList(lc.list, lc.allowed, lc.itemId, !checked))
     }
   }
 
@@ -345,20 +401,6 @@ Column {
       label: "Focus new activities"
       hint: "Something that just started takes the pill, unless you switched by hand a moment ago."
     }
-
-    Section { text: "OMARCHY'S INDICATORS" }
-
-    WidgetSwap {
-      swapState: root.indicatorsState
-      glyph: "\u{f009b}"
-      replacedTitle: "Replaced by the Now Bar"
-      nativeTitle: "Omarchy's indicators are in use"
-      replacedText: "The indicators widget is off. Its toggles are the popup's Quick toggles, and what's on shows up as activities. Restore puts the widget back."
-      nativeText: "The Now Bar shows everything the indicators show (recording, dictation, reminders, Do Not Disturb, night light, stay awake) and its Quick toggles turn them on. Replace turns the indicators widget off."
-      replaceLabel: "Replace the indicators"
-      restoreLabel: "Restore Omarchy's indicators"
-      onRequested: function(replace) { root.indicatorsRequested(replace) }
-    }
   }
 
   // --- Look ------------------------------------------------------------------------
@@ -402,11 +444,6 @@ Column {
 
     SwitchOption { key: "showProgress"; label: "Progress line" }
     SwitchOption { key: "showCount"; label: "Position (2/4)" }
-    SwitchOption {
-      key: "showQuickToggles"
-      label: "Quick toggles"
-      hint: "DND, night light, stay awake, recording, reminder and dictation buttons in the popup."
-    }
 
     Option {
       label: "When idle"
@@ -433,29 +470,85 @@ Column {
     }
   }
 
-  // --- Timers ----------------------------------------------------------------------
+  // --- Quick -------------------------------------------------------------------------
 
   Column {
     width: parent.width
     spacing: Style.space(10)
-    visible: root.tab === "timers"
+    visible: root.tab === "quick"
 
-    Intro { text: "The Quick start buttons in the popup (keys 1–6, s for the stopwatch, p for a Pomodoro)." }
+    Intro { text: "The two rows at the bottom of the popup. Keys there: 1\u20136 start a timer, s the stopwatch, p a Pomodoro." }
+
+    Section { text: "QUICK TOGGLES" }
+
+    SwitchOption {
+      key: "showQuickToggles"
+      label: "Show Quick toggles"
+      hint: "Turn things on and off, like Omarchy's indicators."
+    }
+
+    Grid {
+      width: parent.width
+      columns: 2
+      columnSpacing: Style.space(16)
+      rowSpacing: Style.space(8)
+
+      ListCell { glyph: "\u{f009b}"; label: "DND"; itemId: "dnd"; listKey: "quickToggleItems"; list: root.prefs.quickToggles; allowed: Model.QUICK_TOGGLES; active: root.prefs.showQuickToggles }
+      ListCell { glyph: "\u{f050e}"; label: "Night"; itemId: "nightlight"; listKey: "quickToggleItems"; list: root.prefs.quickToggles; allowed: Model.QUICK_TOGGLES; active: root.prefs.showQuickToggles }
+      ListCell { glyph: "\u{f0176}"; label: "Stay awake"; itemId: "stayAwake"; listKey: "quickToggleItems"; list: root.prefs.quickToggles; allowed: Model.QUICK_TOGGLES; active: root.prefs.showQuickToggles }
+      ListCell { glyph: "\u{f0ec2}"; label: "Record"; itemId: "record"; listKey: "quickToggleItems"; list: root.prefs.quickToggles; allowed: Model.QUICK_TOGGLES; active: root.prefs.showQuickToggles }
+      ListCell { glyph: "\u{f088c}"; label: "Reminder"; itemId: "reminder"; listKey: "quickToggleItems"; list: root.prefs.quickToggles; allowed: Model.QUICK_TOGGLES; active: root.prefs.showQuickToggles }
+      ListCell { glyph: "\u{f036c}"; label: "Dictation"; itemId: "dictation"; listKey: "quickToggleItems"; list: root.prefs.quickToggles; allowed: Model.QUICK_TOGGLES; active: root.prefs.showQuickToggles }
+    }
+
+    WidgetSwap {
+      swapState: root.indicatorsState
+      glyph: "\u{f009b}"
+      replacedTitle: "Indicators replaced by the Now Bar"
+      nativeTitle: "Omarchy's indicators are in use"
+      replacedText: "The indicators widget is off. Its toggles are these Quick toggles, and what's on shows up as activities. Restore puts the widget back where it was."
+      nativeText: "The Now Bar shows everything the indicators show (recording, dictation, reminders, Do Not Disturb, night light, stay awake) and these Quick toggles turn them on. Replace turns the indicators widget off."
+      replaceLabel: "Replace the indicators"
+      restoreLabel: "Restore Omarchy's indicators"
+      onRequested: function(replace) { root.indicatorsRequested(replace) }
+    }
+
+    PanelSeparator { foreground: root.foreground }
 
     Section { text: "QUICK START" }
 
+    SwitchOption {
+      key: "showQuickStart"
+      label: "Show Quick start"
+      hint: root.prefs.moduleTimer ? "Timers, stopwatch, Pomodoro and the media sleep timer."
+        : "Needs the Timers activity (Activities tab)."
+    }
+
     Option {
       label: "Timers"
-      hint: "Minutes, separated by commas (up to 6). Enter to save."
+      hint: "Minutes, separated by commas (up to 6). Enter to save. Empty: none."
+      opacity: root.prefs.showQuickStart ? 1 : 0.45
       TextField {
         id: presetsField
         width: Style.space(120)
         foreground: root.foreground
+        enabled: root.prefs.showQuickStart
         text: root.prefs.timerPresets
         placeholderText: "1,5,10,25"
         onAccepted: { root.changed("timerPresets", text); focus = false }
         onEditingFinished: if (text !== root.prefs.timerPresets) root.changed("timerPresets", text)
       }
+    }
+
+    Grid {
+      width: parent.width
+      columns: 2
+      columnSpacing: Style.space(16)
+      rowSpacing: Style.space(8)
+
+      ListCell { glyph: "\u{f520}"; label: "Stopwatch"; itemId: "stopwatch"; listKey: "quickStartItems"; list: root.prefs.quickStartExtras; allowed: Model.QUICK_START_EXTRAS; active: root.prefs.showQuickStart }
+      ListCell { glyph: "\u{f04fe}"; label: "Pomodoro"; itemId: "pomodoro"; listKey: "quickStartItems"; list: root.prefs.quickStartExtras; allowed: Model.QUICK_START_EXTRAS; active: root.prefs.showQuickStart }
+      ListCell { glyph: "\u{f04b2}"; label: "Sleep"; itemId: "sleep"; listKey: "quickStartItems"; list: root.prefs.quickStartExtras; allowed: Model.QUICK_START_EXTRAS; active: root.prefs.showQuickStart }
     }
 
     Section { text: "POMODORO" }

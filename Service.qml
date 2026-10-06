@@ -1618,11 +1618,12 @@ Item {
   IpcHandler {
     target: "nowbar"
 
-    // Open the popup on the options: settings [activities|look|timers|weather]
+    // Open the popup on the options: settings [activities|look|quick|weather]
     function settings(tab: string): string {
       var t = String(tab || "")
-      if (t !== "" && ["activities", "look", "timers", "weather"].indexOf(t) === -1)
-        return "unknown tab: use activities, look, timers or weather"
+      if (t === "timers") t = "quick"   // the tab's old name
+      if (t !== "" && ["activities", "look", "quick", "weather"].indexOf(t) === -1)
+        return "unknown tab: use activities, look, quick or weather"
       root.settingsRequested(t)
       if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
       return "ok"
