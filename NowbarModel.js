@@ -18,10 +18,11 @@ var MAX_FIELD_CHARS = 120
 // caps the length, so text from outside (players, scripts, process names)
 // can't break the layout or spoof other lines.
 function clean(value, max) {
-  var t = String(value === undefined || value === null ? "" : value)
+  var limit = max || MAX_FIELD_CHARS
+  // Cut first: a player can send megabytes of title, and this runs every second.
+  var t = String(value === undefined || value === null ? "" : value).slice(0, limit * 4 + 64)
   t = t.replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, " ")
   t = t.replace(/\s+/g, " ").trim()
-  var limit = max || MAX_FIELD_CHARS
   return t.length > limit ? t.slice(0, limit - 1) + "…" : t
 }
 

@@ -493,3 +493,12 @@ test("cover base color and popup surface tint", () => {
   assert.ok(b > r, "keeps the blue hue: " + dark)
   assert.equal(M.surfaceTint("nope", true), "")
 })
+
+test("clean cuts huge text before working on it", () => {
+  const big = "a".repeat(5e6) + "\u001b[31m"
+  const t = Date.now()
+  for (let i = 0; i < 20; i++) M.clean(big)
+  assert.ok(Date.now() - t < 500, "too slow on a 5 MB title")
+  assert.equal(M.clean(big).length, 120)
+  assert.equal(M.clean(big, 10), "aaaaaaaaa…")
+})
