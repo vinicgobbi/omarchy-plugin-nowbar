@@ -1,3 +1,10 @@
+## v0.4.1 (2026-10-06)
+
+### Fix
+
+- **security**: download de capa resolve o nome uma vez, recusa endereços locais (loopback, LAN, link-local, CGNAT, multicast) e conecta só ao endereço conferido, e players tocando viram no máximo 6 cards
+- capas em PNG de 16 bits por canal ficavam sem cores dinâmicas (histograma com 16 dígitos hex não era reconhecido); extração pede saída de 8 bits e o modelo aceita os dois formatos
+
 ## v0.4.0 (2026-10-06)
 
 ### Feat
