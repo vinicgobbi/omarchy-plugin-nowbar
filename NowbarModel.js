@@ -1082,7 +1082,8 @@ function screenshotActivity(s) {
 // nothing else is going on, as the Now Brief.
 
 // wttr.in weather codes -> Nerd Font glyphs; same mapping as Omarchy's weather
-// panel (plugins/panels/weather/Model.js).
+// panel (plugins/panels/weather/Model.js). Omarchy: MIT License, Copyright (c)
+// David Heinemeier Hansson.
 function weatherIcon(code, night) {
   var c = parseInt(String(code || "0"), 10)
   switch (c) {
@@ -1131,7 +1132,7 @@ function clockLabel(minutes) {
 }
 
 // °C or °F: an explicit choice, else the country of the forecast, else the
-// locale. Same rules as Omarchy's weather panel.
+// locale. Same rules as Omarchy's weather panel (MIT, see above).
 function useImperial(unit, localeName, country) {
   if (unit === "imperial") return true
   if (unit === "metric") return false

@@ -70,6 +70,32 @@ omarchy plugin add https://github.com/vinicgobbi/omarchy-plugin-nowbar --enable
 
 No step needs `sudo`, polkit or the keyring.
 
+### Optional dependencies
+
+The Now Bar needs only Omarchy. **Everything below is optional: the plugin
+works without any of it**, and only the part that uses a missing tool is left
+out (or falls back to something simpler). Nothing has to be installed for it
+to run.
+
+| Tool (package)                        | Used for                                         | Without it                                        |
+| ------------------------------------- | ------------------------------------------------ | ------------------------------------------------- |
+| `inotifywait` (`inotify-tools`)       | Screenshot card; reminders shown at once; camera checked only when it opens or closes | No screenshot card; reminders show up within 10 s; the camera is checked every 5 s |
+| `magick` / `identify` (`imagemagick`) | Cover art in media cards, and colors from it     | An icon instead of the cover; the theme's colors  |
+| `curl` (`curl`)                       | Weather card; cover art from the internet        | No weather card; only covers stored on disk       |
+| `wl-copy` (`wl-clipboard`)            | Copy on the screenshot card                      | Copy does nothing                                 |
+| `xdg-open` (`xdg-utils`)              | Open on the screenshot card                      | Open does nothing                                 |
+| `nmcli` (`networkmanager`)            | VPN connections in the Modes card                | VPN connections aren't shown                      |
+| `tailscale` (`tailscale`)             | Tailscale in the Modes card                      | Tailscale isn't shown                             |
+| `voxtype` (`voxtype`)                 | Dictation activity and the Dictate toggle        | Both are hidden                                   |
+
+`jq`, which the scripts and a few checks use, comes with Omarchy.
+
+**External services.** The weather card asks [wttr.in](https://wttr.in) for
+the weather every 20 minutes (for the location saved in Omarchy, or a guess
+from your IP), and an Omarchy update check runs every 3 hours; turning the
+Weather activity off stops both. Cover art is downloaded from wherever the
+player points to (https only, never this machine or the local network).
+
 ### What changes when you enable it
 
 - **Omarchy's media widget turns off.** The Now Bar is a clone of the
@@ -353,6 +379,13 @@ Omarchy's media widget comes back on its own, in the Now Bar's place. What
 the Now Bar leaves behind, if you want it gone too:
 `~/.local/state/vinicgobbi.nowbar/`, `~/.cache/omarchy/vinicgobbi.nowbar/`,
 and any `~/.config/hypr/bindings.lua.bak.nowbar-*` copies.
+
+## Credits
+
+The weather icon mapping (wttr.in condition codes to Nerd Font glyphs) and
+the rule for °C or °F are adapted from Omarchy's weather panel. Omarchy is MIT
+licensed, Copyright (c) David Heinemeier Hansson. The cover art checks come
+from [omarchy-plugin-media](https://github.com/vinicgobbi/omarchy-plugin-media).
 
 ## License
 
