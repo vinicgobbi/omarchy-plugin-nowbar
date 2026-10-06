@@ -64,20 +64,63 @@ function presetLabel(seconds) {
   return sec > 0 ? m + " min " + sec + " s" : m + " min"
 }
 
+// "90" (seconds), "25m", "1h30m", "45s", or a clock time "14:30" (the next
+// one: tomorrow if it already passed). Returns seconds, or 0 when invalid.
+// `now` is epoch ms; the clock time uses the local time zone.
+function parseTimerArg(arg, now) {
+  var t = String(arg === undefined || arg === null ? "" : arg).trim().toLowerCase()
+  if (/^\d{1,6}$/.test(t)) return parseInt(t, 10)
+  var clock = /^(\d{1,2}):(\d{2})$/.exec(t)
+  if (clock) {
+    var h = parseInt(clock[1], 10)
+    var m = parseInt(clock[2], 10)
+    if (h > 23 || m > 59) return 0
+    var d = new Date(now)
+    var target = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m, 0, 0).getTime()
+    if (target <= now) target = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, h, m, 0, 0).getTime()
+    return Math.round((target - now) / 1000)
+  }
+  var units = /^(?:(\d{1,3})h)?\s*(?:(\d{1,4})m(?:in)?)?\s*(?:(\d{1,5})s)?$/.exec(t)
+  if (units && (units[1] || units[2] || units[3]))
+    return (parseInt(units[1] || "0", 10) * 3600) + (parseInt(units[2] || "0", 10) * 60) + parseInt(units[3] || "0", 10)
+  return 0
+}
+
+// Quick start timers, as minutes separated by commas ("1,5,10,25"). Returns
+// seconds, at most 6 entries, each 1 min to 24 h; falls back to the default.
+var DEFAULT_PRESETS = "1,5,10,25"
+
+function parsePresets(text) {
+  var out = []
+  var parts = String(text === undefined || text === null ? "" : text).split(",")
+  for (var i = 0; i < parts.length && out.length < 6; i++) {
+    var p = parts[i].trim()
+    if (!/^\d{1,4}$/.test(p)) continue
+    var m = parseInt(p, 10)
+    if (m >= 1 && m <= 1440 && out.indexOf(m * 60) === -1) out.push(m * 60)
+  }
+  return out.length ? out : (String(text) === DEFAULT_PRESETS ? [] : parsePresets(DEFAULT_PRESETS))
+}
+
 // --- priorities --------------------------------------------------------------
 // Lower comes first. Privacy and recording win because they're things the
 // user must not miss; paused media is the least interesting thing to show.
 
 var PRIORITY = {
   privacy: 10,
+  battery: 15,
   recording: 20,
+  screenshot: 25,
   dictation: 30,
   pushHigh: 35,
   timer: 40,
+  pomodoro: 42,
   reminderSoon: 45,
   stopwatch: 50,
+  bluetooth: 55,
   mediaPlaying: 60,
   push: 65,
+  sleep: 70,
   reminder: 75,
   charging: 80,
   pushLow: 85,
@@ -254,6 +297,136 @@ function stopwatchActivity(s, now) {
   }
 }
 
+// --- pomodoro -------------------------------------------------------------------
+// p:   { state: "idle"|"running"|"paused", phase: "focus"|"break"|"longBreak",
+//        focusDone (focus blocks finished), durationMs, endsAt, remainingMs }
+// cfg: { focus, shortBreak, longBreak, every } in minutes / focus blocks.
+
+function idlePomodoro() {
+  return { state: "idle", phase: "focus", focusDone: 0, durationMs: 0, endsAt: 0, remainingMs: 0 }
+}
+
+function pomodoroConfig(prefs) {
+  var p = prefs || {}
+  return {
+    focus: clampInt(p.pomodoroFocus, 1, 180, 25),
+    shortBreak: clampInt(p.pomodoroBreak, 1, 60, 5),
+    longBreak: clampInt(p.pomodoroLongBreak, 1, 120, 15),
+    every: 4
+  }
+}
+
+function phaseMinutes(phase, cfg) {
+  return phase === "focus" ? cfg.focus : (phase === "longBreak" ? cfg.longBreak : cfg.shortBreak)
+}
+
+function startPomodoroPhase(phase, focusDone, cfg, now) {
+  var ms = phaseMinutes(phase, cfg) * 60000
+  return { state: "running", phase: phase, focusDone: focusDone, durationMs: ms, endsAt: now + ms, remainingMs: ms }
+}
+
+function startPomodoro(cfg, now) {
+  return startPomodoroPhase("focus", 0, cfg, now)
+}
+
+function normalizePomodoro(p) {
+  if (!p || typeof p !== "object") return idlePomodoro()
+  var state = p.state === "running" || p.state === "paused" ? p.state : "idle"
+  var phase = p.phase === "break" || p.phase === "longBreak" ? p.phase : "focus"
+  var duration = Math.min(MAX_TIMER_MS, Math.max(0, num(p.durationMs, 0)))
+  if (state === "idle" || duration <= 0) return idlePomodoro()
+  return {
+    state: state,
+    phase: phase,
+    focusDone: Math.max(0, Math.min(999, Math.floor(num(p.focusDone, 0)))),
+    durationMs: duration,
+    endsAt: Math.max(0, num(p.endsAt, 0)),
+    remainingMs: Math.min(duration, Math.max(0, num(p.remainingMs, 0)))
+  }
+}
+
+// The timer helpers work on any { state, durationMs, endsAt, remainingMs }.
+function pausePomodoro(p, now) {
+  if (!p || p.state !== "running") return p
+  var t = pauseTimer(p, now)
+  return { state: "paused", phase: p.phase, focusDone: p.focusDone, durationMs: p.durationMs, endsAt: 0, remainingMs: t.remainingMs }
+}
+
+function resumePomodoro(p, now) {
+  if (!p || p.state !== "paused") return p
+  return { state: "running", phase: p.phase, focusDone: p.focusDone, durationMs: p.durationMs, endsAt: now + p.remainingMs, remainingMs: p.remainingMs }
+}
+
+// The phase after the current one: focus -> break (a long one every
+// `every` focus blocks) -> focus...
+function nextPomodoro(p, cfg, now) {
+  if (p.phase === "focus") {
+    var done = p.focusDone + 1
+    return startPomodoroPhase(done % cfg.every === 0 ? "longBreak" : "break", done, cfg, now)
+  }
+  return startPomodoroPhase("focus", p.focusDone, cfg, now)
+}
+
+var PHASE_LABEL = { focus: "Focus", "break": "Break", longBreak: "Long break" }
+
+function pomodoroActivity(p, cfg, now) {
+  if (!p || p.state === "idle") return null
+  var remaining = timerRemaining(p, now)
+  var running = p.state === "running"
+  var text = formatCountdown(remaining)
+  var label = PHASE_LABEL[p.phase]
+  var round = (p.focusDone % cfg.every) + (p.phase === "focus" ? 1 : 0)
+  return {
+    id: "pomodoro",
+    module: "timer",
+    priority: PRIORITY.pomodoro,
+    icon: p.phase === "focus" ? "\u{f04fe}" : "\u{f0176}",
+    urgent: false,
+    title: label + " \u00b7 " + text + (running ? "" : " (paused)"),
+    subtitle: "Pomodoro \u00b7 " + (p.phase === "focus" ? "round " + Math.max(1, round) + "/" + cfg.every : p.focusDone + " done"),
+    pillText: label + " " + text + (running ? "" : " \u2016"),
+    progress: p.durationMs > 0 ? 1 - remaining / p.durationMs : -1,
+    details: [],
+    actions: [
+      running ? { id: "pause", label: "Pause", icon: "\u{f03e4}" } : { id: "resume", label: "Resume", icon: "\u{f040a}" },
+      { id: "skip", label: "Skip", icon: "\u{f04ad}" },
+      { id: "stop", label: "Stop", icon: "\u{f04db}" }
+    ],
+    signature: p.state + ":" + p.phase
+  }
+}
+
+// --- sleep timer (pauses the media when it ends) -----------------------------------
+// s: { state: "idle"|"running", durationMs, endsAt }
+
+function idleSleep() {
+  return { state: "idle", durationMs: 0, endsAt: 0, remainingMs: 0 }
+}
+
+function normalizeSleep(s) {
+  var t = normalizeTimer(s)
+  return t.state === "running" ? t : idleSleep()
+}
+
+function sleepActivity(s, now) {
+  if (!s || s.state !== "running") return null
+  var remaining = timerRemaining(s, now)
+  return {
+    id: "sleep",
+    module: "timer",
+    priority: PRIORITY.sleep,
+    icon: "\u{f04b2}",
+    urgent: false,
+    title: "Media stops in " + formatCountdown(remaining),
+    subtitle: "Sleep timer \u00b7 " + presetLabel(s.durationMs / 1000),
+    pillText: "Sleep " + formatCountdown(remaining),
+    progress: s.durationMs > 0 ? 1 - remaining / s.durationMs : -1,
+    details: [],
+    actions: [{ id: "add", label: "+10 min", icon: "\u{f0415}" }, { id: "cancel", label: "Cancel", icon: "\u{f0156}" }],
+    signature: "running:" + s.durationMs
+  }
+}
+
 // --- reminders (omarchy-reminder show --json) --------------------------------
 
 // Returns [{ unit, label, at (epoch ms) }], earliest first. `text` is the
@@ -425,8 +598,10 @@ function privacyActivity(p) {
 
 // --- modes: Do Not Disturb, stay awake, night light ----------------------------
 
-// Output of the modes probe, three lines: DND state ("on"/"off"), idle status
-// JSON, night light status JSON. Missing or broken lines count as "off".
+// Output of the modes probe: DND state ("on"/"off"), idle status JSON, night
+// light status JSON, Tailscale's BackendState, then `nmcli -t -f NAME,TYPE
+// connection show --active`, one connection per line. Missing or broken
+// lines count as "off".
 function parseModes(text) {
   var lines = String(text || "").split("\n")
   function json(line) {
@@ -434,33 +609,64 @@ function parseModes(text) {
   }
   var idle = json(lines[1])
   var night = json(lines[2])
+  var vpns = []
+  if (String(lines[3] || "").trim() === "Running") vpns.push({ name: "Tailscale", kind: "tailscale" })
+  for (var i = 4; i < lines.length && vpns.length < 6; i++) {
+    var c = parseNmcliLine(lines[i])
+    if (c && (c.type === "vpn" || c.type === "wireguard")) vpns.push({ name: c.name, raw: c.rawName, kind: "nm" })
+  }
   return {
     dnd: String(lines[0] || "").trim() === "on",
     stayAwake: idle.stayAwake === true,
-    nightlight: night.enabled === true
+    nightlight: night.enabled === true,
+    vpns: vpns
   }
 }
 
+// nmcli's terse output escapes ":" and "\\" inside fields with a backslash.
+function parseNmcliLine(line) {
+  var fields = []
+  var cur = ""
+  var t = String(line || "")
+  for (var i = 0; i < t.length; i++) {
+    var ch = t.charAt(i)
+    if (ch === "\\" && i + 1 < t.length) { cur += t.charAt(++i); continue }
+    if (ch === ":") { fields.push(cur); cur = ""; continue }
+    cur += ch
+  }
+  fields.push(cur)
+  if (fields.length < 2 || !fields[0]) return null
+  return { name: clean(fields[0], 60), rawName: fields[0], type: fields[fields.length - 1] }
+}
+
 function modesActivity(m) {
-  if (!m || !(m.dnd || m.stayAwake || m.nightlight)) return null
+  var vpns = m && Array.isArray(m.vpns) ? m.vpns : []
+  if (!m || !(m.dnd || m.stayAwake || m.nightlight || vpns.length)) return null
   var on = []
   var actions = []
+  var details = []
   if (m.dnd) { on.push("Do Not Disturb"); actions.push({ id: "dnd", label: "DND off", icon: "\u{f009b}" }) }
   if (m.stayAwake) { on.push("Stay awake"); actions.push({ id: "stayAwake", label: "Stay awake off", icon: "\u{f0176}" }) }
   if (m.nightlight) { on.push("Night light"); actions.push({ id: "nightlight", label: "Night light off", icon: "\u{f0594}" }) }
+  for (var i = 0; i < vpns.length; i++) {
+    on.push(vpns.length === 1 ? "VPN " + vpns[i].name : vpns[i].name)
+    details.push("\u{f0582}  VPN: " + vpns[i].name)
+    // Tailscale may need operator rights to go down: leave it to its own tools.
+    if (vpns[i].kind === "nm") actions.push({ id: "vpnDown:" + i, label: "Disconnect " + vpns[i].name, icon: "\u{f0582}" })
+  }
   return {
     id: "modes",
     module: "modes",
     priority: PRIORITY.modes,
-    icon: m.dnd ? "\u{f009b}" : (m.stayAwake ? "\u{f0176}" : "\u{f0594}"),
+    icon: m.dnd ? "\u{f009b}" : (m.stayAwake ? "\u{f0176}" : (m.nightlight ? "\u{f0594}" : "\u{f0582}")),
     urgent: false,
     title: on.length === 1 ? on[0] : on.length + " modes on",
     subtitle: on.length === 1 ? "On" : on.join(" · "),
     pillText: on.length === 1 ? on[0] : on.length + " modes",
     progress: -1,
-    details: [],
+    details: details,
     actions: actions,
-    signature: (m.dnd ? "d" : "") + (m.stayAwake ? "s" : "") + (m.nightlight ? "n" : "")
+    signature: (m.dnd ? "d" : "") + (m.stayAwake ? "s" : "") + (m.nightlight ? "n" : "") + ":" + vpns.map(function(v) { return v.name }).join(",")
   }
 }
 
@@ -487,9 +693,40 @@ function chargingActivity(b) {
   }
 }
 
+// Low battery: on battery and at or below LOW_BATTERY. b also has timeToEmpty (s).
+var LOW_BATTERY = 0.15
+
+function batteryActivity(b) {
+  if (!b || !b.present || !b.onBattery) return null
+  var frac = Math.max(0, Math.min(1, num(b.percentage, 1)))
+  if (frac > LOW_BATTERY) return null
+  var pct = Math.round(frac * 100)
+  var left = num(b.timeToEmpty, 0) > 0 ? formatEta(b.timeToEmpty) + " left" : "Plug in the charger"
+  return {
+    id: "battery",
+    module: "charging",
+    priority: PRIORITY.battery,
+    icon: pct <= 5 ? "\u{f0083}" : "\u{f007a}",
+    urgent: true,
+    title: "Battery low \u00b7 " + pct + "%",
+    subtitle: left,
+    pillText: pct + "% \u00b7 " + (num(b.timeToEmpty, 0) > 0 ? formatEta(b.timeToEmpty) : "low"),
+    progress: frac,
+    details: [],
+    actions: [],
+    // Shows up again (after a dismiss) at each 5% step down.
+    signature: "low:" + Math.ceil(pct / 5)
+  }
+}
+
 // --- media (MPRIS) --------------------------------------------------------------
 // m = { key, title, artist, player, playing, canPrevious, canNext, canToggle,
-//       position (s), length (s) }
+//       position (s), length (s), canSeek, volumeSupported, volume (0..1) }
+// One activity per player: "media:<key>".
+
+function mediaId(key) {
+  return "media:" + String(key || "player").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80)
+}
 
 function mediaActivity(m) {
   if (!m || !(m.title || m.artist)) return null
@@ -502,9 +739,14 @@ function mediaActivity(m) {
   if (m.canNext) actions.push({ id: "next", label: "Next", icon: "\u{f04ad}" })
   var len = num(m.length, 0)
   var pos = num(m.position, 0)
+  var timed = len > 0 && len < 1e9
   return {
-    id: "media",
+    id: mediaId(m.key),
     module: "media",
+    target: String(m.key || ""),
+    seekable: timed && !!m.canSeek,
+    length: timed ? len : 0,
+    volume: m.volumeSupported ? Math.max(0, Math.min(1, num(m.volume, 0))) : -1,
     priority: m.playing ? PRIORITY.mediaPlaying : PRIORITY.mediaPaused,
     icon: m.playing ? "\u{f075a}" : "\u{f03e4}",
     urgent: false,
@@ -661,6 +903,7 @@ function sanitizePush(id, payload, now) {
   // A glyph is at most a couple of code points; anything longer is ignored.
   var icon = clean(data.icon, 4)
   if (Array.from(icon).length > 2) icon = ""
+  var state = data.state === "success" || data.state === "error" || data.state === "running" ? data.state : ""
   return {
     ok: true,
     item: {
@@ -671,7 +914,10 @@ function sanitizePush(id, payload, now) {
       icon: icon,
       progress: progress,
       priority: priority,
-      urgent: data.urgent === true,
+      urgent: data.urgent === true || state === "error",
+      state: state,
+      // "elapsed": true shows the time since the first push with this id.
+      startedAt: data.elapsed === true ? now : 0,
       expiresAt: ttl > 0 ? now + ttl * 1000 : 0,
       updatedAt: now
     }
@@ -684,6 +930,13 @@ function upsertPush(items, item) {
   var next = {}
   var keys = []
   for (var k in items) { next[k] = items[k]; keys.push(k) }
+  var prev = items[item.id]
+  if (prev && prev.startedAt > 0 && item.startedAt > 0) {
+    var kept = {}
+    for (var f in item) kept[f] = item[f]
+    kept.startedAt = prev.startedAt
+    item = kept
+  }
   next[item.id] = item
   if (!(item.id in items)) keys.push(item.id)
   while (keys.length > MAX_PUSHED) {
@@ -706,21 +959,129 @@ function prunePushes(items, now) {
   return changed ? next : items
 }
 
-function pushActivity(item) {
+var PUSH_STATE_ICON = { running: "\u{f0996}", success: "\u{f05e0}", error: "\u{f0028}" }
+
+function pushActivity(item, now) {
+  var elapsed = item.startedAt > 0 ? formatDuration(Math.max(0, (now || item.updatedAt) - item.startedAt)) : ""
   return {
     id: "push:" + item.id,
     module: "push",
     priority: item.priority === "high" ? PRIORITY.pushHigh : (item.priority === "low" ? PRIORITY.pushLow : PRIORITY.push),
-    icon: item.icon || "\u{f0996}",
+    icon: item.icon || PUSH_STATE_ICON[item.state] || "\u{f0996}",
     urgent: item.urgent,
     title: item.title,
-    subtitle: item.subtitle,
-    pillText: item.pillText,
+    subtitle: elapsed ? (item.subtitle ? item.subtitle + " \u00b7 " : "") + elapsed : item.subtitle,
+    pillText: elapsed ? item.pillText + " \u00b7 " + elapsed : item.pillText,
     progress: item.progress,
     details: [],
     actions: [{ id: "remove", label: "Dismiss", icon: "\u{f0156}" }],
     signature: String(item.updatedAt)
   }
+}
+
+// --- Bluetooth device just connected (shown for a few seconds) ---------------------
+// d = { address, name, battery (0..1, or -1 when unknown) }
+
+var BLUETOOTH_SHOW_MS = 10000
+
+function bluetoothActivity(d) {
+  if (!d) return null
+  var name = clean(d.name, 60) || "Bluetooth device"
+  var hasBattery = num(d.battery, -1) >= 0
+  var pct = hasBattery ? Math.round(Math.min(1, d.battery) * 100) : -1
+  return {
+    id: "bt:" + String(d.address || "").replace(/[^A-Fa-f0-9:]/g, "").slice(0, 17),
+    module: "bluetooth",
+    priority: PRIORITY.bluetooth,
+    icon: "\u{f00b1}",
+    urgent: false,
+    title: name,
+    subtitle: "Connected" + (hasBattery ? " \u00b7 battery " + pct + "%" : ""),
+    pillText: hasBattery ? name + " \u00b7 " + pct + "%" : name,
+    progress: hasBattery ? pct / 100 : -1,
+    details: [],
+    actions: [],
+    signature: "connected"
+  }
+}
+
+// --- screenshot just taken (shown for a few seconds) ---------------------------------
+
+var SCREENSHOT_SHOW_MS = 15000
+
+// A file name inotifywait reported in the screenshots folder: a plain name
+// (no path, no control characters, not hidden) ending in .png/.jpg/.jpeg.
+function validScreenshotName(name) {
+  var n = String(name || "")
+  return n.length > 0 && n.length <= 200 && n.charAt(0) !== "." && !/[\/\u0000-\u001f\u007f]/.test(n)
+    && /\.(png|jpe?g)$/i.test(n)
+}
+
+// s = { path, name }
+function screenshotActivity(s) {
+  if (!s || !s.path) return null
+  return {
+    id: "screenshot",
+    module: "screenshot",
+    priority: PRIORITY.screenshot,
+    icon: "\u{f0e51}",
+    urgent: false,
+    image: s.path,
+    title: "Screenshot saved",
+    subtitle: clean(s.name, 80),
+    pillText: "Screenshot",
+    progress: -1,
+    details: [],
+    actions: [
+      { id: "edit", label: "Edit", icon: "\u{f03eb}" },
+      { id: "copy", label: "Copy", icon: "\u{f018f}" },
+      { id: "open", label: "Open", icon: "\u{f03cc}" }
+    ],
+    signature: clean(s.name, 80)
+  }
+}
+
+// --- Now Brief (the pill when nothing is going on) -----------------------------------
+
+// Output of the weather probe: the Nerd Font glyph from omarchy-weather-icon,
+// then wttr.in's "%t|%C" (temperature|condition). Either line may be empty.
+function parseWeather(text) {
+  var lines = String(text || "").split("\n")
+  var icon = clean(lines[0], 4)
+  if (Array.from(icon).length > 2) icon = ""
+  var parts = String(lines[1] || "").split("|")
+  var temp = clean(parts[0], 12).replace(/^\+/, "")
+  if (!/^-?\d{1,3}\s*\u00b0[CF]$/.test(temp)) temp = ""
+  return { icon: icon, temp: temp, condition: temp ? clean(parts[1], 40) : "" }
+}
+
+// b = { weather: {icon, temp, condition}, reminders: [...], updates: bool, now }
+// Returns { icon, pillText, lines } or null when there is nothing to tell.
+function briefInfo(b) {
+  if (!b) return null
+  var bits = []
+  var lines = []
+  var icon = ""
+  var w = b.weather || {}
+  if (w.temp) {
+    icon = w.icon || "\u{f0599}"
+    bits.push(w.temp)
+    lines.push((w.icon ? w.icon + "  " : "") + w.temp + (w.condition ? " \u00b7 " + w.condition : ""))
+  }
+  var next = null
+  for (var i = 0; i < (b.reminders || []).length; i++) if (b.reminders[i].at > b.now) { next = b.reminders[i]; break }
+  if (next) {
+    var d = new Date(next.at)
+    var at = d.getHours() + ":" + pad2(d.getMinutes())
+    bits.push("\u{f088c} " + at)
+    lines.push("\u{f088c}  " + next.label + " at " + at)
+  }
+  if (b.updates) {
+    bits.push("\u{f06b0} Update")
+    lines.push("\u{f06b0}  Omarchy update available")
+  }
+  if (!bits.length) return null
+  return { icon: icon || "\u{f0996}", pillText: bits.join("  \u00b7  "), lines: lines }
 }
 
 // --- list & focus -----------------------------------------------------------------
@@ -795,7 +1156,7 @@ function resolveFocus(s) {
 
 // --- bar widget preferences -----------------------------------------------------------
 
-var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push"]
+var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot"]
 
 function defaultPrefs() {
   return {
@@ -808,13 +1169,19 @@ function defaultPrefs() {
     moduleModes: true,
     moduleCharging: true,
     modulePush: true,
+    moduleBluetooth: true,
+    moduleScreenshot: true,
     autoFocus: true,        // a new activity takes the pill
-    whenEmpty: "icon",      // "icon" keeps a small pill to open the popup; "hide" hides it
+    whenEmpty: "brief",     // "brief": weather/next reminder/updates; "icon": empty pill; "hide": no pill
     showProgress: true,     // thin progress line under the pill text
     showCount: true,        // "2/4" when there is more than one activity
     coverAccent: true,      // media: accent color taken from the cover art
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
-    maxWidth: 220           // width of the text area: the pill always has this size
+    maxWidth: 220,          // width of the text area: the pill always has this size
+    timerPresets: DEFAULT_PRESETS, // quick start timers, minutes
+    pomodoroFocus: 25,
+    pomodoroBreak: 5,
+    pomodoroLongBreak: 15
   }
 }
 
@@ -833,9 +1200,15 @@ function normalizePrefs(input) {
   var src = input && typeof input === "object" ? input : {}
   var out = {}
   for (var k in d) if (typeof d[k] === "boolean") out[k] = typeof src[k] === "boolean" ? src[k] : d[k]
-  out.whenEmpty = src.whenEmpty === "hide" ? "hide" : "icon"
+  out.whenEmpty = src.whenEmpty === "hide" || src.whenEmpty === "icon" ? src.whenEmpty : "brief"
   out.textMode = src.textMode === "ellipsis" ? "ellipsis" : "scroll"
   out.maxWidth = clampInt(src.maxWidth, 80, 600, d.maxWidth)
+  var presets = parsePresets(src.timerPresets === undefined ? d.timerPresets : src.timerPresets)
+  out.timerPresets = presets.map(function(x) { return x / 60 }).join(",")
+  out.presetSeconds = presets
+  out.pomodoroFocus = clampInt(src.pomodoroFocus, 1, 180, d.pomodoroFocus)
+  out.pomodoroBreak = clampInt(src.pomodoroBreak, 1, 60, d.pomodoroBreak)
+  out.pomodoroLongBreak = clampInt(src.pomodoroLongBreak, 1, 120, d.pomodoroLongBreak)
   out.modules = {}
   for (var i = 0; i < MODULES.length; i++) out.modules[MODULES[i]] = out[moduleKey(MODULES[i])]
   return out
@@ -868,6 +1241,27 @@ if (typeof module !== "undefined") {
     formatCountdown: formatCountdown,
     formatEta: formatEta,
     presetLabel: presetLabel,
+    parseTimerArg: parseTimerArg,
+    parsePresets: parsePresets,
+    idlePomodoro: idlePomodoro,
+    pomodoroConfig: pomodoroConfig,
+    startPomodoro: startPomodoro,
+    normalizePomodoro: normalizePomodoro,
+    pausePomodoro: pausePomodoro,
+    resumePomodoro: resumePomodoro,
+    nextPomodoro: nextPomodoro,
+    pomodoroActivity: pomodoroActivity,
+    idleSleep: idleSleep,
+    normalizeSleep: normalizeSleep,
+    sleepActivity: sleepActivity,
+    parseNmcliLine: parseNmcliLine,
+    batteryActivity: batteryActivity,
+    mediaId: mediaId,
+    bluetoothActivity: bluetoothActivity,
+    validScreenshotName: validScreenshotName,
+    screenshotActivity: screenshotActivity,
+    parseWeather: parseWeather,
+    briefInfo: briefInfo,
     PRIORITY: PRIORITY,
     idleTimer: idleTimer,
     idleStopwatch: idleStopwatch,
