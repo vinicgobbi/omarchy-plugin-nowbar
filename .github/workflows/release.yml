@@ -41,7 +41,8 @@ jobs:
         with:
           github_token: "${{ secrets.GITHUB_TOKEN }}"
           changelog_increment_filename: body.md
-          no_raise: "21"
+          # 3: no commits since the last tag; 21: nothing to bump. Both are "no release".
+          no_raise: "3,21"
 
       # The action always reports a version, the current one when there was
       # nothing to bump: only release when it actually changed.
