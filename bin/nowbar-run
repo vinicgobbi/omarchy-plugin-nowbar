@@ -1,0 +1,106 @@
+#!/bin/bash
+
+# Runs a command and shows it in the Now Bar while it runs: its name and the
+# elapsed time, then whether it worked, for a minute. Sends a notification at
+# the end too (unless -q).
+#
+#   nowbar-run make
+#   nowbar-run -t "System update" -- sudo pacman -Syu
+#   nowbar-run -q -- ./deploy.sh production
+#
+# The command runs in the foreground, in this terminal, exactly as given:
+# its output, exit code and Ctrl+C behave as if nowbar-run weren't there.
+
+set -u
+
+usage() {
+  echo "Usage: nowbar-run [-t <title>] [-q] [--] <command> [args...]"
+  echo "  -t, --title <title>  text for the Now Bar (default: the command)"
+  echo "  -q, --quiet          no notification when it ends"
+}
+
+title=""
+notify=1
+while (($# > 0)); do
+  case $1 in
+  -t | --title)
+    (($# >= 2)) || { usage >&2; exit 2; }
+    title=$2
+    shift 2
+    ;;
+  -q | --quiet)
+    notify=0
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --)
+    shift
+    break
+    ;;
+  -*)
+    echo "nowbar-run: unknown option: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+  *) break ;;
+  esac
+done
+
+(($# > 0)) || { usage >&2; exit 2; }
+[[ -n $title ]] || title="$*"
+
+id="run-$$"
+
+# Everything below is best effort: no shell, no jq, no Now Bar plugin... the
+# command still runs normally.
+push() {
+  omarchy-shell -q nowbar push "$id" "$1" >/dev/null 2>&1 || true
+}
+
+# The payload is built by jq, so the title is always plain JSON text.
+payload() {
+  jq -cn --arg title "$title" --arg subtitle "$1" --arg state "$2" --argjson ttl "$3" --argjson elapsed "$4" \
+    '{title: $title, subtitle: $subtitle, state: $state, elapsed: $elapsed} + (if $ttl > 0 then {ttl: $ttl} else {} end)' 2>/dev/null
+}
+
+format_duration() {
+  local s=$1
+  if ((s >= 3600)); then
+    printf '%d:%02d:%02d' $((s / 3600)) $((s % 3600 / 60)) $((s % 60))
+  else
+    printf '%d:%02d' $((s / 60)) $((s % 60))
+  fi
+}
+
+push "$(payload "Running" running 0 true)"
+
+# Ctrl+C goes to the command; nowbar-run itself stays to report how it ended.
+interrupted=0
+trap 'interrupted=1' INT
+
+start=$(date +%s)
+"$@"
+status=$?
+trap - INT
+took=$(format_duration $(($(date +%s) - start)))
+
+if ((interrupted)) || ((status == 130)); then
+  push "$(payload "Cancelled after $took" error 30 false)"
+  headline="Command cancelled"
+elif ((status == 0)); then
+  push "$(payload "Done in $took" success 60 false)"
+  headline="Command finished"
+else
+  push "$(payload "Failed (exit $status) after $took" error 120 false)"
+  headline="Command failed"
+fi
+
+# Fixed headline first: the helper treats leading "--x" words as options.
+if ((notify)); then
+  omarchy-notification-send -g "󰦖" "$headline" "$title · $took" >/dev/null 2>&1 || true
+fi
+
+exit "$status"
