@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "id": "vinicgobbi.nowbar",
+  "name": "Now Bar",
+  "version": "0.1.0",
+  "author": "vinicgobbi",
+  "license": "MIT",
+  "homepage": "https://github.com/vinicgobbi/omarchy-plugin-nowbar",
+  "description": "Samsung-style Now Bar: one pill in the bar for what's going on right now (media, timer, stopwatch, reminders, screen recording, dictation, camera/mic in use, modes, charging, and live updates pushed by scripts). Scroll to switch, click for the details.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Now Bar",
+    "description": "Pill with the current live activity: scroll to switch, left click for the details, middle click for the main action",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "moduleMedia": true,
+      "moduleTimer": true,
+      "moduleReminders": true,
+      "moduleRecording": true,
+      "moduleDictation": true,
+      "modulePrivacy": true,
+      "moduleModes": true,
+      "moduleCharging": true,
+      "modulePush": true,
+      "autoFocus": true,
+      "whenEmpty": "icon",
+      "showProgress": true,
+      "showCount": true,
+      "textMode": "scroll",
+      "maxWidth": 220
+    },
+    "schema": [
+      {
+        "key": "moduleMedia",
+        "type": "boolean",
+        "label": "Media",
+        "description": "What's playing (MPRIS), with play/pause, previous and next.",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleTimer",
+        "type": "boolean",
+        "label": "Timer and stopwatch",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleReminders",
+        "type": "boolean",
+        "label": "Reminders",
+        "description": "Countdown to the next omarchy-reminder.",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleRecording",
+        "type": "boolean",
+        "label": "Screen recording",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleDictation",
+        "type": "boolean",
+        "label": "Dictation",
+        "description": "Voxtype listening / transcribing.",
+        "defaultValue": true
+      },
+      {
+        "key": "modulePrivacy",
+        "type": "boolean",
+        "label": "Camera and microphone in use",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleModes",
+        "type": "boolean",
+        "label": "Modes",
+        "description": "Do Not Disturb, stay awake and night light, while on.",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleCharging",
+        "type": "boolean",
+        "label": "Charging",
+        "defaultValue": true
+      },
+      {
+        "key": "modulePush",
+        "type": "boolean",
+        "label": "Live updates from scripts",
+        "description": "Activities sent with `omarchy-shell nowbar push`.",
+        "defaultValue": true
+      },
+      {
+        "key": "autoFocus",
+        "type": "boolean",
+        "label": "Focus new activities",
+        "defaultValue": true
+      },
+      {
+        "key": "whenEmpty",
+        "type": "enum",
+        "label": "When nothing is going on",
+        "options": [
+          "icon",
+          "hide"
+        ],
+        "defaultValue": "icon"
+      },
+      {
+        "key": "showProgress",
+        "type": "boolean",
+        "label": "Progress line",
+        "defaultValue": true
+      },
+      {
+        "key": "showCount",
+        "type": "boolean",
+        "label": "Position (2/4)",
+        "defaultValue": true
+      },
+      {
+        "key": "textMode",
+        "type": "enum",
+        "label": "Long text",
+        "description": "Text longer than the pill: scroll it, or cut it with \"...\".",
+        "options": [
+          "scroll",
+          "ellipsis"
+        ],
+        "defaultValue": "scroll"
+      },
+      {
+        "key": "maxWidth",
+        "type": "integer",
+        "label": "Pill text width (px)",
+        "min": 80,
+        "max": 600,
+        "step": 20,
+        "defaultValue": 220,
+        "description": "The pill always keeps this size."
+      }
+    ]
+  }
+}
