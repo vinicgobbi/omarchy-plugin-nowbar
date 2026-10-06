@@ -397,8 +397,13 @@ Item {
   function extractAccent(path, generation) {
     if (accentProcess.running) { accentProcess.pending = { path: path, generation: generation }; return }
     accentProcess.generation = generation
-    accentProcess.command = ["timeout", "5", "magick", "-limit", "area", "64MB", "-limit", "memory", "64MB",
-      "-limit", "map", "64MB", path + "[0]", "-resize", "64x64", "-colors", "12", "-format", "%c", "histogram:info:-"]
+    // The file was checked when fetched; the decoder is still named from its
+    // first bytes (as the fetch does) rather than left to ImageMagick's guess.
+    accentProcess.command = ["sh", "-c",
+      "sig=$(head -c 12 -- \"$1\" | od -An -tx1 | tr -d ' \\n'); "
+      + "case \"$sig\" in 89504e470d0a1a0a*) f=png;; ffd8ff*) f=jpeg;; 474946383761*|474946383961*) f=gif;; 52494646????????57454250) f=webp;; *) exit 1;; esac; "
+      + "exec timeout 5 magick -limit area 64MB -limit memory 64MB -limit map 64MB \"$f:$1[0]\" -resize 64x64 -colors 12 -format %c histogram:info:-",
+      "_", path]
     accentProcess.running = true
   }
 
@@ -742,7 +747,8 @@ Item {
 
   Process {
     id: recordingProcess
-    command: ["sh", "-c", "pid=$(pgrep -o -f '^gpu-screen-recorder') || exit 1; ps -o etimes= -p \"$pid\""]
+    // Only this user's recorder: another account recording doesn't count.
+    command: ["sh", "-c", "pid=$(pgrep -o -u \"$(id -u)\" -f '^gpu-screen-recorder') || exit 1; ps -o etimes= -p \"$pid\""]
     // Prints the recorder's uptime in seconds, nothing when not recording.
     stdout: StdioCollector {
       waitForEnd: true
@@ -1186,7 +1192,10 @@ Item {
     id: screenshotWatch
     command: ["sh", "-c",
       "command -v inotifywait >/dev/null 2>&1 || exit 3; [ -d \"$1\" ] || exit 4; "
-      + "exec setpriv --pdeathsig TERM inotifywait -mq -e close_write,moved_to --format %f -- \"$1\"", "_", root.screenshotDir]
+      // Regular files only: a symlink named like an image (from an archive,
+      // say) would otherwise be shown and copied as if it were a screenshot.
+      + "setpriv --pdeathsig TERM inotifywait -mq -e close_write,moved_to --format %f -- \"$1\" | "
+      + "while IFS= read -r f; do [ -f \"$1/$f\" ] && [ ! -L \"$1/$f\" ] && printf '%s\\n' \"$f\"; done", "_", root.screenshotDir]
     running: root.modules.screenshot
     stdout: SplitParser {
       onRead: function(name) {
@@ -1212,7 +1221,7 @@ Item {
     if (!s) return
     if (action === "edit") Quickshell.execDetached([screenshotEditor, s.path])
     else if (action === "open") Quickshell.execDetached(["xdg-open", s.path])
-    else if (action === "copy") Quickshell.execDetached(["sh", "-c", "wl-copy --type \"$2\" < \"$1\"", "_", s.path,
+    else if (action === "copy") Quickshell.execDetached(["sh", "-c", "[ -f \"$1\" ] && [ ! -L \"$1\" ] && wl-copy --type \"$2\" < \"$1\"", "_", s.path,
       /\.png$/i.test(s.path) ? "image/png" : "image/jpeg"])
     screenshot = null
   }
@@ -1609,11 +1618,12 @@ Item {
   IpcHandler {
     target: "nowbar"
 
-    // Open the popup on the options: settings [activities|look|timers|weather]
+    // Open the popup on the options: settings [activities|look|quick|weather]
     function settings(tab: string): string {
       var t = String(tab || "")
-      if (t !== "" && ["activities", "look", "timers", "weather"].indexOf(t) === -1)
-        return "unknown tab: use activities, look, timers or weather"
+      if (t === "timers") t = "quick"   // the tab's old name
+      if (t !== "" && ["activities", "look", "quick", "weather"].indexOf(t) === -1)
+        return "unknown tab: use activities, look, quick or weather"
       root.settingsRequested(t)
       if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
       return "ok"
@@ -1628,7 +1638,12 @@ Item {
     function focus(id: string): string { return root.focusOn(id) ? "ok" : "not found" }
     // Middle-click equivalent on the focused activity.
     function primary(): string { return root.focused && root.primary(root.focused.id) ? "ok" : "none" }
-    function dismiss(): string { return root.focused && root.dismiss(root.focused.id) ? "ok" : "none" }
+    // The camera/microphone card is a privacy warning: only a click hides it,
+    // so a process using them can't make it go away through IPC.
+    function dismiss(): string {
+      if (root.focused && root.focused.module === "privacy") return "refused: hide it from the Now Bar itself"
+      return root.focused && root.dismiss(root.focused.id) ? "ok" : "none"
+    }
     // Any action of any activity, e.g. `act timer cancel`, `act media next`.
     function act(activityId: string, actionId: string): string {
       return root.act(String(activityId), String(actionId)) ? "ok" : "unknown activity or action"

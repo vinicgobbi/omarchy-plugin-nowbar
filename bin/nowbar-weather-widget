@@ -52,13 +52,16 @@ has_block() {
 
 remove_block() {
   local tmp
-  tmp=$(mktemp "${bindings}.XXXXXX")
+  tmp=$(mktemp)
   awk -v begin="$begin_marker" -v end="$end_marker" '
     $0 == begin { skip = 1; next }
     $0 == end { skip = 0; next }
     !skip { print }
   ' "$bindings" >"$tmp"
-  mv -f -- "$tmp" "$bindings"
+  # Written back through the path (not moved over it), so a bindings.lua that
+  # is a symlink into a dotfiles repo stays a symlink.
+  cat -- "$tmp" >"$bindings"
+  rm -f -- "$tmp"
 }
 
 case ${1:-} in

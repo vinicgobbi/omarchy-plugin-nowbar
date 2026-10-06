@@ -18,10 +18,11 @@ var MAX_FIELD_CHARS = 120
 // caps the length, so text from outside (players, scripts, process names)
 // can't break the layout or spoof other lines.
 function clean(value, max) {
-  var t = String(value === undefined || value === null ? "" : value)
+  var limit = max || MAX_FIELD_CHARS
+  // Cut first: a player can send megabytes of title, and this runs every second.
+  var t = String(value === undefined || value === null ? "" : value).slice(0, limit * 4 + 64)
   t = t.replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, " ")
   t = t.replace(/\s+/g, " ").trim()
-  var limit = max || MAX_FIELD_CHARS
   return t.length > limit ? t.slice(0, limit - 1) + "…" : t
 }
 
@@ -87,10 +88,12 @@ function parseTimerArg(arg, now) {
 }
 
 // Quick start timers, as minutes separated by commas ("1,5,10,25"). Returns
-// seconds, at most 6 entries, each 1 min to 24 h; falls back to the default.
+// seconds, at most 6 entries, each 1 min to 24 h. Empty means no timers;
+// text with nothing usable in it falls back to the default.
 var DEFAULT_PRESETS = "1,5,10,25"
 
 function parsePresets(text) {
+  if (text !== undefined && text !== null && String(text).trim() === "") return []
   var out = []
   var parts = String(text === undefined || text === null ? "" : text).split(",")
   for (var i = 0; i < parts.length && out.length < 6; i++) {
@@ -1343,6 +1346,24 @@ function resolveFocus(s) {
 
 var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather"]
 
+// The popup's Quick toggles and Quick start extras, in the order shown.
+var QUICK_TOGGLES = ["dnd", "nightlight", "stayAwake", "record", "reminder", "dictation"]
+var QUICK_START_EXTRAS = ["stopwatch", "pomodoro", "sleep"]
+
+// "a,b,c" -> the known ids it names, in the canonical order. A missing value
+// means all of them; an empty one means none.
+function parseIdList(text, allowed) {
+  if (text === undefined || text === null) return allowed.slice()
+  var wanted = String(text).split(",").map(function(x) { return x.trim() })
+  return allowed.filter(function(id) { return wanted.indexOf(id) !== -1 })
+}
+
+// The list with `id` turned on or off, as the "a,b,c" string stored in settings.
+function toggleIdList(list, allowed, id, on) {
+  var next = allowed.filter(function(x) { return x === id ? on : list.indexOf(x) !== -1 })
+  return next.join(",")
+}
+
 function defaultPrefs() {
   return {
     moduleMedia: true,
@@ -1363,6 +1384,9 @@ function defaultPrefs() {
     showProgress: true,     // thin progress line under the pill text
     showCount: true,        // "2/4" when there is more than one activity
     showQuickToggles: true, // the popup's Quick toggles (DND, night light, stay awake...)
+    quickToggleItems: QUICK_TOGGLES.join(","),       // which of them
+    showQuickStart: true,   // the popup's Quick start (timers, stopwatch, Pomodoro, sleep)
+    quickStartItems: QUICK_START_EXTRAS.join(","),   // which extras, besides the timers
     coverAccent: true,      // media: accent color taken from the cover art
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
     maxWidth: 220,          // width of the text area: the pill always has this size
@@ -1398,6 +1422,10 @@ function normalizePrefs(input) {
   out.pomodoroFocus = clampInt(src.pomodoroFocus, 1, 180, d.pomodoroFocus)
   out.pomodoroBreak = clampInt(src.pomodoroBreak, 1, 60, d.pomodoroBreak)
   out.pomodoroLongBreak = clampInt(src.pomodoroLongBreak, 1, 120, d.pomodoroLongBreak)
+  out.quickToggles = parseIdList(src.quickToggleItems, QUICK_TOGGLES)
+  out.quickToggleItems = out.quickToggles.join(",")
+  out.quickStartExtras = parseIdList(src.quickStartItems, QUICK_START_EXTRAS)
+  out.quickStartItems = out.quickStartExtras.join(",")
   out.modules = {}
   for (var i = 0; i < MODULES.length; i++) out.modules[MODULES[i]] = out[moduleKey(MODULES[i])]
   return out
@@ -1507,6 +1535,10 @@ if (typeof module !== "undefined") {
     moduleKey: moduleKey,
     normalizePrefs: normalizePrefs,
     entrySettings: entrySettings,
-    tooltipLabel: tooltipLabel
+    tooltipLabel: tooltipLabel,
+    QUICK_TOGGLES: QUICK_TOGGLES,
+    QUICK_START_EXTRAS: QUICK_START_EXTRAS,
+    parseIdList: parseIdList,
+    toggleIdList: toggleIdList
   }
 }

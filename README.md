@@ -106,7 +106,7 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `sleep <duration>`        | Pause the media after `30` (minutes), `1h`, or at `23:00`       |
 | `push <id> <json>`        | Add or update an activity from a script                         |
 | `remove <id>`             | Remove a pushed activity                                        |
-| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `timers`, `weather`) |
+| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `quick`, `weather`) |
 | `status`                  | JSON with the activities, the focused one, the cover color and the brief |
 
 Keyboard shortcuts go in `~/.config/hypr/bindings.lua`. These keys are free
@@ -171,7 +171,7 @@ one on or off:
 
 To use it in place of the indicators widget, click **Use instead of Omarchy's
 indicators** under the Quick toggles (or **Replace the indicators** in the
-options, Activities tab). That turns `omarchy.indicators` off; its place in
+options, Quick tab). That turns `omarchy.indicators` off; its place in
 the bar is remembered, and **Restore** puts it back there. With the widget
 off, the Now Bar also answers `omarchy-shell omarchy.indicators refresh`
 (called by `omarchy-reminder` and the screen recorder), so those show up at
@@ -295,14 +295,18 @@ options, one tab at a time (Tab / Shift+Tab to switch):
 
 - **Activities:** which activities can show up (live ones: media, timers,
   reminders, recording, dictation, camera/mic; system ones: modes and VPN,
-  battery, Bluetooth, screenshots, weather, scripts), whether a new activity
-  takes the pill, and replacing (or restoring) Omarchy's indicators widget.
+  battery, Bluetooth, screenshots, weather, scripts), and whether a new
+  activity takes the pill.
 - **Look:** the pill's text width, scrolling or cutting long text, the
-  progress line, the `2/4` marker, the Quick toggles, what it shows when idle (the weather card,
+  progress line, the `2/4` marker, what it shows when idle (the weather card,
   an empty pill, or nothing), and the dynamic colors (media from the album
   cover, weather from the sky).
-- **Timers:** the Quick start timers (minutes, comma separated) and the
-  Pomodoro focus, break and long break lengths.
+- **Quick:** the two rows at the bottom of the popup. Quick toggles: show
+  them or not, which ones (DND, night light, stay awake, record, reminder,
+  dictation), and replacing (or restoring) Omarchy's indicators widget. Quick
+  start: show it or not, the timers (minutes, comma separated; empty for
+  none), which extras (stopwatch, Pomodoro, sleep timer), and the Pomodoro
+  focus, break and long break lengths.
 - **Weather:** °C, °F or automatic, and replacing (or restoring) Omarchy's
   weather widget.
 

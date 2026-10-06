@@ -311,6 +311,8 @@ test("parsePresets", () => {
   assert.deepEqual(M.parsePresets("1, 5,10,25"), [60, 300, 600, 1500])
   assert.deepEqual(M.parsePresets("3,3,x,0,99999,7"), [180, 420])
   assert.deepEqual(M.parsePresets("junk"), [60, 300, 600, 1500])
+  assert.deepEqual(M.parsePresets(""), [])
+  assert.equal(M.normalizePrefs({ timerPresets: "" }).timerPresets, "")
   assert.equal(M.parsePresets("1,2,3,4,5,6,7,8").length, 6)
   assert.equal(M.normalizePrefs({ timerPresets: "2,4" }).timerPresets, "2,4")
 })
@@ -492,4 +494,29 @@ test("cover base color and popup surface tint", () => {
   const b = parseInt(dark.slice(5, 7), 16), r = parseInt(dark.slice(1, 3), 16)
   assert.ok(b > r, "keeps the blue hue: " + dark)
   assert.equal(M.surfaceTint("nope", true), "")
+})
+
+test("clean cuts huge text before working on it", () => {
+  const big = "a".repeat(5e6) + "\u001b[31m"
+  const t = Date.now()
+  for (let i = 0; i < 20; i++) M.clean(big)
+  assert.ok(Date.now() - t < 500, "too slow on a 5 MB title")
+  assert.equal(M.clean(big).length, 120)
+  assert.equal(M.clean(big, 10), "aaaaaaaaa…")
+})
+
+test("Quick toggles / Quick start item lists", () => {
+  assert.deepEqual(M.parseIdList(undefined, M.QUICK_TOGGLES), M.QUICK_TOGGLES)
+  assert.deepEqual(M.parseIdList("", M.QUICK_TOGGLES), [])
+  assert.deepEqual(M.parseIdList("record, dnd,bogus", M.QUICK_TOGGLES), ["dnd", "record"])
+  assert.equal(M.toggleIdList(["dnd", "record"], M.QUICK_TOGGLES, "nightlight", true), "dnd,nightlight,record")
+  assert.equal(M.toggleIdList(["dnd", "record"], M.QUICK_TOGGLES, "dnd", false), "record")
+  const p = M.normalizePrefs({ quickToggleItems: "stayAwake,dnd", quickStartItems: "", showQuickStart: false })
+  assert.deepEqual(p.quickToggles, ["dnd", "stayAwake"])
+  assert.equal(p.quickToggleItems, "dnd,stayAwake")
+  assert.deepEqual(p.quickStartExtras, [])
+  assert.equal(p.showQuickStart, false)
+  const d = M.normalizePrefs({})
+  assert.deepEqual(d.quickStartExtras, ["stopwatch", "pomodoro", "sleep"])
+  assert.deepEqual(M.entrySettings(d, {}), {})
 })

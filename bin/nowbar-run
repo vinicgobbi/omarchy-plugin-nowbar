@@ -98,9 +98,10 @@ else
   headline="Command failed"
 fi
 
-# Fixed headline first: the helper treats leading "--x" words as options.
+# Fixed text first in the headline and the description: the helper reads a
+# leading "--option=value" word as an option, and the title is free text.
 if ((notify)); then
-  omarchy-notification-send -g "󰦖" "$headline" "$title · $took" >/dev/null 2>&1 || true
+  omarchy-notification-send -g "󰦖" "$headline" "After $took: $title" >/dev/null 2>&1 || true
 fi
 
 exit "$status"
