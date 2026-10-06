@@ -244,6 +244,7 @@ test("prefs normalize and store only non-defaults", () => {
   assert.equal(p.modules.media, true)
   assert.equal(p.whenEmpty, "icon")
   assert.equal(p.textMode, "scroll")
+  assert.equal(p.coverAccent, true)
   assert.equal(M.normalizePrefs({ textMode: "ellipsis" }).textMode, "ellipsis")
   assert.equal(p.maxWidth, 600)
   assert.equal(p.autoFocus, true)
@@ -264,4 +265,26 @@ test("safeArtUrl only allows https to public hosts and local files", () => {
   assert.equal(M.safeArtUrl("https://192.168.0.1/a.jpg"), "")
   assert.equal(M.safeArtUrl("https://router.lan/a.jpg"), "")
   assert.equal(M.safeArtUrl("data:image/png;base64,AAAA"), "")
+})
+
+test("accentFromHistogram picks the vivid color and keeps it readable", () => {
+  const hist = [
+    "  5000: (10,10,12) #0A0A0C srgb(4%,4%,5%)",
+    "  3000: (240,240,240) #F0F0F0 srgb(94%,94%,94%)",
+    "   800: (200,30,60) #C81E3C srgb(78%,12%,24%)",
+    "   900: (120,120,125) #78787D srgb(47%,47%,49%)"
+  ].join("\n")
+  const c = M.accentFromHistogram(hist)
+  assert.match(c, /^#[0-9a-f]{6}$/)
+  const r = parseInt(c.slice(1, 3), 16), g = parseInt(c.slice(3, 5), 16), b = parseInt(c.slice(5, 7), 16)
+  assert.ok(r > g && r > b, "should stay red: " + c)
+  // Gray, black and white only: no accent, the theme's stays.
+  assert.equal(M.accentFromHistogram("  10: (0,0,0) #000000 black\n  10: (128,128,128) #808080 gray\n  9: (255,255,255) #FFFFFF white"), "")
+  assert.equal(M.accentFromHistogram("garbage"), "")
+  // Alpha suffix (#RRGGBBAA) is accepted.
+  assert.equal(M.parseHistogram("  4: (0,0,255,255) #0000FFFF srgba(0,0,255,1)").length, 1)
+  // A dark navy is lifted to a readable lightness.
+  const navy = M.accentFromHistogram("  50: (10,20,70) #0A1446 x")
+  const l = (Math.max(...[1, 3, 5].map((i) => parseInt(navy.slice(i, i + 2), 16))) + Math.min(...[1, 3, 5].map((i) => parseInt(navy.slice(i, i + 2), 16)))) / 2 / 255
+  assert.ok(l >= 0.49, navy)
 })

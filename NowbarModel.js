@@ -556,6 +556,80 @@ function safeArtUrl(url) {
   return isPrivateHost(m[1]) ? "" : u
 }
 
+// --- accent color from the cover ------------------------------------------------
+// Input: ImageMagick's `-format %c histogram:info:-` of the (already validated)
+// cover, one "count: (r,g,b) #RRGGBB ..." line per color. Output: "#rrggbb", or
+// "" when the cover has no real color (black, white, gray), so the theme's
+// accent stays.
+
+function parseHistogram(text) {
+  var out = []
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length && out.length < 64; i++) {
+    var m = /^\s*(\d+):\s*\([^)]*\)\s*#([0-9A-Fa-f]{6})(?:[0-9A-Fa-f]{2})?\b/.exec(lines[i])
+    if (!m) continue
+    var hex = m[2]
+    out.push({
+      count: parseInt(m[1], 10),
+      r: parseInt(hex.slice(0, 2), 16) / 255,
+      g: parseInt(hex.slice(2, 4), 16) / 255,
+      b: parseInt(hex.slice(4, 6), 16) / 255
+    })
+  }
+  return out
+}
+
+function rgbToHsl(r, g, b) {
+  var max = Math.max(r, g, b)
+  var min = Math.min(r, g, b)
+  var l = (max + min) / 2
+  var d = max - min
+  if (d === 0) return { h: 0, s: 0, l: l }
+  var s = d / (1 - Math.abs(2 * l - 1))
+  var h
+  if (max === r) h = ((g - b) / d) % 6
+  else if (max === g) h = (b - r) / d + 2
+  else h = (r - g) / d + 4
+  h = h * 60
+  if (h < 0) h += 360
+  return { h: h, s: Math.min(1, s), l: l }
+}
+
+function hslToHex(h, s, l) {
+  var c = (1 - Math.abs(2 * l - 1)) * s
+  var x = c * (1 - Math.abs((h / 60) % 2 - 1))
+  var m = l - c / 2
+  var rgb = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
+    : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+  return "#" + rgb.map(function(v) {
+    var n = Math.round((v + m) * 255)
+    return (n < 16 ? "0" : "") + Math.max(0, Math.min(255, n)).toString(16)
+  }).join("")
+}
+
+var ACCENT_MIN_SATURATION = 0.22
+
+// The most "vivid" color weighted by how much of the cover it covers, then
+// brought to a lightness/saturation that reads well on a dark or light bar.
+function accentFromHistogram(text) {
+  var colors = parseHistogram(text)
+  var best = null
+  var bestScore = 0
+  for (var i = 0; i < colors.length; i++) {
+    var c = colors[i]
+    var max = Math.max(c.r, c.g, c.b)
+    var min = Math.min(c.r, c.g, c.b)
+    var sat = max > 0 ? (max - min) / max   // HSV saturation
+      : 0
+    if (sat < ACCENT_MIN_SATURATION || max < 0.2 || (min > 0.92)) continue
+    var score = c.count * sat * sat * max
+    if (score > bestScore) { bestScore = score; best = c }
+  }
+  if (!best) return ""
+  var hsl = rgbToHsl(best.r, best.g, best.b)
+  return hslToHex(hsl.h, Math.max(0.45, hsl.s), Math.max(0.5, Math.min(0.7, hsl.l)))
+}
+
 // --- live updates pushed by scripts (IPC `push <id> <json>`) --------------------
 // Text only: nothing in a pushed activity is ever run, opened or rendered as
 // markup. Ids are short slugs so they can't collide with built-in modules.
@@ -738,6 +812,7 @@ function defaultPrefs() {
     whenEmpty: "icon",      // "icon" keeps a small pill to open the popup; "hide" hides it
     showProgress: true,     // thin progress line under the pill text
     showCount: true,        // "2/4" when there is more than one activity
+    coverAccent: true,      // media: accent color taken from the cover art
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
     maxWidth: 220           // width of the text area: the pill always has this size
   }
@@ -825,6 +900,8 @@ if (typeof module !== "undefined") {
     mediaActivity: mediaActivity,
     isPrivateHost: isPrivateHost,
     safeArtUrl: safeArtUrl,
+    parseHistogram: parseHistogram,
+    accentFromHistogram: accentFromHistogram,
     validPushId: validPushId,
     sanitizePush: sanitizePush,
     upsertPush: upsertPush,
