@@ -13,6 +13,9 @@ activities and click it to see the details and controls.
 - **Scroll** over the pill to go to the next or previous activity.
 - **Popup carousel** with ‹ › arrows, dots and ←/→ keys. Each card has the
   details and that activity's buttons.
+- **Urgent activities turn red:** camera or microphone in use, screen
+  recording, low battery and a script that failed paint the pill and the popup
+  (border and background) red, whatever the "Dynamic colors" option says.
 - **New activities take the pill** when they matter more than the current one
   (camera on, recording started...). Switching by hand pauses this for a few
   seconds.
