@@ -13,6 +13,9 @@ Column {
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
 
+  // True while typing in a text field: the popup's key shortcuts step aside.
+  readonly property bool editing: presetsField.activeFocus
+
   signal changed(string name, var value)
   signal resetRequested()
   signal backRequested()
@@ -156,6 +159,8 @@ Column {
     Cell { label: "Modes"; key: "moduleModes" }
     Cell { label: "Charging"; key: "moduleCharging" }
     Cell { label: "Scripts"; key: "modulePush" }
+    Cell { label: "Bluetooth"; key: "moduleBluetooth" }
+    Cell { label: "Screenshots"; key: "moduleScreenshot" }
   }
 
   PanelSeparator { foreground: root.foreground }
@@ -206,12 +211,13 @@ Column {
 
   Option {
     label: "When nothing is going on"
-    hint: "Keep a small pill to open the popup, or hide it."
+    hint: "Brief: weather, next reminder and updates. Empty: just the pill. Hide: no pill."
     ButtonGroup {
       foreground: root.foreground
       fontFamily: root.fontFamily
       options: [
-        { value: "icon", label: "Icon" },
+        { value: "brief", label: "Brief" },
+        { value: "icon", label: "Empty" },
         { value: "hide", label: "Hide" }
       ]
       value: root.prefs.whenEmpty
@@ -245,6 +251,68 @@ Column {
       to: 600
       stepSize: 20
       onModified: function(v) { root.changed("maxWidth", v) }
+    }
+  }
+
+  PanelSeparator { foreground: root.foreground }
+
+  PanelSectionHeader {
+    text: "TIMERS"
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+  }
+
+  Option {
+    label: "Quick start timers"
+    hint: "Minutes, separated by commas (up to 6). Enter to save."
+    TextField {
+      id: presetsField
+      width: Style.space(120)
+      foreground: root.foreground
+      text: root.prefs.timerPresets
+      placeholderText: "1,5,10,25"
+      onAccepted: { root.changed("timerPresets", text); focus = false }
+      onEditingFinished: if (text !== root.prefs.timerPresets) root.changed("timerPresets", text)
+    }
+  }
+
+  Option {
+    label: "Pomodoro focus (min)"
+    NumberField {
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      value: root.prefs.pomodoroFocus
+      from: 1
+      to: 180
+      stepSize: 5
+      onModified: function(v) { root.changed("pomodoroFocus", v) }
+    }
+  }
+
+  Option {
+    label: "Pomodoro break (min)"
+    hint: "Every 4th break is the long one."
+    NumberField {
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      value: root.prefs.pomodoroBreak
+      from: 1
+      to: 60
+      stepSize: 1
+      onModified: function(v) { root.changed("pomodoroBreak", v) }
+    }
+  }
+
+  Option {
+    label: "Pomodoro long break (min)"
+    NumberField {
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      value: root.prefs.pomodoroLongBreak
+      from: 1
+      to: 120
+      stepSize: 5
+      onModified: function(v) { root.changed("pomodoroLongBreak", v) }
     }
   }
 }

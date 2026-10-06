@@ -54,12 +54,19 @@ Panel {
 
   // Only ever the local file the service downloaded and checked (see
   // Service.qml's refreshArt), never the player's raw URL.
-  readonly property string coverUrl: focused && focused.module === "media" && service ? service.safeArtPath : ""
+  readonly property string coverUrl: focused && service && focused.id === service.artActivityId ? service.safeArtPath : ""
+  // Screenshot cards show the file itself (a local file in the screenshots
+  // folder; decoded at thumbnail size only).
+  readonly property string shotUrl: focused && focused.module === "screenshot" && focused.image ? Util.fileUrl(focused.image) : ""
+  readonly property string cardImage: coverUrl || shotUrl
+
+  // Now Brief: what the pill shows when nothing is going on.
+  readonly property var brief: service ? service.brief : null
 
   property bool settingsOpen: false
   onOpenedChanged: if (!opened) settingsOpen = false
 
-  readonly property bool shown: count > 0 || prefs.whenEmpty === "icon"
+  readonly property bool shown: count > 0 || prefs.whenEmpty !== "hide"
   visible: shown
   implicitWidth: shown ? (vertical ? barSize : pill.width + Style.space(8)) : 0
   implicitHeight: shown ? (vertical ? pill.height + Style.space(8) : barSize) : 0
@@ -150,7 +157,7 @@ Panel {
         width: Style.space(16)
         horizontalAlignment: Text.AlignHCenter
         textFormat: Text.PlainText
-        text: pill.hasActivity ? root.focused.icon : "\u{f0996}"
+        text: pill.hasActivity ? root.focused.icon : (root.brief ? root.brief.icon : "\u{f0996}")
         color: pill.hasActivity && root.focused.urgent ? Color.urgent : root.fg
         opacity: pill.hasActivity ? 1 : 0.6
         font.family: root.family
@@ -169,7 +176,7 @@ Panel {
         height: measure.implicitHeight
         clip: true
 
-        readonly property string label: pill.hasActivity ? root.focused.pillText : "Nothing going on"
+        readonly property string label: pill.hasActivity ? root.focused.pillText : (root.brief ? root.brief.pillText : "Nothing going on")
         readonly property real gap: Style.space(28)
         readonly property real fullWidth: measure.implicitWidth
         readonly property bool overflows: fullWidth > width
@@ -319,7 +326,7 @@ Panel {
 
   // --- popup --------------------------------------------------------------------
 
-  readonly property var presets: [60, 300, 600, 1500]
+  readonly property var presets: prefs.presetSeconds
 
   KeyboardPanel {
     id: popup
@@ -334,6 +341,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: root.settingsOpen && settingsView.editing
 
       onMoveRequested: function(dx, dy) {
         if (!root.settingsOpen && dx !== 0 && root.service) root.service.step(dx)
@@ -355,6 +363,7 @@ Panel {
         var n = parseInt(t, 10)
         if (n >= 1 && n <= root.presets.length) root.service.startTimer(root.presets[n - 1])
         else if (t === "s" || t === "S") root.service.startStopwatch()
+        else if (t === "p" || t === "P") root.service.startPomodoro()
       }
 
       Flickable {
@@ -480,9 +489,10 @@ Panel {
 
               Rectangle {
                 id: cardIcon
-                // Media with cover art gets the cover, like omarchy-plugin-media.
-                readonly property bool hasCover: root.coverUrl !== ""
-                width: Style.space(hasCover ? 64 : 48)
+                // Media with cover art gets the cover, like omarchy-plugin-media;
+                // a screenshot gets its thumbnail.
+                readonly property bool hasCover: root.cardImage !== ""
+                width: Style.space(root.shotUrl !== "" ? 96 : (hasCover ? 64 : 48))
                 height: width
                 radius: hasCover ? Style.spacing.labelGap : width / 2
                 color: Util.alpha(root.accentFor(root.focused), 0.2)
@@ -492,7 +502,9 @@ Panel {
                   anchors.margins: Style.space(2)
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
-                  source: root.coverUrl
+                  sourceSize.width: 256
+                  sourceSize.height: 256
+                  source: root.cardImage
                   visible: cardIcon.hasCover && status === Image.Ready
                 }
 
@@ -536,19 +548,134 @@ Panel {
               }
             }
 
-            Rectangle {
+            // Media you can seek: click or drag along the bar.
+            Item {
+              id: progressBar
               width: parent.width
               visible: root.focused !== null && root.focused.progress >= 0
-              height: Style.space(4)
-              radius: height / 2
-              color: Util.alpha(root.popupFg, 0.15)
+              height: seekable ? Style.space(16) : Style.space(4)
+
+              readonly property bool seekable: root.focused !== null && root.focused.seekable === true
+              property bool dragging: false
+              property real dragValue: 0
+              readonly property real shownValue: dragging ? dragValue
+                : (root.focused ? Math.max(0, Math.min(1, root.focused.progress)) : 0)
 
               Rectangle {
-                height: parent.height
-                radius: parent.radius
-                width: root.focused ? parent.width * Math.max(0, Math.min(1, root.focused.progress)) : 0
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width
+                height: Style.space(4)
+                radius: height / 2
+                color: Util.alpha(root.popupFg, 0.15)
+
+                Rectangle {
+                  height: parent.height
+                  radius: parent.radius
+                  width: parent.width * progressBar.shownValue
+                  color: root.accentFor(root.focused)
+                  Behavior on width {
+                    enabled: !progressBar.dragging
+                    NumberAnimation { duration: 300 }
+                  }
+                }
+              }
+
+              Rectangle {
+                visible: progressBar.seekable
+                readonly property real size: Style.space(progressBar.dragging ? 14 : 10)
+                width: size
+                height: size
+                radius: size / 2
+                anchors.verticalCenter: parent.verticalCenter
+                x: Math.max(0, Math.min(progressBar.width - size, progressBar.width * progressBar.shownValue - size / 2))
                 color: root.accentFor(root.focused)
-                Behavior on width { NumberAnimation { duration: 300 } }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                enabled: progressBar.seekable
+                cursorShape: Qt.PointingHandCursor
+                function valueAt(x) { return Math.max(0, Math.min(1, x / progressBar.width)) }
+                onPressed: function(mouse) { progressBar.dragging = true; progressBar.dragValue = valueAt(mouse.x) }
+                onPositionChanged: function(mouse) { if (progressBar.dragging) progressBar.dragValue = valueAt(mouse.x) }
+                onReleased: {
+                  if (progressBar.dragging && root.service && root.focused) root.service.seek(root.focused.id, progressBar.dragValue)
+                  progressBar.dragging = false
+                }
+                onCanceled: progressBar.dragging = false
+              }
+            }
+
+            // Player volume (media cards whose player reports one).
+            Row {
+              id: volumeRow
+              width: parent.width
+              spacing: Style.space(8)
+              visible: root.focused !== null && root.focused.module === "media" && root.focused.volume >= 0
+
+              property bool dragging: false
+              property real dragValue: 0
+              readonly property real level: dragging ? dragValue : (root.focused && root.focused.volume >= 0 ? root.focused.volume : 0)
+
+              Text {
+                id: volumeIcon
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: volumeRow.level <= 0 ? "\u{f0581}" : (volumeRow.level < 0.5 ? "\u{f0580}" : "\u{f057e}")
+                color: root.popupFg
+                font.family: root.family
+                font.pixelSize: Style.font.body
+              }
+
+              Item {
+                id: volumeTrack
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - volumeIcon.width - volumePct.width - parent.spacing * 2
+                height: Style.space(14)
+
+                Rectangle {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: parent.width
+                  height: Style.space(4)
+                  radius: height / 2
+                  color: Util.alpha(root.popupFg, 0.15)
+
+                  Rectangle {
+                    height: parent.height
+                    radius: parent.radius
+                    width: parent.width * volumeRow.level
+                    color: root.accentFor(root.focused)
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  function set(x) {
+                    volumeRow.dragValue = Math.max(0, Math.min(1, x / volumeTrack.width))
+                    if (root.service && root.focused) root.service.setVolume(root.focused.id, volumeRow.dragValue)
+                  }
+                  onPressed: function(mouse) { volumeRow.dragging = true; set(mouse.x) }
+                  onPositionChanged: function(mouse) { if (volumeRow.dragging) set(mouse.x) }
+                  onReleased: volumeRow.dragging = false
+                  onCanceled: volumeRow.dragging = false
+                  onWheel: function(wheel) {
+                    if (!root.service || !root.focused) return
+                    root.service.setVolume(root.focused.id, volumeRow.level + (wheel.angleDelta.y > 0 ? 0.05 : -0.05))
+                  }
+                }
+              }
+
+              Text {
+                id: volumePct
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(34)
+                horizontalAlignment: Text.AlignRight
+                textFormat: Text.PlainText
+                text: Math.round(volumeRow.level * 100) + "%"
+                color: Qt.darker(root.popupFg, 1.3)
+                font.family: root.family
+                font.pixelSize: Style.font.caption
               }
             }
 
@@ -616,8 +743,24 @@ Panel {
             visible: root.focused === null
             spacing: Style.space(4)
 
+            Repeater {
+              model: root.brief ? root.brief.lines : []
+
+              Text {
+                required property var modelData
+                width: parent.width
+                textFormat: Text.PlainText
+                text: modelData
+                color: root.popupFg
+                font.family: root.family
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+              }
+            }
+
             Text {
               width: parent.width
+              visible: !root.brief
               textFormat: Text.PlainText
               text: "Nothing going on"
               color: root.popupFg
@@ -630,6 +773,7 @@ Panel {
               width: parent.width
               textFormat: Text.PlainText
               wrapMode: Text.WordWrap
+              topPadding: root.brief ? Style.space(6) : 0
               text: "Media, timers, reminders, screen recording, camera/mic use and more show up here while they are active."
               color: Qt.darker(root.popupFg, 1.4)
               font.family: root.family
@@ -672,6 +816,23 @@ Panel {
             foreground: root.popupFg
             tooltipText: "Start the stopwatch (s)"
             onClicked: if (root.service) root.service.startStopwatch()
+          }
+
+          Button {
+            iconText: "\u{f04fe}"
+            text: "Pomodoro"
+            foreground: root.popupFg
+            tooltipText: "Focus " + root.prefs.pomodoroFocus + " min, break " + root.prefs.pomodoroBreak + " min (p)"
+            onClicked: if (root.service) root.service.startPomodoro()
+          }
+
+          Button {
+            visible: root.prefs.moduleMedia
+            iconText: "\u{f04b2}"
+            text: "Sleep 30 min"
+            foreground: root.popupFg
+            tooltipText: "Pause the media in 30 minutes"
+            onClicked: if (root.service) root.service.startSleep(1800)
           }
         }
       }
