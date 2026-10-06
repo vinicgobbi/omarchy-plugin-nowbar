@@ -1,3 +1,9 @@
+## v0.3.0 (2026-10-06)
+
+### Feat
+
+- popup fica vermelho (borda e fundo) em atividades urgentes como a pílula: câmera/microfone em uso, gravação de tela, bateria baixa e script com erro
+
 ## v0.2.0 (2026-10-06)
 
 ### Feat
