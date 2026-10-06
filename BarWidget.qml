@@ -120,10 +120,16 @@ Panel {
   readonly property bool mediaThemed: prefs.coverAccent && !settingsOpen && focused !== null && service !== null
     && focused.id === service.artActivityId && service.artBase !== "" && service.artAccent !== ""
   readonly property bool weatherThemed: prefs.coverAccent && !settingsOpen && isWeather && !!focused.color
-  readonly property bool popupThemed: mediaThemed || weatherThemed
-  readonly property string popupTint: mediaThemed ? Model.surfaceTint(service.artBase, darkTheme)
-    : (weatherThemed ? Model.surfaceTint(focused.color, darkTheme) : "")
-  readonly property color popupAccent: mediaThemed ? coverAccent : (weatherThemed ? Qt.lighter(focused.color, 1.0) : Color.accent)
+  // Urgent activities (camera/mic in use, recording, low battery, a failed
+  // script) turn the popup red like the pill: always, like the pill, not only
+  // with "Dynamic colors".
+  readonly property bool urgentThemed: !settingsOpen && focused !== null && focused.urgent === true
+  readonly property bool popupThemed: urgentThemed || mediaThemed || weatherThemed
+  readonly property string popupTint: urgentThemed ? Model.surfaceTint(Color.urgent.toString().slice(0, 7), darkTheme)
+    : (mediaThemed ? Model.surfaceTint(service.artBase, darkTheme)
+    : (weatherThemed ? Model.surfaceTint(focused.color, darkTheme) : ""))
+  readonly property color popupAccent: urgentThemed ? Color.urgent
+    : (mediaThemed ? coverAccent : (weatherThemed ? Qt.lighter(focused.color, 1.0) : Color.accent))
   readonly property var themeBorderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
   readonly property var popupBorderSpec: popupThemed
     ? { color: popupAccent, widths: themeBorderSpec.widths, gradient: { colors: [], angle: 0, enabled: false } }
