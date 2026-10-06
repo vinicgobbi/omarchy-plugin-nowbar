@@ -24,7 +24,7 @@
     "description": "Pill with the current live activity: scroll to switch, left click for the details, middle click for the main action",
     "category": "System",
     "allowMultiple": false,
-    "defaultSection": "rigth",
+    "defaultSection": "left",
     "defaults": {
       "moduleMedia": true,
       "moduleTimer": true,
