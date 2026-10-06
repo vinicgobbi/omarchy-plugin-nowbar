@@ -1290,6 +1290,12 @@ Item {
     return true
   }
 
+  Timer {
+    id: weatherWidgetRetry
+    interval: 3000
+    onTriggered: root.checkWeatherWidget()
+  }
+
   Process {
     id: weatherWidgetProcess
     stdout: StdioCollector {
@@ -1297,6 +1303,8 @@ Item {
       onStreamFinished: {
         var t = String(text || "").trim()
         if (t === "replaced" || t === "native") root.weatherWidgetState = t
+        // The shell doesn't answer `omarchy plugin list` while starting.
+        else if (root.weatherWidgetAction === "status" && root.weatherWidgetState === "") weatherWidgetRetry.restart()
       }
     }
     onExited: function(exitCode) {
