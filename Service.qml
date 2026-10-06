@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Bluetooth
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
 import Quickshell.Services.UPower
@@ -29,13 +30,16 @@ Item {
 
   property var timerState: Model.idleTimer()
   property var stopwatchState: Model.idleStopwatch()
+  property var pomodoroState: Model.idlePomodoro()
+  property var sleepState: Model.idleSleep()
+  readonly property var pomodoroCfg: Model.pomodoroConfig(prefs)
   property bool stateLoaded: false
 
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/vinicgobbi.nowbar"
 
   function saveState() {
     if (!stateLoaded) return
-    stateFile.setText(JSON.stringify({ timer: timerState, stopwatch: stopwatchState }) + "\n")
+    stateFile.setText(JSON.stringify({ timer: timerState, stopwatch: stopwatchState, pomodoro: pomodoroState, sleep: sleepState }) + "\n")
   }
 
   function restoreState(text) {
@@ -43,6 +47,8 @@ Item {
     try { data = JSON.parse(String(text || "{}")) || {} } catch (e) { data = {} }
     timerState = Model.normalizeTimer(data.timer)
     stopwatchState = Model.normalizeStopwatch(data.stopwatch)
+    pomodoroState = Model.normalizePomodoro(data.pomodoro)
+    sleepState = Model.normalizeSleep(data.sleep)
     stateLoaded = true
     root.now = Date.now()
     checkTimer()
@@ -64,7 +70,10 @@ Item {
   }
 
   function startTimer(seconds) {
-    timerState = Model.startTimer(seconds, Date.now())
+    var t = Model.startTimer(seconds, Date.now())
+    // An invalid duration leaves a running timer alone.
+    if (t.state !== "running") return false
+    timerState = t
     root.now = Date.now()
     if (timerState.state === "running") focusId = "timer"
     saveState()
@@ -78,21 +87,61 @@ Item {
     saveState()
   }
 
-  function checkTimer() {
-    if (!Model.timerFinished(timerState, root.now)) return
-    var label = Model.presetLabel(timerState.durationMs / 1000)
-    timerState = Model.idleTimer()
+  function startPomodoro() {
+    pomodoroState = Model.startPomodoro(pomodoroCfg, Date.now())
+    root.now = Date.now()
+    focusId = "pomodoro"
     saveState()
-    // Fixed headline first: the helper treats leading "--x" words as options.
-    Quickshell.execDetached(["omarchy-notification-send", "-g", "\u{f13ab}", "-u", "critical", "Timer finished", label + " timer is up"])
+  }
+
+  function startSleep(seconds) {
+    var s = Model.startTimer(seconds, Date.now())
+    if (s.state !== "running") return false
+    sleepState = s
+    root.now = Date.now()
+    saveState()
+    return true
+  }
+
+  // Fixed headline first in every notification: the helper treats leading
+  // "--x" words as options.
+  function notify(glyph, headline, body) {
+    Quickshell.execDetached(["omarchy-notification-send", "-g", glyph, "-u", "critical", headline, body])
+  }
+
+  // Runs on every tick (and after a restore): ends whatever ran out.
+  function checkTimer() {
+    var t = root.now
+    var changed = false
+    if (Model.timerFinished(timerState, t)) {
+      notify("\u{f13ab}", "Timer finished", Model.presetLabel(timerState.durationMs / 1000) + " timer is up")
+      timerState = Model.idleTimer()
+      changed = true
+    }
+    if (Model.timerFinished(pomodoroState, t)) {
+      var was = pomodoroState.phase
+      pomodoroState = Model.nextPomodoro(pomodoroState, pomodoroCfg, t)
+      notify("\u{f04fe}", was === "focus" ? "Focus done" : "Break over",
+        was === "focus" ? "Take a " + (pomodoroState.phase === "longBreak" ? "long " : "") + "break: " + Model.presetLabel(pomodoroState.durationMs / 1000)
+          : "Back to focus: " + Model.presetLabel(pomodoroState.durationMs / 1000))
+      changed = true
+    }
+    if (Model.timerFinished(sleepState, t)) {
+      sleepState = Model.idleSleep()
+      pauseAllMedia()
+      changed = true
+    }
+    if (changed) saveState()
   }
 
   // --- media (MPRIS) ----------------------------------------------------------
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
-  // Last player seen playing this session: a paused player only shows up if
-  // it is this one, so stray paused browser tabs don't fill the bar.
-  property string lastPlayingKey: ""
+  // Players seen playing this session, as { key: last time seen playing }. A
+  // paused player only shows up if it is here, so stray paused browser tabs
+  // don't fill the bar, but pausing from a card keeps the card to resume.
+  property var playedKeys: ({})
+  readonly property int maxPausedCards: 3
 
   function playerKey(p) {
     return p ? String(p.dbusName || p.desktopEntry || p.identity || "") : ""
@@ -107,10 +156,17 @@ Item {
   }
 
   function syncLastPlaying() {
-    for (var i = 0; i < players.length; i++) {
-      var p = players[i]
-      if (p && p.isPlaying && !isProxy(p) && hasTrack(p)) { lastPlayingKey = playerKey(p); return }
+    var t = Date.now()
+    var next = {}
+    var alive = {}
+    for (var i = 0; i < players.length; i++) alive[playerKey(players[i])] = true
+    // Forget players that went away.
+    for (var k in playedKeys) if (alive[k]) next[k] = playedKeys[k]
+    for (var j = 0; j < players.length; j++) {
+      var p = players[j]
+      if (p && p.isPlaying && !isProxy(p) && hasTrack(p)) next[playerKey(p)] = t
     }
+    playedKeys = next
   }
 
   onPlayersChanged: syncLastPlaying()
@@ -124,35 +180,69 @@ Item {
     }
   }
 
-  readonly property var mediaPlayer: {
-    var playingProxy = null
-    var last = null
+  // Players shown as activities: every one playing (playerctld's proxy only
+  // when no real player is), plus the last one that played if now paused.
+  readonly property var mediaPlayers: {
+    var list = []
+    var proxies = []
+    var paused = []
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (!hasTrack(p)) continue
-      if (p.isPlaying && !isProxy(p)) return p
-      if (p.isPlaying && !playingProxy) playingProxy = p
-      if (!isProxy(p) && playerKey(p) === lastPlayingKey) last = p
+      if (p.isPlaying) (isProxy(p) ? proxies : list).push(p)
+      else if (!isProxy(p) && playedKeys[playerKey(p)] !== undefined) paused.push(p)
     }
-    return playingProxy || last
+    if (list.length === 0) list = proxies.slice(0, 1)
+    // Most recently played first.
+    paused.sort(function(a, b) { return playedKeys[playerKey(b)] - playedKeys[playerKey(a)] })
+    return list.concat(paused.slice(0, maxPausedCards))
   }
 
-  readonly property var mediaInfo: {
-    var p = mediaPlayer
+  readonly property var mediaInfos: {
     // Read `now` so the position (which MPRIS doesn't push) refreshes each tick.
     var _tick = root.now
-    if (!p) return null
-    return {
-      key: playerKey(p),
-      title: p.trackTitle || "",
-      artist: p.trackArtist || "",
-      player: p.identity || p.desktopEntry || "",
-      playing: !!p.isPlaying,
-      canToggle: !!(p.canTogglePlaying || p.canPlay || p.canPause),
-      canPrevious: !!p.canGoPrevious,
-      canNext: !!p.canGoNext,
-      position: p.positionSupported ? p.position : 0,
-      length: p.lengthSupported ? p.length : 0
+    return mediaPlayers.map(function(p) {
+      return {
+        key: playerKey(p),
+        title: p.trackTitle || "",
+        artist: p.trackArtist || "",
+        player: p.identity || p.desktopEntry || "",
+        playing: !!p.isPlaying,
+        canToggle: !!(p.canTogglePlaying || p.canPlay || p.canPause),
+        canPrevious: !!p.canGoPrevious,
+        canNext: !!p.canGoNext,
+        canSeek: !!p.canSeek && !!p.positionSupported,
+        position: p.positionSupported ? p.position : 0,
+        length: p.lengthSupported ? p.length : 0,
+        volumeSupported: !!p.volumeSupported,
+        volume: p.volumeSupported ? p.volume : 0
+      }
+    })
+  }
+
+  // The player whose cover is shown (and colors the accent): the focused
+  // media card, else the first one.
+  readonly property var mediaPlayer: {
+    var list = mediaPlayers
+    if (list.length === 0) return null
+    for (var i = 0; i < list.length; i++)
+      if (Model.mediaId(playerKey(list[i])) === focusId) return list[i]
+    return list[0]
+  }
+  readonly property string artActivityId: mediaPlayer ? Model.mediaId(playerKey(mediaPlayer)) : ""
+
+  function playerForKey(key) {
+    for (var i = 0; i < players.length; i++) if (playerKey(players[i]) === key) return players[i]
+    return null
+  }
+
+  function pauseAllMedia() {
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i]
+      if (p && p.isPlaying) {
+        if (p.canPause) p.pause()
+        else if (p.canTogglePlaying) p.togglePlaying()
+      }
     }
   }
 
@@ -358,8 +448,8 @@ Item {
     }
   }
 
-  function mediaAction(action) {
-    var p = mediaPlayer
+  function mediaAction(key, action) {
+    var p = playerForKey(key)
     if (!p) return
     if (action === "playPause") {
       if (p.canTogglePlaying) p.togglePlaying()
@@ -367,6 +457,32 @@ Item {
       else if (p.canPlay) p.play()
     } else if (action === "next" && p.canGoNext) p.next()
     else if (action === "previous" && p.canGoPrevious) p.previous()
+  }
+
+  function findActivity(activityId) {
+    for (var i = 0; i < allActivities.length; i++) if (allActivities[i].id === activityId) return allActivities[i]
+    return null
+  }
+
+  // Seek a media card to a fraction (0..1) of its track.
+  function seek(activityId, fraction) {
+    var a = findActivity(activityId)
+    if (!a || a.module !== "media" || !a.seekable) return false
+    var p = playerForKey(a.target)
+    if (!p) return false
+    p.position = Math.max(0, Math.min(1, fraction)) * a.length
+    root.now = Date.now()
+    return true
+  }
+
+  function setVolume(activityId, value) {
+    var a = findActivity(activityId)
+    if (!a || a.module !== "media" || a.volume < 0) return false
+    var p = playerForKey(a.target)
+    if (!p || !p.volumeSupported) return false
+    p.volume = Math.max(0, Math.min(1, value))
+    root.now = Date.now()
+    return true
   }
 
   // --- reminders (omarchy-reminder) -------------------------------------------
@@ -595,12 +711,15 @@ Item {
   Process {
     id: modesProcess
     property bool again: false
-    // Always three lines (an empty one when a call fails), in this order.
+    // Always four lines (an empty one when a call fails), in this order, then
+    // the active NetworkManager connections (see Model.parseModes).
     command: ["sh", "-c",
       "a=$(omarchy-shell notifications isDnd 2>/dev/null | head -n1); "
       + "b=$(omarchy-shell idle status 2>/dev/null | head -n1); "
       + "c=$(omarchy-shell nightlight status 2>/dev/null | head -n1); "
-      + "printf '%s\\n%s\\n%s\\n' \"$a\" \"$b\" \"$c\""]
+      + "d=$(command -v tailscale >/dev/null 2>&1 && timeout 3 tailscale status --json 2>/dev/null | jq -r '.BackendState // empty' 2>/dev/null | head -n1); "
+      + "printf '%s\\n%s\\n%s\\n%s\\n' \"$a\" \"$b\" \"$c\" \"$d\"; "
+      + "command -v nmcli >/dev/null 2>&1 && timeout 3 nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | head -n 20; exit 0"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.modesState = Model.parseModes(text)
@@ -653,6 +772,10 @@ Item {
     if (action === "dnd") Quickshell.execDetached(["omarchy-shell", "-q", "notifications", "setDnd", "off"])
     else if (action === "stayAwake") Quickshell.execDetached(["omarchy-toggle-idle", "allow-idle"])
     else if (action === "nightlight") Quickshell.execDetached(["omarchy-shell", "-q", "nightlight", "disable"])
+    else if (action.indexOf("vpnDown:") === 0) {
+      var vpn = (modesState.vpns || [])[parseInt(action.slice(8), 10)]
+      if (vpn && vpn.kind === "nm" && vpn.raw) Quickshell.execDetached(["nmcli", "connection", "down", "id", vpn.raw])
+    }
     modesFollowUp.restart()
   }
 
@@ -666,9 +789,146 @@ Item {
       charging: d.state === UPowerDeviceState.Charging,
       onBattery: UPower.onBattery,
       percentage: d.percentage,
-      timeToFull: d.timeToFull
+      timeToFull: d.timeToFull,
+      timeToEmpty: d.timeToEmpty
     }
   }
+
+  // --- Bluetooth: a device that just connected, for a few seconds ---------------------
+
+  // { address: { address, name, battery, until } }
+  property var btRecent: ({})
+
+  function bluetoothConnected(dev) {
+    if (!modules.bluetooth || !dev) return
+    var next = {}
+    for (var k in btRecent) next[k] = btRecent[k]
+    var address = String(dev.address || "")
+    next[address] = {
+      address: address,
+      name: dev.name || dev.deviceName || "",
+      battery: dev.batteryAvailable ? dev.battery : -1,
+      until: Date.now() + Model.BLUETOOTH_SHOW_MS
+    }
+    btRecent = next
+    root.now = Date.now()
+  }
+
+  function pruneBluetooth(t) {
+    var next = {}
+    var changed = false
+    for (var k in btRecent) {
+      if (btRecent[k].until > t) next[k] = btRecent[k]
+      else changed = true
+    }
+    if (changed) btRecent = next
+  }
+
+  // Only changes count: devices already connected when the shell starts
+  // don't pop up.
+  Instantiator {
+    model: Bluetooth.devices ? Bluetooth.devices.values : []
+    delegate: Connections {
+      required property var modelData
+      target: modelData
+      function onConnectedChanged() { if (modelData.connected) root.bluetoothConnected(modelData) }
+    }
+  }
+
+  // --- screenshots: a file just saved in the screenshots folder ----------------------
+  // Same folder as omarchy-capture-screenshot. Needs inotifywait.
+
+  readonly property string screenshotDir: Quickshell.env("OMARCHY_SCREENSHOT_DIR") || Quickshell.env("XDG_PICTURES_DIR") || (Quickshell.env("HOME") + "/Pictures")
+  readonly property string screenshotEditor: Quickshell.env("OMARCHY_SCREENSHOT_EDITOR") || "tensaku-edit"
+  // { path, name, until } or null
+  property var screenshot: null
+
+  Process {
+    id: screenshotWatch
+    command: ["sh", "-c",
+      "command -v inotifywait >/dev/null 2>&1 || exit 3; [ -d \"$1\" ] || exit 4; "
+      + "exec setpriv --pdeathsig TERM inotifywait -mq -e close_write,moved_to --format %f -- \"$1\"", "_", root.screenshotDir]
+    running: root.modules.screenshot
+    stdout: SplitParser {
+      onRead: function(name) {
+        if (!Model.validScreenshotName(name)) return
+        root.screenshot = { path: root.screenshotDir + "/" + name, name: name, until: Date.now() + Model.SCREENSHOT_SHOW_MS }
+        root.now = Date.now()
+      }
+    }
+    // No inotifywait (3): nothing to do. No folder yet (4) or a crash: retry.
+    onExited: function(exitCode) {
+      if (exitCode !== 3 && root.modules.screenshot) screenshotWatchRetry.restart()
+    }
+  }
+
+  Timer {
+    id: screenshotWatchRetry
+    interval: 60000
+    onTriggered: if (root.modules.screenshot && !screenshotWatch.running) screenshotWatch.running = true
+  }
+
+  function screenshotAction(action) {
+    var s = screenshot
+    if (!s) return
+    if (action === "edit") Quickshell.execDetached([screenshotEditor, s.path])
+    else if (action === "open") Quickshell.execDetached(["xdg-open", s.path])
+    else if (action === "copy") Quickshell.execDetached(["sh", "-c", "wl-copy --type \"$2\" < \"$1\"", "_", s.path,
+      /\.png$/i.test(s.path) ? "image/png" : "image/jpeg"])
+    screenshot = null
+  }
+
+  // --- Now Brief: weather and updates, for the pill when nothing goes on ---------------
+
+  property var weather: ({ icon: "", temp: "", condition: "" })
+  property bool updateAvailable: false
+  readonly property bool briefEnabled: prefs.whenEmpty === "brief"
+
+  Process {
+    id: weatherProcess
+    // Same location rules as omarchy-weather-icon: the saved place if any,
+    // else wttr.in's guess from the IP.
+    command: ["sh", "-c",
+      "q=''; if [ -s \"$HOME/.local/state/omarchy/settings/weather.json\" ]; then "
+      + "l=$(omarchy-weather-location 2>/dev/null); [ -n \"$l\" ] && q=$(jq -rn --arg l \"$l\" '$l | @uri'); fi; "
+      + "i=$(omarchy-weather-icon 2>/dev/null | head -n1); "
+      + "t=$(curl -fsS --max-time 8 \"https://wttr.in/${q}?format=%t|%C\" 2>/dev/null | head -c 200 | head -n1); "
+      + "printf '%s\\n%s\\n' \"$i\" \"$t\""]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var w = Model.parseWeather(text)
+        // Keep the last good reading when offline.
+        if (w.temp) root.weather = w
+      }
+    }
+  }
+
+  Process {
+    id: updateProcess
+    command: ["omarchy-update-available"]
+    onExited: function(exitCode) { root.updateAvailable = exitCode === 0 }
+  }
+
+  Timer {
+    interval: 30 * 60 * 1000
+    repeat: true
+    running: root.briefEnabled
+    triggeredOnStart: true
+    onTriggered: if (!weatherProcess.running) weatherProcess.running = true
+  }
+
+  Timer {
+    interval: 3 * 3600 * 1000
+    repeat: true
+    running: root.briefEnabled
+    triggeredOnStart: true
+    onTriggered: if (!updateProcess.running) updateProcess.running = true
+  }
+
+  readonly property var brief: briefEnabled
+    ? Model.briefInfo({ weather: weather, reminders: reminders, updates: updateAvailable, now: root.now })
+    : null
 
   // --- pushed live updates (IPC) ---------------------------------------------------
 
@@ -681,14 +941,19 @@ Item {
     var list = []
     list.push(Model.timerActivity(timerState, t))
     list.push(Model.stopwatchActivity(stopwatchState, t))
+    list.push(Model.pomodoroActivity(pomodoroState, pomodoroCfg, t))
+    list.push(Model.sleepActivity(sleepState, t))
     list.push(Model.remindersActivity(reminders, t))
     list.push(Model.recordingActivity(recording, t))
     list.push(Model.dictationActivity(dictationState))
     list.push(Model.privacyActivity(privacyInfo))
     list.push(Model.modesActivity(modesState))
     list.push(Model.chargingActivity(chargingInfo))
-    list.push(Model.mediaActivity(mediaInfo))
-    for (var k in pushes) list.push(Model.pushActivity(pushes[k]))
+    list.push(Model.batteryActivity(chargingInfo))
+    for (var m = 0; m < mediaInfos.length; m++) list.push(Model.mediaActivity(mediaInfos[m]))
+    for (var b in btRecent) list.push(Model.bluetoothActivity(btRecent[b]))
+    if (screenshot) list.push(Model.screenshotActivity(screenshot))
+    for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })
   }
 
@@ -735,17 +1000,23 @@ Item {
     return true
   }
 
-  function focusOn(idOrModule) {
+  // An activity id, or a module name / push id as a shortcut ("media" is the
+  // focused media card if there is one, else the first).
+  function resolveId(idOrModule) {
     var key = String(idOrModule || "")
-    for (var i = 0; i < activities.length; i++) {
-      var a = activities[i]
-      if (a.id === key || a.module === key || a.id === "push:" + key) {
-        focusId = a.id
-        manualUntil = Date.now() + 8000
-        return true
-      }
-    }
-    return false
+    var list = activities
+    for (var i = 0; i < list.length; i++) if (list[i].id === key) return key
+    if (focused && focused.module === key) return focused.id
+    for (var j = 0; j < list.length; j++) if (list[j].module === key || list[j].id === "push:" + key) return list[j].id
+    return ""
+  }
+
+  function focusOn(idOrModule) {
+    var id = resolveId(idOrModule)
+    if (!id) return false
+    focusId = id
+    manualUntil = Date.now() + 8000
+    return true
   }
 
   function dismiss(activityId) {
@@ -781,10 +1052,24 @@ Item {
 
   // Runs one of an activity's actions (the ids from NowbarModel.js).
   function act(activityId, actionId) {
+    activityId = resolveId(activityId) || activityId
     if (!offersAction(activityId, actionId)) return false
+    var a = findActivity(activityId)
     var t = Date.now()
     root.now = t
-    if (activityId === "timer") {
+    if (activityId === "pomodoro") {
+      if (actionId === "pause") pomodoroState = Model.pausePomodoro(pomodoroState, t)
+      else if (actionId === "resume") pomodoroState = Model.resumePomodoro(pomodoroState, t)
+      else if (actionId === "skip") pomodoroState = Model.nextPomodoro(pomodoroState, pomodoroCfg, t)
+      else if (actionId === "stop") pomodoroState = Model.idlePomodoro()
+      saveState()
+    } else if (activityId === "sleep") {
+      if (actionId === "add") sleepState = Model.extendTimer(sleepState, 600, t)
+      else if (actionId === "cancel") sleepState = Model.idleSleep()
+      saveState()
+    } else if (activityId === "screenshot") {
+      screenshotAction(actionId)
+    } else if (activityId === "timer") {
       if (actionId === "pause") timerState = Model.pauseTimer(timerState, t)
       else if (actionId === "resume") timerState = Model.resumeTimer(timerState, t)
       else if (actionId === "add") timerState = Model.extendTimer(timerState, 60, t)
@@ -807,8 +1092,8 @@ Item {
       muteMic()
     } else if (activityId === "modes") {
       modeAction(actionId)
-    } else if (activityId === "media") {
-      mediaAction(actionId)
+    } else if (a && a.module === "media") {
+      mediaAction(a.target, actionId)
     } else if (activityId.indexOf("push:") === 0 && actionId === "remove") {
       removePush(activityId.slice(5))
     } else {
@@ -845,7 +1130,11 @@ Item {
     || recording.active
     || reminders.length > 0
     || Object.keys(pushes).length > 0
-    || (mediaPlayer !== null && mediaPlayer.isPlaying)
+    || pomodoroState.state === "running"
+    || sleepState.state === "running"
+    || Object.keys(btRecent).length > 0
+    || screenshot !== null
+    || mediaPlayers.some(function(p) { return p.isPlaying })
 
   Timer {
     id: ticker
@@ -854,9 +1143,13 @@ Item {
     running: root.needsTick
     onTriggered: {
       root.now = Date.now()
-      if (root.mediaPlayer && root.mediaPlayer.isPlaying && root.mediaPlayer.positionSupported)
-        root.mediaPlayer.positionChanged()
+      for (var i = 0; i < root.mediaPlayers.length; i++) {
+        var p = root.mediaPlayers[i]
+        if (p.isPlaying && p.positionSupported) p.positionChanged()
+      }
       root.checkTimer()
+      root.pruneBluetooth(root.now)
+      if (root.screenshot && root.screenshot.until <= root.now) root.screenshot = null
       var pruned = Model.prunePushes(root.pushes, root.now)
       if (pruned !== root.pushes) root.pushes = pruned
     }
@@ -880,6 +1173,7 @@ Item {
     return JSON.stringify({
       focus: focusId,
       coverAccent: artAccent,
+      brief: brief ? brief.pillText : "",
       activities: activities.map(function(a) {
         return { id: a.id, module: a.module, title: a.title, subtitle: a.subtitle, progress: a.progress }
       })
@@ -904,13 +1198,22 @@ Item {
       return root.act(String(activityId), String(actionId)) ? "ok" : "unknown activity or action"
     }
 
-    function timer(seconds: string): string {
-      return root.startTimer(parseInt(seconds, 10)) ? "ok" : "invalid duration (seconds, 1-86400)"
+    // timer 90 | 25m | 1h30m | 14:30 (the next 14:30)
+    function timer(duration: string): string {
+      return root.startTimer(Model.parseTimerArg(duration, Date.now())) ? "ok" : "invalid duration: use seconds, 25m, 1h30m or HH:MM"
     }
     function stopwatch(): string { root.startStopwatch(); return "ok" }
+    function pomodoro(): string { root.startPomodoro(); return "ok" }
+    // Pause the media after a while: sleep 30m | 45 (minutes) | 23:00
+    function sleep(duration: string): string {
+      var d = String(duration || "")
+      var secs = /^\d{1,4}$/.test(d) ? parseInt(d, 10) * 60 : Model.parseTimerArg(d, Date.now())
+      return root.startSleep(secs) ? "ok" : "invalid duration: use minutes, 1h, or HH:MM"
+    }
 
     // push <id> <json>: {"title", "subtitle", "pill", "icon", "progress" 0-1,
-    // "ttl" seconds, "priority" high|normal|low, "urgent" bool}. Text only.
+    // "ttl" seconds, "priority" high|normal|low, "urgent" bool,
+    // "state" running|success|error, "elapsed" bool}. Text only.
     function push(id: string, json: string): string {
       if (!root.modules.push) return "error: the push module is turned off"
       var r = Model.sanitizePush(id, json, Date.now())
