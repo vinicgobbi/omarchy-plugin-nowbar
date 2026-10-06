@@ -1144,6 +1144,49 @@ Item {
     }
   }
 
+  // --- replacing Omarchy's weather widget (opt-in, from a button) ------------------------
+  // bin/nowbar-weather-widget turns omarchy.weather off and points Omarchy's
+  // weather shortcut here, or undoes it. Nothing happens until the user asks.
+
+  readonly property string weatherWidgetScript: decodeURIComponent(String(Qt.resolvedUrl("bin/nowbar-weather-widget")).replace(/^file:\/\//, ""))
+  // "replaced", "native", or "" before the first check.
+  property string weatherWidgetState: ""
+  property string weatherWidgetAction: ""
+
+  function checkWeatherWidget() {
+    if (weatherWidgetProcess.running) return
+    weatherWidgetAction = "status"
+    weatherWidgetProcess.command = [weatherWidgetScript, "status"]
+    weatherWidgetProcess.running = true
+  }
+
+  function setWeatherWidget(replace) {
+    if (weatherWidgetProcess.running) return false
+    weatherWidgetAction = replace ? "replace" : "restore"
+    weatherWidgetProcess.command = [weatherWidgetScript, weatherWidgetAction]
+    weatherWidgetProcess.running = true
+    return true
+  }
+
+  Process {
+    id: weatherWidgetProcess
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var t = String(text || "").trim()
+        if (t === "replaced" || t === "native") root.weatherWidgetState = t
+      }
+    }
+    onExited: function(exitCode) {
+      var action = root.weatherWidgetAction
+      root.weatherWidgetAction = ""
+      if (action === "status") return
+      if (exitCode !== 0) root.notify("\u{f0599}", "Weather widget", "Couldn't " + action + " it (exit " + exitCode + ")")
+      else if (action === "replace") root.notify("\u{f0599}", "Weather is in the Now Bar now", "The weather widget is off; SUPER+CTRL+ALT+W opens the weather card")
+      else root.notify("\u{f0599}", "Weather widget restored", "SUPER+CTRL+ALT+W opens Omarchy's weather again")
+    }
+  }
+
   Process {
     id: updateProcess
     command: ["omarchy-update-available"]
@@ -1403,6 +1446,7 @@ Item {
 
   Component.onCompleted: {
     stateDirProcess.running = true
+    checkWeatherWidget()
     syncLastPlaying()
     initArtCache()
   }

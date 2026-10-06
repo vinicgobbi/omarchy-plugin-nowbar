@@ -440,6 +440,8 @@ Panel {
           fontFamily: root.family
           onChanged: function(name, value) { root.setPref(name, value) }
           onResetRequested: root.resetPrefs()
+          weatherWidgetState: root.service ? root.service.weatherWidgetState : ""
+          onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
           onBackRequested: root.settingsOpen = false
         }
       }
@@ -548,6 +550,17 @@ Panel {
               foreground: root.popupFg
               accent: root.accentFor(root.focused)
               fontFamily: root.family
+            }
+
+            // One click to take over from Omarchy's weather widget (opt-in).
+            Button {
+              visible: root.isWeather && !!root.service && root.service.weatherWidgetState === "native"
+              iconText: "\u{f0599}"
+              text: "Use instead of the weather widget"
+              foreground: root.popupFg
+              accent: root.accentFor(root.focused)
+              tooltipText: "Turns Omarchy's weather widget off and points SUPER+CTRL+ALT+W here (undo in the options)"
+              onClicked: root.service.setWeatherWidget(true)
             }
 
             Row {

@@ -16,7 +16,11 @@ Column {
   // True while typing in a text field: the popup's key shortcuts step aside.
   readonly property bool editing: presetsField.activeFocus
 
+  // "replaced" / "native" / "" (unknown) — see bin/nowbar-weather-widget.
+  property string weatherWidgetState: ""
+
   signal changed(string name, var value)
+  signal weatherWidgetRequested(bool replace)
   signal resetRequested()
   signal backRequested()
 
@@ -252,6 +256,19 @@ Column {
       to: 600
       stepSize: 20
       onModified: function(v) { root.changed("maxWidth", v) }
+    }
+  }
+
+  Option {
+    label: "Weather widget"
+    hint: root.weatherWidgetState === "replaced"
+      ? "Replaced: Omarchy's weather widget is off and SUPER+CTRL+ALT+W opens the weather card."
+      : "Replace turns Omarchy's weather widget off and points SUPER+CTRL+ALT+W here (edits ~/.config/hypr/bindings.lua in a marked block, with a backup). Restore undoes it."
+    Button {
+      text: root.weatherWidgetState === "replaced" ? "Restore" : "Replace"
+      foreground: root.foreground
+      enabled: root.weatherWidgetState !== ""
+      onClicked: root.weatherWidgetRequested(root.weatherWidgetState !== "replaced")
     }
   }
 

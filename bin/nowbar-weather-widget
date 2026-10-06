@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Lets the Now Bar's weather card take the place of Omarchy's weather widget,
+# and puts things back. Run by the "Replace" / "Restore" buttons in the Now
+# Bar (options and weather card), or by hand:
+#
+#   nowbar-weather-widget replace   # turn omarchy.weather off, point SUPER+CTRL+ALT+W at the Now Bar
+#   nowbar-weather-widget restore   # undo both
+#   nowbar-weather-widget status    # prints "replaced" or "native"
+#
+# The shortcut goes in ~/.config/hypr/bindings.lua, inside a marked block
+# (a backup of the file is kept next to it first); restore removes only that
+# block. Nothing here needs sudo.
+
+set -euo pipefail
+
+bindings="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
+begin_marker="-- >>> vinicgobbi.nowbar weather"
+end_marker="-- <<< vinicgobbi.nowbar weather"
+
+weather_enabled() {
+  omarchy plugin list --json 2>/dev/null | jq -e 'any(.[]; .id == "omarchy.weather" and .enabled)' >/dev/null
+}
+
+has_block() {
+  [[ -f $bindings ]] && grep -qxF -- "$begin_marker" "$bindings"
+}
+
+remove_block() {
+  local tmp
+  tmp=$(mktemp "${bindings}.XXXXXX")
+  awk -v begin="$begin_marker" -v end="$end_marker" '
+    $0 == begin { skip = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+  ' "$bindings" >"$tmp"
+  mv -f -- "$tmp" "$bindings"
+}
+
+case ${1:-} in
+replace)
+  if [[ -f $bindings ]] && ! has_block; then
+    cp -p -- "$bindings" "$bindings.bak.nowbar-$(date +%s)"
+    cat >>"$bindings" <<EOF
+
+$begin_marker
+-- Added by the Now Bar; undo with its "Restore" button (or: nowbar-weather-widget restore).
+hl.unbind("SUPER + CTRL + ALT + W")
+o.bind("SUPER + CTRL + ALT + W", "Weather", "omarchy-shell nowbar weather")
+$end_marker
+EOF
+  fi
+  if weather_enabled; then omarchy plugin disable omarchy.weather >/dev/null; fi
+  echo "replaced"
+  ;;
+restore)
+  if has_block; then
+    cp -p -- "$bindings" "$bindings.bak.nowbar-$(date +%s)"
+    remove_block
+  fi
+  if ! weather_enabled; then omarchy plugin enable omarchy.weather >/dev/null; fi
+  echo "native"
+  ;;
+status)
+  if has_block && ! weather_enabled; then echo "replaced"; else echo "native"; fi
+  ;;
+*)
+  echo "Usage: nowbar-weather-widget replace|restore|status" >&2
+  exit 2
+  ;;
+esac
