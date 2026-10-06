@@ -230,6 +230,7 @@ Item {
     root._artGeneration += 1
     root._artPending = null
     root.safeArtPath = ""
+    root.artAccent = ""
     var stale = root._artCurrentFile
     root._artCurrentFile = ""
     if (stale) artCleanupProcess.remove(stale)
@@ -294,6 +295,38 @@ Item {
     }
   }
 
+  // --- accent color from the cover --------------------------------------------
+  // Only ever run on the file artFetchProcess already checked (real
+  // PNG/JPEG/GIF/WebP, size and dimensions capped), with ImageMagick's own
+  // limits on top. NowbarModel.accentFromHistogram picks the color.
+  property string artAccent: ""
+
+  function extractAccent(path, generation) {
+    if (accentProcess.running) { accentProcess.pending = { path: path, generation: generation }; return }
+    accentProcess.generation = generation
+    accentProcess.command = ["timeout", "5", "magick", "-limit", "area", "64MB", "-limit", "memory", "64MB",
+      "-limit", "map", "64MB", path + "[0]", "-resize", "64x64", "-colors", "12", "-format", "%c", "histogram:info:-"]
+    accentProcess.running = true
+  }
+
+  Process {
+    id: accentProcess
+    property int generation: 0
+    property var pending: null
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        // A newer track may have replaced the cover meanwhile.
+        if (accentProcess.generation === root._artGeneration) root.artAccent = Model.accentFromHistogram(text)
+      }
+    }
+    onExited: {
+      var next = pending
+      pending = null
+      if (next) root.extractAccent(next.path, next.generation)
+    }
+  }
+
   Process {
     id: artFetchProcess
     property int generation: 0
@@ -307,9 +340,11 @@ Item {
           var previous = root._artCurrentFile
           root._artCurrentFile = targetPath
           root.safeArtPath = Util.fileUrl(targetPath)
+          root.extractAccent(targetPath, generation)
           if (previous && previous !== targetPath) artCleanupProcess.remove(previous)
         } else {
           root.safeArtPath = ""
+          root.artAccent = ""
         }
       } else if (exitCode === 0) {
         artCleanupProcess.remove(targetPath)
@@ -844,6 +879,7 @@ Item {
   function statusJson() {
     return JSON.stringify({
       focus: focusId,
+      coverAccent: artAccent,
       activities: activities.map(function(a) {
         return { id: a.id, module: a.module, title: a.title, subtitle: a.subtitle, progress: a.progress }
       })
