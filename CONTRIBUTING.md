@@ -71,6 +71,14 @@ omarchy-shell nowbar status
 - `bin/nowbar-run` — runs a command and shows it in the pill through
   `omarchy-shell nowbar push` (payload built with `jq`)
 
+The manifest declares `"omarchy": { "clonedFrom": "omarchy.media" }`:
+enabling the Now Bar turns the built-in media service off (it goes to
+`disabledPlugins` in `shell.json`), `Service.qml` owns the `media` IPC target
+that Omarchy's media keys call, and the plugin may summon `omarchy.osd`. A
+plugin can only clone one source, so the indicators' `omarchy.indicators
+refresh` (called by `omarchy-reminder` and the screen recorder) stays with the
+built-in indicators; the Now Bar watches the same things on its own instead.
+
 A third-party plugin can't read the shell's own services (`serviceFor`
 only returns the plugin's own), so everything is read directly. Every
 command runs with a fixed argv: nothing coming from a player, a process

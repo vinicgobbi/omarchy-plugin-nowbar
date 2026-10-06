@@ -111,6 +111,25 @@ o.bind("SUPER + CTRL + ALT + period", "Now Bar: main action", "omarchy-shell now
 `primary` runs the focused activity's main action (play/pause, pause the
 timer, stop the recording...) without opening the popup.
 
+## Media keys
+
+The Now Bar takes over Omarchy's media controls: it is a clone of the
+built-in `omarchy.media`, so enabling it turns that one off and answers its
+`media` IPC target. The media keys keep working with nothing else enabled:
+
+| Key / command                                         | What it does                                       |
+| ----------------------------------------------------- | -------------------------------------------------- |
+| Play/Pause key, `omarchy-shell media playPause`       | Pauses what is playing; otherwise plays the focused card, the last player used, or any player with a track |
+| Next / Previous keys, `media next` / `media previous` | On the focused player, else the one playing        |
+| `media play` / `media pause`                          | Same choice of player                              |
+| Shift+Play, `omarchy-audio-source-switch`             | Next player, moving the playback to it (`sourceSwitch`, `sourceSwitchPrevious`) |
+| `media sourceNext` / `media sourcePrevious`           | Next / previous player, without touching playback  |
+| `media status`                                        | JSON about the player the keys act on              |
+
+Each action shows Omarchy's OSD with the track (after next/previous, the new
+one). Only one plugin can answer the `media` target: turn off
+omarchy-plugin-media (or the built-in media widget) when using the Now Bar.
+
 ## Scripts
 
 ### `nowbar-run`: show any command in the pill
@@ -191,6 +210,9 @@ polkit or the keyring.
 - **Media cards:** every player that is playing gets a card; a player you
   paused keeps its card (up to 3) so you can resume it, until it closes or
   you hide the card.
+- **Reminders** show up as soon as `omarchy-reminder` sets them (it creates a
+  transient systemd timer, watched with `inotify-tools`); without it, within
+  10 seconds.
 - **Now Brief** asks wttr.in for the weather every 30 minutes (your saved
   Omarchy weather location, or a guess from your IP) and runs
   `omarchy-update-available` every 3 hours. Choose "Empty" or "Hide" in the
@@ -202,9 +224,11 @@ Use the gear in the popup (or `c`), or the widget's settings. You can:
 
 - switch each activity type on or off;
 - turn off "focus new activities";
-- turn off "cover colors" (media takes its highlight color from the album
-  cover: the most vivid color that covers a good part of it, adjusted to stay
-  readable; black/white/gray covers keep the theme's color);
+- turn off "cover colors" (media takes its colors from the album cover: the
+  highlight is the most vivid color that covers a good part of it, the popup
+  gets that color on its border and a tint of the cover's main color as its
+  background, both adjusted to stay readable; black/white/gray covers keep the
+  theme's colors);
 - hide the progress line or the `2/4` marker;
 - choose what the pill shows when nothing is going on: the Now Brief
   (default), an empty pill, or no pill;
