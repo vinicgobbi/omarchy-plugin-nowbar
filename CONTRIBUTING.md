@@ -59,7 +59,7 @@ omarchy-shell nowbar status
 - `Service.qml` — reads every source (MPRIS, PipeWire, UPower,
   `omarchy-reminder`, `gpu-screen-recorder`, `omarchy-voxtype-status`,
   `/dev/video*` users, the shell's DND/idle/night light IPC, `nmcli` and
-  `tailscale`, Bluetooth, the screenshots folder, wttr.in and
+  `tailscale`, Bluetooth, the screenshots folder, wttr.in (`?format=j1`) and
   `omarchy-update-available`), keeps
   the list of activities and the focus, saves the timer/stopwatch/Pomodoro/sleep timer to
   `~/.local/state/vinicgobbi.nowbar/state.json`, and owns the `nowbar`
@@ -67,7 +67,14 @@ omarchy-shell nowbar status
 - `BarWidget.qml` — the pill and the carousel popup. It follows the
   service, so every monitor shows the same activity, and hands the
   widget's settings to the service
+- `WeatherCard.qml` — the weather card's layout (data from
+  `NowbarModel.parseWttr`)
 - `AdvancedSettings.qml` — the options view inside the popup
+- `bin/nowbar-weather-widget` — `replace` / `restore` / `status`: turns
+  `omarchy.weather` off (or back on) and adds (or removes) a marked block in
+  `~/.config/hypr/bindings.lua` pointing SUPER+CTRL+ALT+W at
+  `omarchy-shell nowbar weather`; run only from the options/weather card
+  buttons or by hand
 - `bin/nowbar-run` — runs a command and shows it in the pill through
   `omarchy-shell nowbar push` (payload built with `jq`)
 

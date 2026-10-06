@@ -18,8 +18,10 @@ activities and click it to see the details and controls.
   seconds.
 - **Quick start:** timers (1, 5, 10 and 25 minutes by default, configurable),
   stopwatch, Pomodoro and a 30 minute sleep timer, one click away in the popup.
-- **Now Brief** when nothing is going on: weather, the next reminder and
-  whether an Omarchy update is available.
+- **Weather card** (the Now Brief): current conditions, the next hours and 3
+  days, colored like the sky. It is one more activity in the carousel (and in
+  the `2/3` marker), but never takes the pill from a live one; alone, it is
+  what the pill shows. It replaces Omarchy's weather widget.
 - **Live updates from scripts:** your own scripts can show their progress
   in the pill (builds, downloads, deploys...). `nowbar-run` does it for any
   command. See [Scripts](#scripts).
@@ -40,7 +42,7 @@ activities and click it to see the details and controls.
 | Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left | UPower                      |
 | Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s | Quickshell Bluetooth                  |
 | Screenshot toolbar      | A screenshot just saved, with thumbnail, Edit / Copy / Open, for 15 s | The screenshots folder (inotify)   |
-| Now Brief               | Weather, next reminder, Omarchy update, when nothing else is going on | wttr.in, `omarchy-update-available` |
+| Now Brief               | Weather card: temperature, feels like, wind, humidity, rain, sunrise/sunset, next hours, 3 days; Omarchy update notice | wttr.in (Omarchy's saved location), `omarchy-update-available` |
 | Live Updates (Android)  | Anything a script sends with `nowbar push`, or a command run with `nowbar-run` | IPC                         |
 
 Not ported, since the desktop has no source for them: navigation, ride and
@@ -93,6 +95,7 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `timer <duration>`        | Start a timer: `90` (seconds), `25m`, `1h30m`, or until `14:30` |
 | `stopwatch`               | Start the stopwatch                                             |
 | `pomodoro`                | Start a Pomodoro                                                |
+| `weather`                 | Open the popup on the weather card                              |
 | `sleep <duration>`        | Pause the media after `30` (minutes), `1h`, or at `23:00`       |
 | `push <id> <json>`        | Add or update an activity from a script                         |
 | `remove <id>`             | Remove a pushed activity                                        |
@@ -110,6 +113,37 @@ o.bind("SUPER + CTRL + ALT + period", "Now Bar: main action", "omarchy-shell now
 
 `primary` runs the focused activity's main action (play/pause, pause the
 timer, stop the recording...) without opening the popup.
+
+## Weather
+
+The weather card replaces Omarchy's weather widget: same source (wttr.in),
+same saved location (`omarchy-weather-location`), °C or °F the same way
+(or set in the options). It shows:
+
+- the temperature, condition and place, today's high and low, feels like;
+- wind, humidity, today's chance of rain, and the next sunset (or sunrise);
+- the next hours (3-hour steps), with the rain chance when it's 20% or more;
+- today and the next 2 days, each with its range on a shared temperature bar.
+
+With "Dynamic colors" on, the card takes the color of the sky: gold for sun,
+blue for rain, indigo at night...
+
+To use it in place of Omarchy's weather widget, click **Use instead of the
+weather widget** on the weather card (or **Replace** next to "Weather widget"
+in the options). That turns `omarchy.weather` off and points Omarchy's weather
+shortcut, SUPER+CTRL+ALT+W, at the weather card. **Restore**, in the same
+place, undoes both.
+
+> **This edits your config:** the shortcut goes in
+> `~/.config/hypr/bindings.lua`, inside a block marked
+> `-- >>> vinicgobbi.nowbar weather` / `-- <<< vinicgobbi.nowbar weather`
+> (a copy of the file is kept next to it first, as
+> `bindings.lua.bak.nowbar-<time>`). Nothing changes until you click; no
+> `sudo` needed. The same script works from a terminal:
+
+```bash
+~/.config/omarchy/plugins/vinicgobbi.nowbar/bin/nowbar-weather-widget replace   # or restore, status
+```
 
 ## Media keys
 
@@ -213,10 +247,10 @@ polkit or the keyring.
 - **Reminders** show up as soon as `omarchy-reminder` sets them (it creates a
   transient systemd timer, watched with `inotify-tools`); without it, within
   10 seconds.
-- **Now Brief** asks wttr.in for the weather every 30 minutes (your saved
-  Omarchy weather location, or a guess from your IP) and runs
-  `omarchy-update-available` every 3 hours. Choose "Empty" or "Hide" in the
-  options to turn both off.
+- **Weather** is fetched from wttr.in every 20 minutes (and when the popup
+  opens with a reading older than 10), for your saved Omarchy weather
+  location or a guess from your IP; `omarchy-update-available` runs every 3
+  hours. Turn the "Weather" activity off to stop both.
 
 ## Options
 
@@ -224,14 +258,15 @@ Use the gear in the popup (or `c`), or the widget's settings. You can:
 
 - switch each activity type on or off;
 - turn off "focus new activities";
-- turn off "cover colors" (media takes its colors from the album cover: the
-  highlight is the most vivid color that covers a good part of it, the popup
-  gets that color on its border and a tint of the cover's main color as its
-  background, both adjusted to stay readable; black/white/gray covers keep the
-  theme's colors);
+- turn off "dynamic colors": weather takes the sky's color, and media takes
+  its colors from the album cover (the highlight is the most vivid color that
+  covers a good part of it; the popup gets it on its border, and a tint of the
+  cover's main color as its background; both stay readable, and
+  black/white/gray covers keep the theme's colors);
 - hide the progress line or the `2/4` marker;
-- choose what the pill shows when nothing is going on: the Now Brief
-  (default), an empty pill, or no pill;
+- choose what the pill shows when nothing is going on: the weather card
+  (Brief, default), an empty pill, or no pill;
+- choose °C, °F or automatic for the weather;
 - set the quick start timers (minutes, comma separated) and the Pomodoro
   focus, break and long break lengths;
 - set the pill's text width: the pill always keeps the same size, and text
