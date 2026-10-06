@@ -1,0 +1,113 @@
+#!/bin/bash
+
+# Lets the Now Bar's weather card take the place of Omarchy's weather widget,
+# and puts things back. Run by the "Replace" / "Restore" buttons in the Now
+# Bar (options and weather card), or by hand:
+#
+#   nowbar-weather-widget replace   # turn omarchy.weather off, point SUPER+CTRL+ALT+W at the Now Bar
+#   nowbar-weather-widget restore   # undo both
+#   nowbar-weather-widget status    # prints "replaced" or "native" ("unknown", exit 3, if the shell doesn't answer)
+#
+# The shortcut goes in ~/.config/hypr/bindings.lua, inside a marked block
+# (a backup of the file is kept next to it first); restore removes only that
+# block. Nothing here needs sudo.
+
+set -euo pipefail
+
+bindings="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
+begin_marker="-- >>> vinicgobbi.nowbar weather"
+end_marker="-- <<< vinicgobbi.nowbar weather"
+
+shell_json="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/vinicgobbi.nowbar"
+place_file="$state_dir/omarchy.weather.place"
+
+# The plugin list comes from the running shell over IPC; while the shell is
+# starting it may not answer. Exits 3 then, so nothing is decided on a guess.
+plugins_json() {
+  local json
+  json=$(omarchy plugin list --json 2>/dev/null) || exit 3
+  jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<<"$json" || exit 3
+  printf '%s' "$json"
+}
+
+weather_enabled() {
+  local json
+  json=$(plugins_json) || exit 3
+  jq -e 'any(.[]; .id == "omarchy.weather" and .enabled)' >/dev/null <<<"$json"
+}
+
+# "<section> <index>" of the widget in the bar, or nothing.
+current_place() {
+  [[ -f $shell_json ]] || return 0
+  jq -r '
+    .bar.layout // {} | to_entries[] | .key as $section | .value
+    | to_entries[] | select((.value | if type == "object" then .id else . end) == "omarchy.weather")
+    | "\($section) \(.key)"' "$shell_json" 2>/dev/null | head -n1
+}
+
+has_block() {
+  [[ -f $bindings ]] && grep -qxF -- "$begin_marker" "$bindings"
+}
+
+remove_block() {
+  local tmp
+  tmp=$(mktemp "${bindings}.XXXXXX")
+  awk -v begin="$begin_marker" -v end="$end_marker" '
+    $0 == begin { skip = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+  ' "$bindings" >"$tmp"
+  mv -f -- "$tmp" "$bindings"
+}
+
+case ${1:-} in
+replace)
+  if [[ -f $bindings ]] && ! has_block; then
+    cp -p -- "$bindings" "$bindings.bak.nowbar-$(date +%s)"
+    cat >>"$bindings" <<EOF
+
+$begin_marker
+-- Added by the Now Bar; undo with its "Restore" button (or: nowbar-weather-widget restore).
+hl.unbind("SUPER + CTRL + ALT + W")
+o.bind("SUPER + CTRL + ALT + W", "Weather", "omarchy-shell nowbar weather")
+$end_marker
+EOF
+  fi
+  if weather_enabled; then
+    # Remember its place in the bar, so restore puts it back there.
+    place=$(current_place)
+    if [[ -n $place ]]; then
+      mkdir -p "$state_dir"
+      printf '%s\n' "$place" >"$place_file"
+    fi
+    omarchy plugin disable omarchy.weather >/dev/null
+  fi
+  echo "replaced"
+  ;;
+restore)
+  if has_block; then
+    cp -p -- "$bindings" "$bindings.bak.nowbar-$(date +%s)"
+    remove_block
+  fi
+  if ! weather_enabled; then
+    section="" index=""
+    [[ -f $place_file ]] && read -r section index <"$place_file" || true
+    if [[ $section =~ ^(left|center|right)$ && $index =~ ^[0-9]+$ ]]; then
+      omarchy plugin enable omarchy.weather --section "$section" --index "$index" >/dev/null
+    else
+      omarchy plugin enable omarchy.weather >/dev/null
+    fi
+    rm -f -- "$place_file"
+  fi
+  echo "native"
+  ;;
+status)
+  json=$(plugins_json) || { echo "unknown"; exit 3; }
+  if has_block && ! jq -e 'any(.[]; .id == "omarchy.weather" and .enabled)' >/dev/null <<<"$json"; then echo "replaced"; else echo "native"; fi
+  ;;
+*)
+  echo "Usage: nowbar-weather-widget replace|restore|status" >&2
+  exit 2
+  ;;
+esac

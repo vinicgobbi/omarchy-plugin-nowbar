@@ -142,9 +142,9 @@ test("privacy activity combines camera and microphone", () => {
 })
 
 test("modes", () => {
-  assert.deepEqual(M.parseModes('on\n{"stayAwake":true}\n{"enabled":false}'), { dnd: true, stayAwake: true, nightlight: false })
-  assert.deepEqual(M.parseModes(""), { dnd: false, stayAwake: false, nightlight: false })
-  assert.deepEqual(M.parseModes("off\nnot json\n[1]"), { dnd: false, stayAwake: false, nightlight: false })
+  assert.deepEqual(M.parseModes('on\n{"stayAwake":true}\n{"enabled":false}'), { dnd: true, stayAwake: true, nightlight: false, vpns: [] })
+  assert.deepEqual(M.parseModes(""), { dnd: false, stayAwake: false, nightlight: false, vpns: [] })
+  assert.deepEqual(M.parseModes("off\nnot json\n[1]"), { dnd: false, stayAwake: false, nightlight: false, vpns: [] })
   assert.equal(M.modesActivity({ dnd: false, stayAwake: false, nightlight: false }), null)
   const one = M.modesActivity({ dnd: true, stayAwake: false, nightlight: false })
   assert.equal(one.title, "Do Not Disturb")
@@ -242,8 +242,14 @@ test("prefs normalize and store only non-defaults", () => {
   const p = M.normalizePrefs({ moduleCharging: false, whenEmpty: "weird", maxWidth: 5000, autoFocus: "yes" })
   assert.equal(p.modules.charging, false)
   assert.equal(p.modules.media, true)
-  assert.equal(p.whenEmpty, "icon")
+  assert.equal(p.whenEmpty, "brief")
+  assert.equal(p.weatherUnit, "auto")
+  assert.equal(p.showQuickToggles, true)
+  assert.equal(M.normalizePrefs({ showQuickToggles: false }).showQuickToggles, false)
+  assert.equal(p.modules.weather, true)
+  assert.equal(M.normalizePrefs({ whenEmpty: "icon" }).whenEmpty, "icon")
   assert.equal(p.textMode, "scroll")
+  assert.equal(p.coverAccent, true)
   assert.equal(M.normalizePrefs({ textMode: "ellipsis" }).textMode, "ellipsis")
   assert.equal(p.maxWidth, 600)
   assert.equal(p.autoFocus, true)
@@ -264,4 +270,226 @@ test("safeArtUrl only allows https to public hosts and local files", () => {
   assert.equal(M.safeArtUrl("https://192.168.0.1/a.jpg"), "")
   assert.equal(M.safeArtUrl("https://router.lan/a.jpg"), "")
   assert.equal(M.safeArtUrl("data:image/png;base64,AAAA"), "")
+})
+
+test("accentFromHistogram picks the vivid color and keeps it readable", () => {
+  const hist = [
+    "  5000: (10,10,12) #0A0A0C srgb(4%,4%,5%)",
+    "  3000: (240,240,240) #F0F0F0 srgb(94%,94%,94%)",
+    "   800: (200,30,60) #C81E3C srgb(78%,12%,24%)",
+    "   900: (120,120,125) #78787D srgb(47%,47%,49%)"
+  ].join("\n")
+  const c = M.accentFromHistogram(hist)
+  assert.match(c, /^#[0-9a-f]{6}$/)
+  const r = parseInt(c.slice(1, 3), 16), g = parseInt(c.slice(3, 5), 16), b = parseInt(c.slice(5, 7), 16)
+  assert.ok(r > g && r > b, "should stay red: " + c)
+  // Gray, black and white only: no accent, the theme's stays.
+  assert.equal(M.accentFromHistogram("  10: (0,0,0) #000000 black\n  10: (128,128,128) #808080 gray\n  9: (255,255,255) #FFFFFF white"), "")
+  assert.equal(M.accentFromHistogram("garbage"), "")
+  // Alpha suffix (#RRGGBBAA) is accepted.
+  assert.equal(M.parseHistogram("  4: (0,0,255,255) #0000FFFF srgba(0,0,255,1)").length, 1)
+  // A dark navy is lifted to a readable lightness.
+  const navy = M.accentFromHistogram("  50: (10,20,70) #0A1446 x")
+  const l = (Math.max(...[1, 3, 5].map((i) => parseInt(navy.slice(i, i + 2), 16))) + Math.min(...[1, 3, 5].map((i) => parseInt(navy.slice(i, i + 2), 16)))) / 2 / 255
+  assert.ok(l >= 0.49, navy)
+})
+
+test("parseTimerArg: seconds, units and clock times", () => {
+  const now = new Date(2026, 9, 6, 14, 0, 0).getTime()
+  assert.equal(M.parseTimerArg("90", now), 90)
+  assert.equal(M.parseTimerArg("25m", now), 1500)
+  assert.equal(M.parseTimerArg("1h30m", now), 5400)
+  assert.equal(M.parseTimerArg("45s", now), 45)
+  assert.equal(M.parseTimerArg("14:30", now), 1800)
+  assert.equal(M.parseTimerArg("13:00", now), 23 * 3600)
+  assert.equal(M.parseTimerArg("25:00", now), 0)
+  assert.equal(M.parseTimerArg("abc", now), 0)
+  assert.equal(M.parseTimerArg("", now), 0)
+})
+
+test("parsePresets", () => {
+  assert.deepEqual(M.parsePresets("1, 5,10,25"), [60, 300, 600, 1500])
+  assert.deepEqual(M.parsePresets("3,3,x,0,99999,7"), [180, 420])
+  assert.deepEqual(M.parsePresets("junk"), [60, 300, 600, 1500])
+  assert.equal(M.parsePresets("1,2,3,4,5,6,7,8").length, 6)
+  assert.equal(M.normalizePrefs({ timerPresets: "2,4" }).timerPresets, "2,4")
+})
+
+test("pomodoro cycles focus and breaks, long break every 4", () => {
+  const cfg = M.pomodoroConfig({ pomodoroFocus: 25, pomodoroBreak: 5, pomodoroLongBreak: 15 })
+  let p = M.startPomodoro(cfg, 0)
+  assert.equal(p.phase, "focus")
+  assert.equal(p.durationMs, 25 * 60000)
+  const phases = []
+  for (let i = 0; i < 8; i++) { p = M.nextPomodoro(p, cfg, 0); phases.push(p.phase) }
+  assert.deepEqual(phases, ["break", "focus", "break", "focus", "break", "focus", "longBreak", "focus"])
+  p = M.pausePomodoro(M.startPomodoro(cfg, 0), 60000)
+  assert.equal(p.state, "paused")
+  assert.equal(p.remainingMs, 24 * 60000)
+  p = M.resumePomodoro(p, 100000)
+  assert.equal(p.endsAt, 100000 + 24 * 60000)
+  const a = M.pomodoroActivity(p, cfg, 100000)
+  assert.equal(a.subtitle, "Pomodoro · round 1/4")
+  assert.deepEqual(a.actions.map((x) => x.id), ["pause", "skip", "stop"])
+  assert.equal(M.normalizePomodoro({ state: "running", phase: "weird", durationMs: 1000 }).phase, "focus")
+  assert.equal(M.normalizePomodoro(null).state, "idle")
+})
+
+test("sleep timer", () => {
+  assert.equal(M.sleepActivity(M.idleSleep(), 0), null)
+  const s = M.normalizeSleep(M.startTimer(1800, 0))
+  const a = M.sleepActivity(s, 600000)
+  assert.equal(a.pillText, "Sleep 20:00")
+  assert.equal(M.normalizeSleep({ state: "paused", durationMs: 5 }).state, "idle")
+})
+
+test("modes with VPNs from tailscale and nmcli", () => {
+  const m = M.parseModes("off\n{}\n{}\nRunning\nHome\\:Office:vpn\nWi-Fi:802-11-wireless\nwg0:wireguard")
+  assert.deepEqual(m.vpns.map((v) => v.name), ["Tailscale", "Home:Office", "wg0"])
+  const a = M.modesActivity(m)
+  assert.equal(a.title, "3 modes on")
+  assert.deepEqual(a.actions.map((x) => x.id), ["vpnDown:1", "vpnDown:2"])
+  assert.equal(M.parseNmcliLine("a\\\\b:vpn").rawName, "a\\b")
+  assert.equal(M.parseNmcliLine(""), null)
+})
+
+test("low battery", () => {
+  assert.equal(M.batteryActivity({ present: true, onBattery: true, percentage: 0.5 }), null)
+  assert.equal(M.batteryActivity({ present: true, onBattery: false, percentage: 0.05 }), null)
+  const a = M.batteryActivity({ present: true, onBattery: true, percentage: 0.12, timeToEmpty: 2400 })
+  assert.equal(a.urgent, true)
+  assert.equal(a.subtitle, "40m left")
+  assert.notEqual(a.signature, M.batteryActivity({ present: true, onBattery: true, percentage: 0.07 }).signature)
+})
+
+test("one media activity per player, with seek and volume data", () => {
+  const a = M.mediaActivity({ key: "org.mpris.MediaPlayer2.spotify", title: "A", playing: true, canSeek: true, length: 200, position: 50, volumeSupported: true, volume: 0.7 })
+  const b = M.mediaActivity({ key: "org.mpris.MediaPlayer2.firefox.instance_1_2", title: "B", playing: false })
+  assert.notEqual(a.id, b.id)
+  assert.match(a.id, /^media:[A-Za-z0-9._-]+$/)
+  assert.equal(a.target, "org.mpris.MediaPlayer2.spotify")
+  assert.equal(a.seekable, true)
+  assert.equal(a.length, 200)
+  assert.equal(a.volume, 0.7)
+  assert.equal(b.volume, -1)
+  assert.equal(b.seekable, false)
+})
+
+test("push with elapsed time and state", () => {
+  const r1 = M.sanitizePush("run-1", JSON.stringify({ title: "make", elapsed: true, state: "running" }), 1000)
+  let items = M.upsertPush({}, r1.item)
+  const r2 = M.sanitizePush("run-1", JSON.stringify({ title: "make", elapsed: true, state: "running", subtitle: "still" }), 5000)
+  items = M.upsertPush(items, r2.item)
+  assert.equal(items["run-1"].startedAt, 1000)
+  const a = M.pushActivity(items["run-1"], 66000)
+  assert.equal(a.pillText, "make · 1:05")
+  assert.equal(a.subtitle, "still · 1:05")
+  const err = M.sanitizePush("run-1", JSON.stringify({ title: "make", state: "error" }), 0)
+  assert.equal(err.item.urgent, true)
+  assert.equal(M.pushActivity(err.item, 0).icon, "\u{f0028}")
+  assert.equal(M.sanitizePush("x", JSON.stringify({ title: "t", state: "weird" }), 0).item.state, "")
+})
+
+test("bluetooth and screenshot activities", () => {
+  const bt = M.bluetoothActivity({ address: "AA:BB:CC:DD:EE:FF", name: "WH-1000XM4\n", battery: 0.8 })
+  assert.equal(bt.id, "bt:AA:BB:CC:DD:EE:FF")
+  assert.equal(bt.pillText, "WH-1000XM4 · 80%")
+  assert.equal(M.bluetoothActivity({ address: "x", name: "", battery: -1 }).subtitle, "Connected")
+  assert.equal(M.validScreenshotName("screenshot-2026-10-06_10-00-00.png"), true)
+  assert.equal(M.validScreenshotName("a.JPG"), true)
+  assert.equal(M.validScreenshotName("../x.png"), false)
+  assert.equal(M.validScreenshotName(".hidden.png"), false)
+  assert.equal(M.validScreenshotName("evil\n.png"), false)
+  assert.equal(M.validScreenshotName("notes.txt"), false)
+  const s = M.screenshotActivity({ path: "/home/u/Pictures/s.png", name: "s.png" })
+  assert.equal(s.image, "/home/u/Pictures/s.png")
+  assert.deepEqual(s.actions.map((x) => x.id), ["edit", "copy", "open"])
+})
+
+test("weather from wttr.in j1", () => {
+  const fs = require("node:fs")
+  const path = require("node:path")
+  const raw = fs.readFileSync(path.join(__dirname, "fixtures", "wttr-j1.json"), "utf8")
+  const noon = new Date(2026, 9, 6, 12, 10).getTime()
+  const w = M.parseWttr(raw, noon, { unit: "auto", locale: "en_US" })
+  // Country (Brazil) wins over an en_US locale: Celsius.
+  assert.equal(w.unit, "°C")
+  assert.equal(w.temp, 23)
+  assert.equal(w.feels, 25)
+  assert.equal(w.desc, "Sunny")
+  assert.equal(w.location, "Testville")
+  assert.equal(w.night, false)
+  assert.equal(w.icon, "\u{e30d}")
+  assert.equal(w.color, "#f2a33a")
+  assert.equal(w.humidity, 70)
+  assert.equal(w.wind, "4 km/h NNW")
+  assert.equal(w.sunrise, "5:19")
+  assert.equal(w.sunset, "17:41")
+  // The 12h slot is the one we are in: it comes first, as "Now".
+  assert.equal(w.hours.length, 8)
+  assert.equal(w.hours[0].label, "Now")
+  assert.equal(w.hours[0].temp, 23)
+  assert.equal(w.hours[1].label, "15h")
+  assert.equal(w.hours[4].label, "00h")
+  assert.deepEqual(w.days.map((d) => d.name), ["Today", "Tomorrow", "Thu"])
+  assert.equal(w.days[1].rain, 85)
+  assert.equal(w.days[0].max, 32)
+
+  const night = M.parseWttr(raw, new Date(2026, 9, 6, 21, 0).getTime(), { unit: "imperial" })
+  assert.equal(night.night, true)
+  assert.equal(night.unit, "°F")
+  assert.equal(night.temp, 73)
+  assert.equal(night.wind, "2 mph NNW")
+  assert.equal(night.icon, "\u{e32b}")
+  assert.equal(night.hours[0].label, "Now")
+
+  assert.equal(M.parseWttr("nope", noon, {}), null)
+  assert.equal(M.parseWttr('{"current_condition":[{}],"weather":[{}]}', noon, {}), null)
+})
+
+test("weather units, clock and colors", () => {
+  assert.equal(M.useImperial("auto", "en_US.UTF-8", ""), true)
+  assert.equal(M.useImperial("auto", "pt_BR", ""), false)
+  assert.equal(M.useImperial("auto", "pt_BR", "United States"), true)
+  assert.equal(M.useImperial("metric", "en_US", "USA"), false)
+  assert.equal(M.clockMinutes("05:41 PM"), 17 * 60 + 41)
+  assert.equal(M.clockMinutes("12:05 AM"), 5)
+  assert.equal(M.clockMinutes("bad"), -1)
+  assert.equal(M.weatherColor(389, false), "#7b5cd6")
+  assert.equal(M.weatherColor(113, true), "#4a56c8")
+})
+
+test("weather card is ambient and lowest priority", () => {
+  const fs = require("node:fs")
+  const path = require("node:path")
+  const w = M.parseWttr(fs.readFileSync(path.join(__dirname, "fixtures", "wttr-j1.json"), "utf8"), new Date(2026, 9, 6, 12).getTime(), {})
+  const a = M.weatherActivity(w, false)
+  assert.equal(a.ambient, true)
+  assert.equal(a.priority, M.PRIORITY.brief)
+  assert.equal(a.pillText, "23° · Sunny")
+  assert.equal(a.subtitle, "Testville · H 32° L 17°")
+  assert.match(M.weatherActivity(w, true).pillText, /Update$/)
+  assert.equal(M.weatherActivity(null, false), null)
+  assert.equal(M.weatherActivity(null, true).title, "Update available")
+  // A live activity always takes the focus from it.
+  const list = M.sortActivities([a, { id: "timer", priority: 40 }])
+  assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: true }, autoFocus: true, manualUntil: 0, now: 1 }), "timer")
+})
+
+test("cover base color and popup surface tint", () => {
+  const hist = [
+    "  6000: (20,40,120) #142878 x",
+    "   500: (230,40,60) #E6283C x",
+    "  3000: (128,128,128) #808080 x"
+  ].join("\n")
+  assert.equal(M.baseFromHistogram(hist), "#142878")
+  assert.equal(M.baseFromHistogram("junk"), "")
+  const dark = M.surfaceTint("#142878", true)
+  const light = M.surfaceTint("#142878", false)
+  const lum = (h) => (Math.max(...[1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))) + Math.min(...[1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)))) / 2 / 255
+  assert.ok(Math.abs(lum(dark) - 0.17) < 0.01, dark)
+  assert.ok(Math.abs(lum(light) - 0.91) < 0.01, light)
+  const b = parseInt(dark.slice(5, 7), 16), r = parseInt(dark.slice(1, 3), 16)
+  assert.ok(b > r, "keeps the blue hue: " + dark)
+  assert.equal(M.surfaceTint("nope", true), "")
 })

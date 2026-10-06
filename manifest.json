@@ -6,7 +6,7 @@
   "author": "vinicgobbi",
   "license": "MIT",
   "homepage": "https://github.com/vinicgobbi/omarchy-plugin-nowbar",
-  "description": "Samsung-style Now Bar: one pill in the bar for what's going on right now (media, timer, stopwatch, reminders, screen recording, dictation, camera/mic in use, modes, charging, and live updates pushed by scripts). Scroll to switch, click for the details.",
+  "description": "Samsung-style Now Bar: one pill in the bar for what's going on right now (media players, timer, stopwatch, Pomodoro, sleep timer, reminders, screen recording, dictation, camera/mic in use, modes and VPN, charging and low battery, Bluetooth, screenshots, and live updates from scripts), with a Now Brief when nothing is. Scroll to switch, click for the details.",
   "kinds": [
     "service",
     "bar-widget"
@@ -15,6 +15,9 @@
   "entryPoints": {
     "service": "Service.qml",
     "barWidget": "BarWidget.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.media"
   },
   "barWidget": {
     "displayName": "Now Bar",
@@ -32,12 +35,22 @@
       "moduleModes": true,
       "moduleCharging": true,
       "modulePush": true,
+      "moduleBluetooth": true,
+      "moduleScreenshot": true,
+      "moduleWeather": true,
+      "weatherUnit": "auto",
       "autoFocus": true,
-      "whenEmpty": "icon",
+      "coverAccent": true,
+      "whenEmpty": "brief",
       "showProgress": true,
       "showCount": true,
+      "showQuickToggles": true,
       "textMode": "scroll",
-      "maxWidth": 220
+      "maxWidth": 220,
+      "timerPresets": "1,5,10,25",
+      "pomodoroFocus": 25,
+      "pomodoroBreak": 5,
+      "pomodoroLongBreak": 15
     },
     "schema": [
       {
@@ -100,9 +113,49 @@
         "defaultValue": true
       },
       {
+        "key": "moduleBluetooth",
+        "type": "boolean",
+        "label": "Bluetooth device connected",
+        "description": "Shows for a few seconds, with its battery.",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleScreenshot",
+        "type": "boolean",
+        "label": "Screenshot taken",
+        "description": "Shows for a few seconds, with edit, copy and open. Needs inotify-tools.",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleWeather",
+        "type": "boolean",
+        "label": "Weather",
+        "description": "Weather card (wttr.in, Omarchy's saved location): the Now Brief.",
+        "defaultValue": true
+      },
+      {
+        "key": "weatherUnit",
+        "type": "enum",
+        "label": "Temperature",
+        "options": [
+          "auto",
+          "metric",
+          "imperial"
+        ],
+        "description": "auto: °F in the US (and Liberia, Myanmar), else °C.",
+        "defaultValue": "auto"
+      },
+      {
         "key": "autoFocus",
         "type": "boolean",
         "label": "Focus new activities",
+        "defaultValue": true
+      },
+      {
+        "key": "coverAccent",
+        "type": "boolean",
+        "label": "Dynamic colors",
+        "description": "Media takes its colors from the album cover and weather from the sky: the highlight, the popup's border and a tint of its background.",
         "defaultValue": true
       },
       {
@@ -110,10 +163,12 @@
         "type": "enum",
         "label": "When nothing is going on",
         "options": [
+          "brief",
           "icon",
           "hide"
         ],
-        "defaultValue": "icon"
+        "defaultValue": "brief",
+        "description": "brief: the weather card (with an Omarchy update notice); icon: an empty pill; hide: no pill."
       },
       {
         "key": "showProgress",
@@ -125,6 +180,13 @@
         "key": "showCount",
         "type": "boolean",
         "label": "Position (2/4)",
+        "defaultValue": true
+      },
+      {
+        "key": "showQuickToggles",
+        "type": "boolean",
+        "label": "Quick toggles",
+        "description": "Do Not Disturb, night light, stay awake, screen recording, reminder and dictation buttons in the popup.",
         "defaultValue": true
       },
       {
@@ -147,6 +209,40 @@
         "step": 20,
         "defaultValue": 220,
         "description": "The pill always keeps this size."
+      },
+      {
+        "key": "timerPresets",
+        "type": "string",
+        "label": "Quick start timers",
+        "description": "Minutes, separated by commas (up to 6).",
+        "defaultValue": "1,5,10,25"
+      },
+      {
+        "key": "pomodoroFocus",
+        "type": "integer",
+        "label": "Pomodoro focus (min)",
+        "min": 1,
+        "max": 180,
+        "step": 5,
+        "defaultValue": 25
+      },
+      {
+        "key": "pomodoroBreak",
+        "type": "integer",
+        "label": "Pomodoro break (min)",
+        "min": 1,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 5
+      },
+      {
+        "key": "pomodoroLongBreak",
+        "type": "integer",
+        "label": "Pomodoro long break (min)",
+        "min": 1,
+        "max": 120,
+        "step": 5,
+        "defaultValue": 15
       }
     ]
   }

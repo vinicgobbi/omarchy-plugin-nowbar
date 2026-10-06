@@ -58,14 +58,37 @@ omarchy-shell nowbar status
   see `tests/`
 - `Service.qml` — reads every source (MPRIS, PipeWire, UPower,
   `omarchy-reminder`, `gpu-screen-recorder`, `omarchy-voxtype-status`,
-  `/dev/video*` users, the shell's DND/idle/night light IPC), keeps
-  the list of activities and the focus, saves the timer/stopwatch to
+  `/dev/video*` users, the shell's DND/idle/night light IPC, `nmcli` and
+  `tailscale`, Bluetooth, the screenshots folder, wttr.in (`?format=j1`) and
+  `omarchy-update-available`), keeps
+  the list of activities and the focus, saves the timer/stopwatch/Pomodoro/sleep timer to
   `~/.local/state/vinicgobbi.nowbar/state.json`, and owns the `nowbar`
   IPC target
 - `BarWidget.qml` — the pill and the carousel popup. It follows the
   service, so every monitor shows the same activity, and hands the
   widget's settings to the service
+- `WeatherCard.qml` — the weather card's layout (data from
+  `NowbarModel.parseWttr`)
 - `AdvancedSettings.qml` — the options view inside the popup
+- `bin/nowbar-weather-widget` — `replace` / `restore` / `status`: turns
+  `omarchy.weather` off (or back on, where it was) and adds (or removes) a marked block in
+  `~/.config/hypr/bindings.lua` pointing SUPER+CTRL+ALT+W at
+  `omarchy-shell nowbar weather`; run only from the options/weather card
+  buttons or by hand
+- `bin/nowbar-indicators` — `replace` / `restore` / `status`: turns
+  `omarchy.indicators` off (remembering its place in the bar) or back on
+  where it was. `Service.qml` answers `omarchy.indicators refresh` only
+  while that widget is off (two handlers can't share an IPC target)
+- `bin/nowbar-run` — runs a command and shows it in the pill through
+  `omarchy-shell nowbar push` (payload built with `jq`)
+
+The manifest declares `"omarchy": { "clonedFrom": "omarchy.media" }`:
+enabling the Now Bar turns the built-in media service off (it goes to
+`disabledPlugins` in `shell.json`), `Service.qml` owns the `media` IPC target
+that Omarchy's media keys call, and the plugin may summon `omarchy.osd`. A
+plugin can only clone one source, so the indicators' `omarchy.indicators
+refresh` (called by `omarchy-reminder` and the screen recorder) stays with the
+built-in indicators; the Now Bar watches the same things on its own instead.
 
 A third-party plugin can't read the shell's own services (`serviceFor`
 only returns the plugin's own), so everything is read directly. Every
