@@ -25,7 +25,7 @@ activities and click it to see the details and controls.
 
 | Samsung Now Bar         | Here                                                        | Source                                       |
 | ----------------------- | ----------------------------------------------------------- | -------------------------------------------- |
-| Media player            | Cover, title · artist, progress, play/pause, previous, next | MPRIS                                        |
+| Media player            | Cover, title · artist, progress, play/pause, previous, next; highlight color taken from the cover | MPRIS |
 | Timer / Stopwatch       | Built in: pause, +1 min, laps; survives a shell restart      | This plugin (notifies when the timer ends)   |
 | Alarms / reminders      | Countdown to the next `omarchy-reminder`, clear             | `omarchy-reminder show --json`               |
 | Voice / screen recorder | Screen recording with elapsed time, stop                    | `gpu-screen-recorder`                        |
@@ -150,6 +150,9 @@ Use the gear in the popup (or `c`), or the widget's settings. You can:
 
 - switch each activity type on or off;
 - turn off "focus new activities";
+- turn off "cover colors" (media takes its highlight color from the album
+  cover: the most vivid color that covers a good part of it, adjusted to stay
+  readable; black/white/gray covers keep the theme's color);
 - hide the progress line or the `2/4` marker;
 - hide the pill when nothing is going on (by default a small icon stays so
   the popup can still be opened);
