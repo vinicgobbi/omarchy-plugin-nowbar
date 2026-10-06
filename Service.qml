@@ -402,7 +402,7 @@ Item {
     accentProcess.command = ["sh", "-c",
       "sig=$(head -c 12 -- \"$1\" | od -An -tx1 | tr -d ' \\n'); "
       + "case \"$sig\" in 89504e470d0a1a0a*) f=png;; ffd8ff*) f=jpeg;; 474946383761*|474946383961*) f=gif;; 52494646????????57454250) f=webp;; *) exit 1;; esac; "
-      + "exec timeout 5 magick -limit area 64MB -limit memory 64MB -limit map 64MB \"$f:$1[0]\" -resize 64x64 -colors 12 -format %c histogram:info:-",
+      + "exec timeout 5 magick -limit area 64MB -limit memory 64MB -limit map 64MB \"$f:$1[0]\" -resize 64x64 -colors 12 -depth 8 -format %c histogram:info:-",
       "_", path]
     accentProcess.running = true
   }

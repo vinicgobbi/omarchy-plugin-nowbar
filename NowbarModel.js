@@ -812,14 +812,16 @@ function parseHistogram(text) {
   var out = []
   var lines = String(text || "").split("\n")
   for (var i = 0; i < lines.length && out.length < 64; i++) {
-    var m = /^\s*(\d+):\s*\([^)]*\)\s*#([0-9A-Fa-f]{6})(?:[0-9A-Fa-f]{2})?\b/.exec(lines[i])
+    // #RRGGBB[AA], or #RRRRGGGGBBBB[AAAA] for 16-bit images (high bytes kept).
+    var m = /^\s*(\d+):\s*\([^)]*\)\s*#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}|[0-9A-Fa-f]{12}|[0-9A-Fa-f]{16})\b/.exec(lines[i])
     if (!m) continue
     var hex = m[2]
+    var step = hex.length >= 12 ? 4 : 2
     out.push({
       count: parseInt(m[1], 10),
       r: parseInt(hex.slice(0, 2), 16) / 255,
-      g: parseInt(hex.slice(2, 4), 16) / 255,
-      b: parseInt(hex.slice(4, 6), 16) / 255
+      g: parseInt(hex.slice(step, step + 2), 16) / 255,
+      b: parseInt(hex.slice(2 * step, 2 * step + 2), 16) / 255
     })
   }
   return out

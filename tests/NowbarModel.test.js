@@ -286,6 +286,12 @@ test("accentFromHistogram picks the vivid color and keeps it readable", () => {
   // Gray, black and white only: no accent, the theme's stays.
   assert.equal(M.accentFromHistogram("  10: (0,0,0) #000000 black\n  10: (128,128,128) #808080 gray\n  9: (255,255,255) #FFFFFF white"), "")
   assert.equal(M.accentFromHistogram("garbage"), "")
+  // 16-bit images: #RRRRGGGGBBBBAAAA, high bytes kept.
+  const deep = M.parseHistogram("  860: (59705.5,27385.3,29691.9,65535) #E9396AF973FCFFFF srgba(91%,41%,45%,1)")
+  assert.equal(deep.length, 1)
+  assert.equal(Math.round(deep[0].r * 255), 0xE9)
+  assert.equal(Math.round(deep[0].g * 255), 0x6A)
+  assert.equal(Math.round(deep[0].b * 255), 0x73)
   // Alpha suffix (#RRGGBBAA) is accepted.
   assert.equal(M.parseHistogram("  4: (0,0,255,255) #0000FFFF srgba(0,0,255,1)").length, 1)
   // A dark navy is lifted to a readable lightness.
