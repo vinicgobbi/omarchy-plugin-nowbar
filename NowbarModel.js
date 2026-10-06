@@ -125,7 +125,8 @@ var PRIORITY = {
   charging: 80,
   pushLow: 85,
   modes: 90,
-  mediaPaused: 95
+  mediaPaused: 95,
+  brief: 99
 }
 
 var REMINDER_SOON_SECONDS = 5 * 60
@@ -1070,47 +1071,202 @@ function screenshotActivity(s) {
   }
 }
 
-// --- Now Brief (the pill when nothing is going on) -----------------------------------
+// --- weather (the Now Brief) ----------------------------------------------------------
+// A card that is always in the carousel (when there is data) but never takes
+// the pill from a live activity: it is "ambient". The pill shows it only when
+// nothing else is going on, as the Now Brief.
 
-// Output of the weather probe: the Nerd Font glyph from omarchy-weather-icon,
-// then wttr.in's "%t|%C" (temperature|condition). Either line may be empty.
-function parseWeather(text) {
-  var lines = String(text || "").split("\n")
-  var icon = clean(lines[0], 4)
-  if (Array.from(icon).length > 2) icon = ""
-  var parts = String(lines[1] || "").split("|")
-  var temp = clean(parts[0], 12).replace(/^\+/, "")
-  if (!/^-?\d{1,3}\s*\u00b0[CF]$/.test(temp)) temp = ""
-  return { icon: icon, temp: temp, condition: temp ? clean(parts[1], 40) : "" }
+// wttr.in weather codes -> Nerd Font glyphs; same mapping as Omarchy's weather
+// panel (plugins/panels/weather/Model.js).
+function weatherIcon(code, night) {
+  var c = parseInt(String(code || "0"), 10)
+  switch (c) {
+    case 113: return night ? "\u{e32b}" : "\u{e30d}"
+    case 116: return night ? "\u{e32e}" : "\u{e302}"
+    case 119: case 122: return "\u{e33d}"
+    case 143: case 248: case 260: return night ? "\u{e346}" : "\u{e313}"
+    case 176: case 263: case 353: return night ? "\u{e333}" : "\u{e308}"
+    case 179: case 227: case 230: case 323: case 326: case 368: return night ? "\u{e327}" : "\u{e30a}"
+    case 182: case 185: case 281: case 284: case 311: case 314:
+    case 317: case 320: case 350: case 362: case 365: case 374: case 377: return "\u{e3ad}"
+    case 200: case 386: case 389: case 392: case 395: return "\u{e31d}"
+    case 266: case 293: case 296: case 299: case 302: case 305: case 308: case 356: case 359: return "\u{e318}"
+    case 329: case 332: case 335: case 338: case 371: return "\u{e31a}"
+    default: return "\u{e33d}"
+  }
 }
 
-// b = { weather: {icon, temp, condition}, reminders: [...], updates: bool, now }
-// Returns { icon, pillText, lines } or null when there is nothing to tell.
-function briefInfo(b) {
-  if (!b) return null
-  var bits = []
-  var lines = []
-  var icon = ""
-  var w = b.weather || {}
-  if (w.temp) {
-    icon = w.icon || "\u{f0599}"
-    bits.push(w.temp)
-    lines.push((w.icon ? w.icon + "  " : "") + w.temp + (w.condition ? " \u00b7 " + w.condition : ""))
+// The color of the sky for a condition: drives the card's accent and the
+// popup's tint, like a cover does for media.
+function weatherColor(code, night) {
+  var c = parseInt(String(code || "0"), 10)
+  if (c === 200 || (c >= 386 && c <= 395)) return "#7b5cd6"                       // storm
+  if ([179, 227, 230, 323, 326, 329, 332, 335, 338, 368, 371].indexOf(c) !== -1) return "#9cc3e6" // snow
+  if ([182, 185, 281, 284, 311, 314, 317, 320, 350, 362, 365, 374, 377].indexOf(c) !== -1) return "#7fa7c9" // sleet
+  if ([176, 263, 266, 293, 296, 299, 302, 305, 308, 353, 356, 359].indexOf(c) !== -1) return "#3d8fe0" // rain
+  if (c === 143 || c === 248 || c === 260) return "#8e9aa8"                        // fog
+  if (c === 119 || c === 122) return night ? "#5a6a8f" : "#7d8ea6"               // cloudy
+  if (c === 116) return night ? "#4b5fb5" : "#e8b04a"                             // partly cloudy
+  return night ? "#4a56c8" : "#f2a33a"                                             // clear
+}
+
+// "05:19 AM" -> minutes since midnight (or -1).
+function clockMinutes(text) {
+  var m = /^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i.exec(String(text || "").trim())
+  if (!m) return -1
+  var h = parseInt(m[1], 10) % 12
+  if (!m[3]) h = parseInt(m[1], 10)
+  else if (m[3].toUpperCase() === "PM") h += 12
+  var min = parseInt(m[2], 10)
+  return h > 23 || min > 59 ? -1 : h * 60 + min
+}
+
+function clockLabel(minutes) {
+  return minutes < 0 ? "" : Math.floor(minutes / 60) + ":" + pad2(minutes % 60)
+}
+
+// °C or °F: an explicit choice, else the country of the forecast, else the
+// locale. Same rules as Omarchy's weather panel.
+function useImperial(unit, localeName, country) {
+  if (unit === "imperial") return true
+  if (unit === "metric") return false
+  var c = String(country || "").trim().replace(/[._-]+/g, " ").toLowerCase()
+  if (c) return ["us", "usa", "united states", "united states of america", "liberia", "myanmar", "burma"].indexOf(c) !== -1
+  var name = String(localeName || "").replace(".", "_")
+  return /^en[_-]US($|[_.-])/.test(name) || /^en[_-]LR($|[_.-])/.test(name) || /^my($|[_.-])/.test(name)
+}
+
+var DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+// wttr.in's ?format=j1 answer -> what the card shows, or null when it can't be
+// read. `now` is epoch ms (local time decides "now", night and day names);
+// `opts` = { unit: "auto"|"metric"|"imperial", locale }.
+function parseWttr(text, now, opts) {
+  var data
+  try { data = JSON.parse(String(text || "")) } catch (e) { return null }
+  var cur = data && Array.isArray(data.current_condition) ? data.current_condition[0] : null
+  var days = data && Array.isArray(data.weather) ? data.weather : []
+  if (!cur || typeof cur !== "object" || days.length === 0) return null
+  var o = opts || {}
+  var area = data.nearest_area && data.nearest_area[0] ? data.nearest_area[0] : {}
+  function val(v) { return v && v[0] ? v[0].value : "" }
+  var country = clean(val(area.country), 40)
+  var imperial = useImperial(o.unit, o.locale, country)
+  function temp(c, f) {
+    var n = parseFloat(imperial ? f : c)
+    return isFinite(n) ? Math.round(n) : null
   }
-  var next = null
-  for (var i = 0; i < (b.reminders || []).length; i++) if (b.reminders[i].at > b.now) { next = b.reminders[i]; break }
-  if (next) {
-    var d = new Date(next.at)
-    var at = d.getHours() + ":" + pad2(d.getMinutes())
-    bits.push("\u{f088c} " + at)
-    lines.push("\u{f088c}  " + next.label + " at " + at)
+  var t = temp(cur.temp_C, cur.temp_F)
+  if (t === null) return null
+
+  var d = new Date(now)
+  var nowMin = d.getHours() * 60 + d.getMinutes()
+  var astro = days[0].astronomy && days[0].astronomy[0] ? days[0].astronomy[0] : {}
+  var sunrise = clockMinutes(astro.sunrise)
+  var sunset = clockMinutes(astro.sunset)
+  var night = sunrise >= 0 && sunset >= 0 ? (nowMin < sunrise || nowMin >= sunset) : false
+
+  // Next hours: wttr gives 3-hour slots per day; take the 8 starting with
+  // the slot we are in.
+  var hours = []
+  for (var di = 0; di < days.length && hours.length < 8; di++) {
+    var hourly = Array.isArray(days[di].hourly) ? days[di].hourly : []
+    var dAstro = days[di].astronomy && days[di].astronomy[0] ? days[di].astronomy[0] : {}
+    var dRise = clockMinutes(dAstro.sunrise)
+    var dSet = clockMinutes(dAstro.sunset)
+    for (var hi = 0; hi < hourly.length && hours.length < 8; hi++) {
+      var h = hourly[hi]
+      var slot = Math.floor(num(h.time, -1) / 100)
+      if (slot < 0 || slot > 23) continue
+      if (di === 0 && (slot + 3) * 60 <= nowMin) continue
+      var slotNight = dRise >= 0 && dSet >= 0 ? (slot * 60 < dRise || slot * 60 >= dSet) : false
+      var ht = temp(h.tempC, h.tempF)
+      if (ht === null) continue
+      hours.push({
+        label: hours.length === 0 ? "Now" : pad2(slot) + "h",
+        icon: weatherIcon(h.weatherCode, slotNight),
+        temp: ht,
+        rain: Math.max(0, Math.min(100, Math.round(num(h.chanceofrain, 0))))
+      })
+    }
   }
-  if (b.updates) {
-    bits.push("\u{f06b0} Update")
-    lines.push("\u{f06b0}  Omarchy update available")
+
+  // "Now" is the current reading, not the slot's forecast.
+  if (hours.length) {
+    hours[0].temp = t
+    hours[0].icon = weatherIcon(cur.weatherCode, night)
   }
-  if (!bits.length) return null
-  return { icon: icon || "\u{f0996}", pillText: bits.join("  \u00b7  "), lines: lines }
+
+  var forecast = []
+  for (var k = 0; k < days.length && k < 3; k++) {
+    var day = days[k]
+    var hs = Array.isArray(day.hourly) ? day.hourly : []
+    var mid = hs.length ? hs[Math.min(4, hs.length - 1)] : null   // around noon
+    var rain = 0
+    for (var r = 0; r < hs.length; r++) rain = Math.max(rain, Math.round(num(hs[r].chanceofrain, 0)))
+    var date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day.date || ""))
+    var name = k === 0 ? "Today" : (k === 1 ? "Tomorrow"
+      : (date ? DAY_NAMES[new Date(parseInt(date[1], 10), parseInt(date[2], 10) - 1, parseInt(date[3], 10)).getDay()] : ""))
+    var lo = temp(day.mintempC, day.mintempF)
+    var hi2 = temp(day.maxtempC, day.maxtempF)
+    if (lo === null || hi2 === null) continue
+    forecast.push({ name: name, icon: weatherIcon(mid ? mid.weatherCode : cur.weatherCode, false), min: lo, max: hi2, rain: Math.max(0, Math.min(100, rain)) })
+  }
+
+  var windKmh = Math.round(num(cur.windspeedKmph, 0))
+  var windMph = Math.round(num(cur.windspeedMiles, windKmh / 1.609))
+  var feels = temp(cur.FeelsLikeC, cur.FeelsLikeF)
+  return {
+    temp: t,
+    unit: imperial ? "°F" : "°C",
+    feels: feels === null ? t : feels,
+    desc: clean(val(cur.weatherDesc), 40),
+    code: parseInt(String(cur.weatherCode || "0"), 10) || 0,
+    night: night,
+    icon: weatherIcon(cur.weatherCode, night),
+    color: weatherColor(cur.weatherCode, night),
+    humidity: Math.max(0, Math.min(100, Math.round(num(cur.humidity, 0)))),
+    wind: (imperial ? windMph + " mph" : windKmh + " km/h") + (cur.winddir16Point ? " " + clean(cur.winddir16Point, 4) : ""),
+    uv: Math.max(0, Math.round(num(cur.uvIndex, 0))),
+    location: clean(val(area.areaName), 40),
+    sunrise: clockLabel(sunrise),
+    sunset: clockLabel(sunset),
+    hours: hours,
+    days: forecast
+  }
+}
+
+// The weather card (ambient). w: parseWttr() result or null; update: whether
+// an Omarchy update is available (told on the card and in the pill).
+function weatherActivity(w, update) {
+  if (!w && !update) return null
+  var details = update ? ["\u{f06b0}  Omarchy update available"] : []
+  if (!w) {
+    return {
+      id: "brief", module: "weather", ambient: true, priority: PRIORITY.brief,
+      icon: "\u{f06b0}", urgent: false, title: "Update available", subtitle: "Omarchy",
+      pillText: "Update available", progress: -1, details: [], actions: [], signature: "update"
+    }
+  }
+  var today = w.days.length ? w.days[0] : null
+  var pill = w.temp + "°" + (w.desc ? " · " + w.desc : "")
+  return {
+    id: "brief",
+    module: "weather",
+    ambient: true,
+    priority: PRIORITY.brief,
+    icon: w.icon,
+    color: w.color,
+    urgent: false,
+    weather: w,
+    title: w.temp + w.unit + (w.desc ? " · " + w.desc : ""),
+    subtitle: [w.location, today ? "H " + today.max + "° L " + today.min + "°" : ""].filter(function(x) { return x }).join(" · "),
+    pillText: update ? pill + "  ·  \u{f06b0} Update" : pill,
+    progress: -1,
+    details: details,
+    actions: [],
+    signature: "weather"
+  }
 }
 
 // --- list & focus -----------------------------------------------------------------
@@ -1185,7 +1341,7 @@ function resolveFocus(s) {
 
 // --- bar widget preferences -----------------------------------------------------------
 
-var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot"]
+var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather"]
 
 function defaultPrefs() {
   return {
@@ -1200,6 +1356,8 @@ function defaultPrefs() {
     modulePush: true,
     moduleBluetooth: true,
     moduleScreenshot: true,
+    moduleWeather: true,
+    weatherUnit: "auto",    // "auto" (country, then locale), "metric" or "imperial"
     autoFocus: true,        // a new activity takes the pill
     whenEmpty: "brief",     // "brief": weather/next reminder/updates; "icon": empty pill; "hide": no pill
     showProgress: true,     // thin progress line under the pill text
@@ -1231,6 +1389,7 @@ function normalizePrefs(input) {
   for (var k in d) if (typeof d[k] === "boolean") out[k] = typeof src[k] === "boolean" ? src[k] : d[k]
   out.whenEmpty = src.whenEmpty === "hide" || src.whenEmpty === "icon" ? src.whenEmpty : "brief"
   out.textMode = src.textMode === "ellipsis" ? "ellipsis" : "scroll"
+  out.weatherUnit = src.weatherUnit === "metric" || src.weatherUnit === "imperial" ? src.weatherUnit : "auto"
   out.maxWidth = clampInt(src.maxWidth, 80, 600, d.maxWidth)
   var presets = parsePresets(src.timerPresets === undefined ? d.timerPresets : src.timerPresets)
   out.timerPresets = presets.map(function(x) { return x / 60 }).join(",")
@@ -1289,8 +1448,12 @@ if (typeof module !== "undefined") {
     bluetoothActivity: bluetoothActivity,
     validScreenshotName: validScreenshotName,
     screenshotActivity: screenshotActivity,
-    parseWeather: parseWeather,
-    briefInfo: briefInfo,
+    weatherIcon: weatherIcon,
+    weatherColor: weatherColor,
+    clockMinutes: clockMinutes,
+    useImperial: useImperial,
+    parseWttr: parseWttr,
+    weatherActivity: weatherActivity,
     PRIORITY: PRIORITY,
     idleTimer: idleTimer,
     idleStopwatch: idleStopwatch,

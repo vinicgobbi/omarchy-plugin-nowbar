@@ -243,6 +243,8 @@ test("prefs normalize and store only non-defaults", () => {
   assert.equal(p.modules.charging, false)
   assert.equal(p.modules.media, true)
   assert.equal(p.whenEmpty, "brief")
+  assert.equal(p.weatherUnit, "auto")
+  assert.equal(p.modules.weather, true)
   assert.equal(M.normalizePrefs({ whenEmpty: "icon" }).whenEmpty, "icon")
   assert.equal(p.textMode, "scroll")
   assert.equal(p.coverAccent, true)
@@ -402,19 +404,74 @@ test("bluetooth and screenshot activities", () => {
   assert.deepEqual(s.actions.map((x) => x.id), ["edit", "copy", "open"])
 })
 
-test("Now Brief", () => {
-  assert.deepEqual(M.parseWeather("\u{f0599}\n+22°C|Sunny"), { icon: "\u{f0599}", temp: "22°C", condition: "Sunny" })
-  assert.equal(M.parseWeather("\nUnknown location; please try ~-23,-46").temp, "")
-  assert.equal(M.briefInfo({ weather: {}, reminders: [], updates: false, now: 0 }), null)
-  const now = new Date(2026, 9, 6, 9, 0).getTime()
-  const b = M.briefInfo({
-    weather: { icon: "\u{f0599}", temp: "22°C", condition: "Sunny" },
-    reminders: [{ label: "Tea", at: new Date(2026, 9, 6, 9, 30).getTime() }],
-    updates: true,
-    now
-  })
-  assert.equal(b.pillText, "22°C  ·  \u{f088c} 9:30  ·  \u{f06b0} Update")
-  assert.equal(b.lines.length, 3)
+test("weather from wttr.in j1", () => {
+  const fs = require("node:fs")
+  const path = require("node:path")
+  const raw = fs.readFileSync(path.join(__dirname, "fixtures", "wttr-j1.json"), "utf8")
+  const noon = new Date(2026, 9, 6, 12, 10).getTime()
+  const w = M.parseWttr(raw, noon, { unit: "auto", locale: "en_US" })
+  // Country (Brazil) wins over an en_US locale: Celsius.
+  assert.equal(w.unit, "°C")
+  assert.equal(w.temp, 23)
+  assert.equal(w.feels, 25)
+  assert.equal(w.desc, "Sunny")
+  assert.equal(w.location, "Testville")
+  assert.equal(w.night, false)
+  assert.equal(w.icon, "\u{e30d}")
+  assert.equal(w.color, "#f2a33a")
+  assert.equal(w.humidity, 70)
+  assert.equal(w.wind, "4 km/h NNW")
+  assert.equal(w.sunrise, "5:19")
+  assert.equal(w.sunset, "17:41")
+  // The 12h slot is the one we are in: it comes first, as "Now".
+  assert.equal(w.hours.length, 8)
+  assert.equal(w.hours[0].label, "Now")
+  assert.equal(w.hours[0].temp, 23)
+  assert.equal(w.hours[1].label, "15h")
+  assert.equal(w.hours[4].label, "00h")
+  assert.deepEqual(w.days.map((d) => d.name), ["Today", "Tomorrow", "Thu"])
+  assert.equal(w.days[1].rain, 85)
+  assert.equal(w.days[0].max, 32)
+
+  const night = M.parseWttr(raw, new Date(2026, 9, 6, 21, 0).getTime(), { unit: "imperial" })
+  assert.equal(night.night, true)
+  assert.equal(night.unit, "°F")
+  assert.equal(night.temp, 73)
+  assert.equal(night.wind, "2 mph NNW")
+  assert.equal(night.icon, "\u{e32b}")
+  assert.equal(night.hours[0].label, "Now")
+
+  assert.equal(M.parseWttr("nope", noon, {}), null)
+  assert.equal(M.parseWttr('{"current_condition":[{}],"weather":[{}]}', noon, {}), null)
+})
+
+test("weather units, clock and colors", () => {
+  assert.equal(M.useImperial("auto", "en_US.UTF-8", ""), true)
+  assert.equal(M.useImperial("auto", "pt_BR", ""), false)
+  assert.equal(M.useImperial("auto", "pt_BR", "United States"), true)
+  assert.equal(M.useImperial("metric", "en_US", "USA"), false)
+  assert.equal(M.clockMinutes("05:41 PM"), 17 * 60 + 41)
+  assert.equal(M.clockMinutes("12:05 AM"), 5)
+  assert.equal(M.clockMinutes("bad"), -1)
+  assert.equal(M.weatherColor(389, false), "#7b5cd6")
+  assert.equal(M.weatherColor(113, true), "#4a56c8")
+})
+
+test("weather card is ambient and lowest priority", () => {
+  const fs = require("node:fs")
+  const path = require("node:path")
+  const w = M.parseWttr(fs.readFileSync(path.join(__dirname, "fixtures", "wttr-j1.json"), "utf8"), new Date(2026, 9, 6, 12).getTime(), {})
+  const a = M.weatherActivity(w, false)
+  assert.equal(a.ambient, true)
+  assert.equal(a.priority, M.PRIORITY.brief)
+  assert.equal(a.pillText, "23° · Sunny")
+  assert.equal(a.subtitle, "Testville · H 32° L 17°")
+  assert.match(M.weatherActivity(w, true).pillText, /Update$/)
+  assert.equal(M.weatherActivity(null, false), null)
+  assert.equal(M.weatherActivity(null, true).title, "Update available")
+  // A live activity always takes the focus from it.
+  const list = M.sortActivities([a, { id: "timer", priority: 40 }])
+  assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: true }, autoFocus: true, manualUntil: 0, now: 1 }), "timer")
 })
 
 test("cover base color and popup surface tint", () => {

@@ -1095,28 +1095,51 @@ Item {
     screenshot = null
   }
 
-  // --- Now Brief: weather and updates, for the pill when nothing goes on ---------------
+  // --- weather (the Now Brief) and Omarchy updates --------------------------------------
+  // The whole wttr.in report (?format=j1) is fetched every 20 minutes, and
+  // again when the weather card is opened with an older one. It replaces
+  // Omarchy's weather widget: same source, same saved location.
 
-  property var weather: ({ icon: "", temp: "", condition: "" })
+  property string weatherRaw: ""
+  property double weatherFetchedAt: 0
   property bool updateAvailable: false
-  readonly property bool briefEnabled: prefs.whenEmpty === "brief"
+  readonly property bool weatherEnabled: modules.weather
+
+  // Parsed again when the raw report, the unit or the hour (night/day,
+  // "now" slot) changes.
+  // `now` ticks every second; this only changes value every 10 minutes, so
+  // the report isn't parsed again on each tick.
+  readonly property int weatherSlot: Math.floor(root.now / 600000)
+  readonly property var weather: {
+    var _slot = weatherSlot
+    return weatherRaw ? Model.parseWttr(weatherRaw, Date.now(), { unit: prefs.weatherUnit, locale: Qt.locale().name }) : null
+  }
+
+  function refreshWeather() {
+    if (!weatherEnabled || weatherProcess.running) return
+    weatherProcess.running = true
+  }
+
+  // Older than 10 minutes: fetch again (when the card is shown).
+  function refreshWeatherIfStale() {
+    if (Date.now() - weatherFetchedAt > 10 * 60 * 1000) refreshWeather()
+  }
 
   Process {
     id: weatherProcess
-    // Same location rules as omarchy-weather-icon: the saved place if any,
-    // else wttr.in's guess from the IP.
+    // Same location rules as Omarchy's weather: the saved place if any, else
+    // wttr.in's guess from the IP. The report is capped at 512 KB.
     command: ["sh", "-c",
       "q=''; if [ -s \"$HOME/.local/state/omarchy/settings/weather.json\" ]; then "
       + "l=$(omarchy-weather-location 2>/dev/null); [ -n \"$l\" ] && q=$(jq -rn --arg l \"$l\" '$l | @uri'); fi; "
-      + "i=$(omarchy-weather-icon 2>/dev/null | head -n1); "
-      + "t=$(curl -fsS --max-time 8 \"https://wttr.in/${q}?format=%t|%C\" 2>/dev/null | head -c 200 | head -n1); "
-      + "printf '%s\\n%s\\n' \"$i\" \"$t\""]
+      + "curl -fsS --max-time 10 \"https://wttr.in/${q}?format=j1\" 2>/dev/null | head -c 524288"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var w = Model.parseWeather(text)
-        // Keep the last good reading when offline.
-        if (w.temp) root.weather = w
+        // Keep the last good report when offline or when wttr.in answers junk.
+        if (Model.parseWttr(text, Date.now(), {}) === null) return
+        root.weatherRaw = text
+        root.weatherFetchedAt = Date.now()
       }
     }
   }
@@ -1128,24 +1151,29 @@ Item {
   }
 
   Timer {
-    interval: 30 * 60 * 1000
+    interval: 20 * 60 * 1000
     repeat: true
-    running: root.briefEnabled
+    running: root.weatherEnabled
     triggeredOnStart: true
-    onTriggered: if (!weatherProcess.running) weatherProcess.running = true
+    onTriggered: root.refreshWeather()
+  }
+
+  // Also re-reads the weather now and then without a tick running (the
+  // `weather` binding above only follows `now`).
+  Timer {
+    interval: 10 * 60 * 1000
+    repeat: true
+    running: root.weatherEnabled && !root.needsTick
+    onTriggered: root.now = Date.now()
   }
 
   Timer {
     interval: 3 * 3600 * 1000
     repeat: true
-    running: root.briefEnabled
+    running: root.weatherEnabled
     triggeredOnStart: true
     onTriggered: if (!updateProcess.running) updateProcess.running = true
   }
-
-  readonly property var brief: briefEnabled
-    ? Model.briefInfo({ weather: weather, reminders: reminders, updates: updateAvailable, now: root.now })
-    : null
 
   // --- pushed live updates (IPC) ---------------------------------------------------
 
@@ -1170,6 +1198,7 @@ Item {
     for (var m = 0; m < mediaInfos.length; m++) list.push(Model.mediaActivity(mediaInfos[m]))
     for (var b in btRecent) list.push(Model.bluetoothActivity(btRecent[b]))
     if (screenshot) list.push(Model.screenshotActivity(screenshot))
+    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable))
     for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })
   }
@@ -1239,7 +1268,7 @@ Item {
   function dismiss(activityId) {
     var a = null
     for (var i = 0; i < activities.length; i++) if (activities[i].id === activityId) a = activities[i]
-    if (!a) return false
+    if (!a || a.ambient) return false
     if (a.module === "push") return removePush(a.id.slice(5))
     var next = {}
     for (var k in dismissed) next[k] = dismissed[k]
@@ -1391,7 +1420,7 @@ Item {
       focus: focusId,
       coverAccent: artAccent,
       coverBase: artBase,
-      brief: brief ? brief.pillText : "",
+      weather: weather ? { temp: weather.temp, unit: weather.unit, desc: weather.desc, location: weather.location } : null,
       activities: activities.map(function(a) {
         return { id: a.id, module: a.module, title: a.title, subtitle: a.subtitle, progress: a.progress }
       })
@@ -1422,6 +1451,15 @@ Item {
     }
     function stopwatch(): string { root.startStopwatch(); return "ok" }
     function pomodoro(): string { root.startPomodoro(); return "ok" }
+    // Open the popup on the weather card (Omarchy's weather shortcut can
+    // point here once the weather widget is off).
+    function weather(): string {
+      if (!root.weatherEnabled) return "error: the weather card is turned off"
+      root.refreshWeatherIfStale()
+      if (!root.focusOn("brief")) return "no weather yet"
+      if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
+      return "ok"
+    }
     // Pause the media after a while: sleep 30m | 45 (minutes) | 23:00
     function sleep(duration: string): string {
       var d = String(duration || "")

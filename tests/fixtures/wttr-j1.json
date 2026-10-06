@@ -1,0 +1,250 @@
+{
+ "current_condition": [
+  {
+   "temp_C": "23",
+   "temp_F": "73",
+   "FeelsLikeC": "25",
+   "FeelsLikeF": "77",
+   "humidity": "70",
+   "windspeedKmph": "4",
+   "windspeedMiles": "2",
+   "winddir16Point": "NNW",
+   "weatherCode": "113",
+   "weatherDesc": [
+    {
+     "value": "Sunny"
+    }
+   ],
+   "uvIndex": "1"
+  }
+ ],
+ "nearest_area": [
+  {
+   "areaName": [
+    {
+     "value": "Testville"
+    }
+   ],
+   "country": [
+    {
+     "value": "Brazil"
+    }
+   ]
+  }
+ ],
+ "weather": [
+  {
+   "date": "2026-10-06",
+   "maxtempC": "32",
+   "mintempC": "17",
+   "maxtempF": "90",
+   "mintempF": "63",
+   "astronomy": [
+    {
+     "sunrise": "05:19 AM",
+     "sunset": "05:41 PM"
+    }
+   ],
+   "hourly": [
+    {
+     "time": "0",
+     "tempC": "17",
+     "tempF": "63",
+     "weatherCode": "119",
+     "chanceofrain": "23"
+    },
+    {
+     "time": "300",
+     "tempC": "18",
+     "tempF": "64",
+     "weatherCode": "116",
+     "chanceofrain": "17"
+    },
+    {
+     "time": "600",
+     "tempC": "19",
+     "tempF": "66",
+     "weatherCode": "113",
+     "chanceofrain": "14"
+    },
+    {
+     "time": "900",
+     "tempC": "20",
+     "tempF": "68",
+     "weatherCode": "119",
+     "chanceofrain": "23"
+    },
+    {
+     "time": "1200",
+     "tempC": "21",
+     "tempF": "70",
+     "weatherCode": "116",
+     "chanceofrain": "17"
+    },
+    {
+     "time": "1500",
+     "tempC": "22",
+     "tempF": "72",
+     "weatherCode": "113",
+     "chanceofrain": "14"
+    },
+    {
+     "time": "1800",
+     "tempC": "23",
+     "tempF": "73",
+     "weatherCode": "119",
+     "chanceofrain": "23"
+    },
+    {
+     "time": "2100",
+     "tempC": "24",
+     "tempF": "75",
+     "weatherCode": "116",
+     "chanceofrain": "17"
+    }
+   ]
+  },
+  {
+   "date": "2026-10-07",
+   "maxtempC": "33",
+   "mintempC": "19",
+   "maxtempF": "91",
+   "mintempF": "66",
+   "astronomy": [
+    {
+     "sunrise": "05:18 AM",
+     "sunset": "05:42 PM"
+    }
+   ],
+   "hourly": [
+    {
+     "time": "0",
+     "tempC": "19",
+     "tempF": "66",
+     "weatherCode": "176",
+     "chanceofrain": "60"
+    },
+    {
+     "time": "300",
+     "tempC": "20",
+     "tempF": "68",
+     "weatherCode": "122",
+     "chanceofrain": "85"
+    },
+    {
+     "time": "600",
+     "tempC": "21",
+     "tempF": "70",
+     "weatherCode": "176",
+     "chanceofrain": "60"
+    },
+    {
+     "time": "900",
+     "tempC": "22",
+     "tempF": "72",
+     "weatherCode": "122",
+     "chanceofrain": "85"
+    },
+    {
+     "time": "1200",
+     "tempC": "23",
+     "tempF": "73",
+     "weatherCode": "176",
+     "chanceofrain": "60"
+    },
+    {
+     "time": "1500",
+     "tempC": "24",
+     "tempF": "75",
+     "weatherCode": "122",
+     "chanceofrain": "85"
+    },
+    {
+     "time": "1800",
+     "tempC": "25",
+     "tempF": "77",
+     "weatherCode": "176",
+     "chanceofrain": "60"
+    },
+    {
+     "time": "2100",
+     "tempC": "26",
+     "tempF": "79",
+     "weatherCode": "122",
+     "chanceofrain": "85"
+    }
+   ]
+  },
+  {
+   "date": "2026-10-08",
+   "maxtempC": "30",
+   "mintempC": "18",
+   "maxtempF": "86",
+   "mintempF": "64",
+   "astronomy": [
+    {
+     "sunrise": "05:17 AM",
+     "sunset": "05:42 PM"
+    }
+   ],
+   "hourly": [
+    {
+     "time": "0",
+     "tempC": "18",
+     "tempF": "64",
+     "weatherCode": "122",
+     "chanceofrain": "28"
+    },
+    {
+     "time": "300",
+     "tempC": "19",
+     "tempF": "66",
+     "weatherCode": "119",
+     "chanceofrain": "19"
+    },
+    {
+     "time": "600",
+     "tempC": "20",
+     "tempF": "68",
+     "weatherCode": "122",
+     "chanceofrain": "28"
+    },
+    {
+     "time": "900",
+     "tempC": "21",
+     "tempF": "70",
+     "weatherCode": "119",
+     "chanceofrain": "19"
+    },
+    {
+     "time": "1200",
+     "tempC": "22",
+     "tempF": "72",
+     "weatherCode": "122",
+     "chanceofrain": "28"
+    },
+    {
+     "time": "1500",
+     "tempC": "23",
+     "tempF": "73",
+     "weatherCode": "119",
+     "chanceofrain": "19"
+    },
+    {
+     "time": "1800",
+     "tempC": "24",
+     "tempF": "75",
+     "weatherCode": "122",
+     "chanceofrain": "28"
+    },
+    {
+     "time": "2100",
+     "tempC": "25",
+     "tempF": "77",
+     "weatherCode": "119",
+     "chanceofrain": "19"
+    }
+   ]
+  }
+ ]
+}

@@ -60,13 +60,21 @@ Panel {
   readonly property string shotUrl: focused && focused.module === "screenshot" && focused.image ? Util.fileUrl(focused.image) : ""
   readonly property string cardImage: coverUrl || shotUrl
 
-  // Now Brief: what the pill shows when nothing is going on.
-  readonly property var brief: service ? service.brief : null
+  // The weather card is "ambient": it counts in the carousel and in the "2/3"
+  // like any activity, but never takes the pill from a live one. Alone, it is
+  // the Now Brief, shown only with "When nothing is going on" set to Brief.
+  readonly property bool isWeather: focused !== null && focused.module === "weather"
+  readonly property int realCount: activities.filter(function(a) { return !a.ambient }).length
+  readonly property var pillItem: focused !== null
+    && (!focused.ambient || realCount > 0 || prefs.whenEmpty === "brief") ? focused : null
 
   property bool settingsOpen: false
-  onOpenedChanged: if (!opened) settingsOpen = false
+  onOpenedChanged: {
+    if (!opened) settingsOpen = false
+    else if (service) service.refreshWeatherIfStale()
+  }
 
-  readonly property bool shown: count > 0 || prefs.whenEmpty !== "hide"
+  readonly property bool shown: realCount > 0 || prefs.whenEmpty !== "hide"
   visible: shown
   implicitWidth: shown ? (vertical ? barSize : pill.width + Style.space(8)) : 0
   implicitHeight: shown ? (vertical ? pill.height + Style.space(8) : barSize) : 0
@@ -93,17 +101,23 @@ Panel {
     var c = Color.popups.background
     return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) < 0.5
   }
-  readonly property bool popupThemed: prefs.coverAccent && !settingsOpen && focused !== null && service !== null
+  // The weather card does the same with the color of the sky.
+  readonly property bool mediaThemed: prefs.coverAccent && !settingsOpen && focused !== null && service !== null
     && focused.id === service.artActivityId && service.artBase !== "" && service.artAccent !== ""
-  readonly property string popupTint: popupThemed ? Model.surfaceTint(service.artBase, darkTheme) : ""
+  readonly property bool weatherThemed: prefs.coverAccent && !settingsOpen && isWeather && !!focused.color
+  readonly property bool popupThemed: mediaThemed || weatherThemed
+  readonly property string popupTint: mediaThemed ? Model.surfaceTint(service.artBase, darkTheme)
+    : (weatherThemed ? Model.surfaceTint(focused.color, darkTheme) : "")
+  readonly property color popupAccent: mediaThemed ? coverAccent : (weatherThemed ? Qt.lighter(focused.color, 1.0) : Color.accent)
   readonly property var themeBorderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
   readonly property var popupBorderSpec: popupThemed
-    ? { color: coverAccent, widths: themeBorderSpec.widths, gradient: { colors: [], angle: 0, enabled: false } }
+    ? { color: popupAccent, widths: themeBorderSpec.widths, gradient: { colors: [], angle: 0, enabled: false } }
     : themeBorderSpec
 
   function accentFor(activity) {
     if (activity && activity.urgent) return Color.urgent
     if (activity && activity.module === "media" && hasCoverAccent) return coverAccent
+    if (activity && activity.module === "weather" && activity.color && prefs.coverAccent) return Qt.lighter(activity.color, 1.0)
     return Color.accent
   }
 
@@ -141,17 +155,17 @@ Panel {
     id: pill
     anchors.centerIn: parent
 
-    readonly property bool hasActivity: root.focused !== null
+    readonly property bool hasActivity: root.pillItem !== null
     readonly property real textMax: root.prefs.maxWidth
-    readonly property real progress: hasActivity && root.prefs.showProgress ? root.focused.progress : -1
+    readonly property real progress: hasActivity && root.prefs.showProgress ? root.pillItem.progress : -1
 
     height: root.vertical ? pillContent.implicitHeight + Style.space(12) : Math.max(Style.space(18), root.barSize - Style.space(10))
     width: root.vertical ? Math.max(Style.space(18), root.barSize - Style.space(10)) : pillContent.implicitWidth + Style.space(16)
     radius: Math.min(width, height) / 2
     color: hasActivity
-      ? Util.alpha(root.accentFor(root.focused), pillArea.containsMouse || root.opened ? 0.28 : 0.18)
+      ? Util.alpha(root.accentFor(root.pillItem), pillArea.containsMouse || root.opened ? 0.28 : 0.18)
       : Util.alpha(root.fg, pillArea.containsMouse || root.opened ? 0.14 : 0.07)
-    border.width: hasActivity && root.focused.urgent ? Math.max(1, Style.space(1)) : 0
+    border.width: hasActivity && root.pillItem.urgent ? Math.max(1, Style.space(1)) : 0
     border.color: Util.alpha(Color.urgent, 0.8)
     clip: true
 
@@ -173,8 +187,8 @@ Panel {
         width: Style.space(16)
         horizontalAlignment: Text.AlignHCenter
         textFormat: Text.PlainText
-        text: pill.hasActivity ? root.focused.icon : (root.brief ? root.brief.icon : "\u{f0996}")
-        color: pill.hasActivity && root.focused.urgent ? Color.urgent : root.fg
+        text: pill.hasActivity ? root.pillItem.icon : "\u{f0996}"
+        color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : root.fg
         opacity: pill.hasActivity ? 1 : 0.6
         font.family: root.family
         font.pixelSize: Style.font.body
@@ -192,7 +206,7 @@ Panel {
         height: measure.implicitHeight
         clip: true
 
-        readonly property string label: pill.hasActivity ? root.focused.pillText : (root.brief ? root.brief.pillText : "Nothing going on")
+        readonly property string label: pill.hasActivity ? root.pillItem.pillText : "Nothing going on"
         readonly property real gap: Style.space(28)
         readonly property real fullWidth: measure.implicitWidth
         readonly property bool overflows: fullWidth > width
@@ -282,7 +296,7 @@ Panel {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
-          text: root.count > 1 ? (root.focusIndex + 1) + "/" + root.count : ""
+          text: root.count > 1 && root.pillItem !== null ? (root.focusIndex + 1) + "/" + root.count : ""
           color: Qt.darker(root.fg, 1.5)
           font.family: root.family
           font.pixelSize: Style.font.caption
@@ -300,7 +314,7 @@ Panel {
       height: Math.max(2, Style.space(2))
       radius: height / 2
       width: Math.max(0, (pill.width - pill.radius) * Math.max(0, Math.min(1, pill.progress)))
-      color: root.accentFor(root.focused)
+      color: root.accentFor(root.pillItem)
 
       Behavior on width {
         enabled: !root.bar || root.bar.foregroundAnimationEnabled
@@ -325,9 +339,9 @@ Panel {
 
     onClicked: function(mouse) {
       if (mouse.button === Qt.MiddleButton) {
-        if (root.focused && root.service) root.service.primary(root.focused.id)
+        if (root.pillItem && root.service) root.service.primary(root.pillItem.id)
       } else if (mouse.button === Qt.RightButton) {
-        if (root.focused && root.service) root.service.dismiss(root.focused.id)
+        if (root.pillItem && root.service) root.service.dismiss(root.pillItem.id)
       } else {
         root.toggle()
       }
@@ -336,7 +350,7 @@ Panel {
       var d = wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : -wheel.angleDelta.x
       root.wheelStep(d)
     }
-    onEntered: if (root.bar) root.bar.showTooltip(root, Model.tooltipLabel(root.focused, root.focusIndex, root.count))
+    onEntered: if (root.bar) root.bar.showTooltip(root, Model.tooltipLabel(root.pillItem, root.focusIndex, root.count))
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 
@@ -526,9 +540,20 @@ Panel {
             visible: root.focused !== null
             spacing: Style.space(10)
 
+            WeatherCard {
+              width: parent.width
+              visible: root.isWeather && !!root.focused.weather
+              weather: root.isWeather ? root.focused.weather : null
+              extraLines: root.isWeather ? root.focused.details : []
+              foreground: root.popupFg
+              accent: root.accentFor(root.focused)
+              fontFamily: root.family
+            }
+
             Row {
               width: parent.width
               spacing: Style.space(12)
+              visible: !(root.isWeather && !!root.focused.weather)
 
               Rectangle {
                 id: cardIcon
@@ -725,7 +750,7 @@ Panel {
             Column {
               width: parent.width
               spacing: Style.space(2)
-              visible: root.focused !== null && root.focused.details.length > 0
+              visible: root.focused !== null && root.focused.details.length > 0 && !root.isWeather
 
               Repeater {
                 model: root.focused ? root.focused.details : []
@@ -765,7 +790,7 @@ Panel {
 
               // Pushed activities already have Dismiss as their action.
               Button {
-                visible: root.focused !== null && root.focused.module !== "push"
+                visible: root.focused !== null && root.focused.module !== "push" && !root.focused.ambient
                 iconText: "\u{f0209}"
                 foreground: root.popupFg
                 tooltipText: "Hide until it changes (x / right click)"
@@ -786,24 +811,8 @@ Panel {
             visible: root.focused === null
             spacing: Style.space(4)
 
-            Repeater {
-              model: root.brief ? root.brief.lines : []
-
-              Text {
-                required property var modelData
-                width: parent.width
-                textFormat: Text.PlainText
-                text: modelData
-                color: root.popupFg
-                font.family: root.family
-                font.pixelSize: Style.font.body
-                elide: Text.ElideRight
-              }
-            }
-
             Text {
               width: parent.width
-              visible: !root.brief
               textFormat: Text.PlainText
               text: "Nothing going on"
               color: root.popupFg
@@ -816,7 +825,6 @@ Panel {
               width: parent.width
               textFormat: Text.PlainText
               wrapMode: Text.WordWrap
-              topPadding: root.brief ? Style.space(6) : 0
               text: "Media, timers, reminders, screen recording, camera/mic use and more show up here while they are active."
               color: Qt.darker(root.popupFg, 1.4)
               font.family: root.family

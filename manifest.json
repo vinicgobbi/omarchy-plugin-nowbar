@@ -37,6 +37,8 @@
       "modulePush": true,
       "moduleBluetooth": true,
       "moduleScreenshot": true,
+      "moduleWeather": true,
+      "weatherUnit": "auto",
       "autoFocus": true,
       "coverAccent": true,
       "whenEmpty": "brief",
@@ -124,6 +126,25 @@
         "defaultValue": true
       },
       {
+        "key": "moduleWeather",
+        "type": "boolean",
+        "label": "Weather",
+        "description": "Weather card (wttr.in, Omarchy's saved location): the Now Brief.",
+        "defaultValue": true
+      },
+      {
+        "key": "weatherUnit",
+        "type": "enum",
+        "label": "Temperature",
+        "options": [
+          "auto",
+          "metric",
+          "imperial"
+        ],
+        "description": "auto: °F in the US (and Liberia, Myanmar), else °C.",
+        "defaultValue": "auto"
+      },
+      {
         "key": "autoFocus",
         "type": "boolean",
         "label": "Focus new activities",
@@ -132,8 +153,8 @@
       {
         "key": "coverAccent",
         "type": "boolean",
-        "label": "Cover colors",
-        "description": "Media takes its colors from the album cover: the highlight, the popup's border and a tint of its background.",
+        "label": "Dynamic colors",
+        "description": "Media takes its colors from the album cover and weather from the sky: the highlight, the popup's border and a tint of its background.",
         "defaultValue": true
       },
       {
@@ -146,7 +167,7 @@
           "hide"
         ],
         "defaultValue": "brief",
-        "description": "brief: weather, next reminder and updates; icon: an empty pill; hide: no pill."
+        "description": "brief: the weather card (with an Omarchy update notice); icon: an empty pill; hide: no pill."
       },
       {
         "key": "showProgress",

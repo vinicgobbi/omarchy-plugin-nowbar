@@ -161,6 +161,7 @@ Column {
     Cell { label: "Scripts"; key: "modulePush" }
     Cell { label: "Bluetooth"; key: "moduleBluetooth" }
     Cell { label: "Screenshots"; key: "moduleScreenshot" }
+    Cell { label: "Weather"; key: "moduleWeather" }
   }
 
   PanelSeparator { foreground: root.foreground }
@@ -182,8 +183,8 @@ Column {
   }
 
   Option {
-    label: "Cover colors"
-    hint: "Media takes its colors from the album cover: highlight, popup border and background."
+    label: "Dynamic colors"
+    hint: "Media takes its colors from the album cover, weather from the sky: highlight, popup border and background."
     ToggleSwitch {
       foreground: root.foreground
       checked: root.prefs.coverAccent === true
@@ -211,7 +212,7 @@ Column {
 
   Option {
     label: "When nothing is going on"
-    hint: "Brief: weather, next reminder and updates. Empty: just the pill. Hide: no pill."
+    hint: "Brief: the weather card (and Omarchy updates). Empty: just the pill. Hide: no pill."
     ButtonGroup {
       foreground: root.foreground
       fontFamily: root.fontFamily
@@ -251,6 +252,22 @@ Column {
       to: 600
       stepSize: 20
       onModified: function(v) { root.changed("maxWidth", v) }
+    }
+  }
+
+  Option {
+    label: "Temperature"
+    hint: "Auto: \u00b0F in the US (and Liberia, Myanmar), else \u00b0C."
+    ButtonGroup {
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      options: [
+        { value: "auto", label: "Auto" },
+        { value: "metric", label: "\u00b0C" },
+        { value: "imperial", label: "\u00b0F" }
+      ]
+      value: root.prefs.weatherUnit
+      onChanged: function(v) { root.changed("weatherUnit", v) }
     }
   }
 
