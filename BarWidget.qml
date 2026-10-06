@@ -85,6 +85,22 @@ Panel {
   readonly property color coverAccent: service && service.artAccent !== "" ? Qt.lighter(service.artAccent, 1.0) : Color.accent
   readonly property bool hasCoverAccent: prefs.coverAccent && service !== null && service.artAccent !== ""
 
+  // The popup itself also takes the cover's colors on the media card whose
+  // cover is shown: the border gets the accent, the background a tint of the
+  // cover's main color (kept as dark, or as light, as the theme's so the
+  // text stays readable). Same "Cover colors" option.
+  readonly property bool darkTheme: {
+    var c = Color.popups.background
+    return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) < 0.5
+  }
+  readonly property bool popupThemed: prefs.coverAccent && !settingsOpen && focused !== null && service !== null
+    && focused.id === service.artActivityId && service.artBase !== "" && service.artAccent !== ""
+  readonly property string popupTint: popupThemed ? Model.surfaceTint(service.artBase, darkTheme) : ""
+  readonly property var themeBorderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+  readonly property var popupBorderSpec: popupThemed
+    ? { color: coverAccent, widths: themeBorderSpec.widths, gradient: { colors: [], angle: 0, enabled: false } }
+    : themeBorderSpec
+
   function accentFor(activity) {
     if (activity && activity.urgent) return Color.urgent
     if (activity && activity.module === "media" && hasCoverAccent) return coverAccent
@@ -335,8 +351,35 @@ Panel {
     owner: root
     open: root.opened
     focusTarget: keyCatcher
+    borderSpec: root.popupBorderSpec
     contentWidth: popup.fittedContentWidth(Style.space(360))
     contentHeight: popup.fittedContentHeight(root.settingsOpen ? settingsView.implicitHeight : column.implicitHeight)
+
+    // Cover-tinted background: fills the card inside its border (the content
+    // area plus the padding around it), fading from the tint at the top to
+    // the theme's background.
+    Rectangle {
+      id: tintLayer
+      anchors.fill: parent
+      anchors.margins: -popup.padding
+      radius: Math.max(0, Style.cornerRadius - Border.top(root.popupBorderSpec))
+      opacity: root.popupThemed ? 1 : 0
+      property color tint: root.popupTint !== "" ? root.popupTint : Color.popups.background
+      gradient: Gradient {
+        GradientStop { position: 0.0; color: tintLayer.tint }
+        GradientStop { position: 0.75; color: Qt.tint(Color.popups.background, Util.alpha(tintLayer.tint, 0.35)) }
+        GradientStop { position: 1.0; color: Color.popups.background }
+      }
+
+      Behavior on opacity {
+        enabled: !root.bar || root.bar.foregroundAnimationEnabled
+        NumberAnimation { duration: 260 }
+      }
+      Behavior on tint {
+        enabled: !root.bar || root.bar.foregroundAnimationEnabled
+        ColorAnimation { duration: 260 }
+      }
+    }
 
     PanelKeyCatcher {
       id: keyCatcher

@@ -872,6 +872,35 @@ function accentFromHistogram(text) {
   return hslToHex(hsl.h, Math.max(0.45, hsl.s), Math.max(0.5, Math.min(0.7, hsl.l)))
 }
 
+// The cover's base color: the one covering most of it, a bit in favor of
+// colored ones over gray. "" when the histogram is empty or unreadable.
+function baseFromHistogram(text) {
+  var colors = parseHistogram(text)
+  var best = null
+  var bestScore = 0
+  for (var i = 0; i < colors.length; i++) {
+    var c = colors[i]
+    var max = Math.max(c.r, c.g, c.b)
+    var min = Math.min(c.r, c.g, c.b)
+    var sat = max > 0 ? (max - min) / max : 0
+    var score = c.count * (0.35 + sat)
+    if (score > bestScore) { bestScore = score; best = c }
+  }
+  if (!best) return ""
+  var hsl = rgbToHsl(best.r, best.g, best.b)
+  return hslToHex(hsl.h, hsl.s, hsl.l)
+}
+
+// A popup background from the cover's base color: same hue, saturation kept
+// moderate, and a lightness close to a dark (or light) theme's, so the
+// theme's text color stays readable on it.
+function surfaceTint(hex, dark) {
+  var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""))
+  if (!m) return ""
+  var hsl = rgbToHsl(parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255)
+  return hslToHex(hsl.h, Math.min(0.55, hsl.s), dark ? 0.17 : 0.91)
+}
+
 // --- live updates pushed by scripts (IPC `push <id> <json>`) --------------------
 // Text only: nothing in a pushed activity is ever run, opened or rendered as
 // markup. Ids are short slugs so they can't collide with built-in modules.
@@ -1296,6 +1325,8 @@ if (typeof module !== "undefined") {
     safeArtUrl: safeArtUrl,
     parseHistogram: parseHistogram,
     accentFromHistogram: accentFromHistogram,
+    baseFromHistogram: baseFromHistogram,
+    surfaceTint: surfaceTint,
     validPushId: validPushId,
     sanitizePush: sanitizePush,
     upsertPush: upsertPush,

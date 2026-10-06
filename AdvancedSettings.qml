@@ -183,7 +183,7 @@ Column {
 
   Option {
     label: "Cover colors"
-    hint: "Media takes its highlight color from the album cover."
+    hint: "Media takes its colors from the album cover: highlight, popup border and background."
     ToggleSwitch {
       foreground: root.foreground
       checked: root.prefs.coverAccent === true

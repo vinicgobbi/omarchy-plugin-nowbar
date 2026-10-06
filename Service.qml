@@ -321,6 +321,7 @@ Item {
     root._artPending = null
     root.safeArtPath = ""
     root.artAccent = ""
+    root.artBase = ""
     var stale = root._artCurrentFile
     root._artCurrentFile = ""
     if (stale) artCleanupProcess.remove(stale)
@@ -390,6 +391,8 @@ Item {
   // PNG/JPEG/GIF/WebP, size and dimensions capped), with ImageMagick's own
   // limits on top. NowbarModel.accentFromHistogram picks the color.
   property string artAccent: ""
+  // The cover's base color (most of its area), for the popup's background.
+  property string artBase: ""
 
   function extractAccent(path, generation) {
     if (accentProcess.running) { accentProcess.pending = { path: path, generation: generation }; return }
@@ -407,7 +410,10 @@ Item {
       waitForEnd: true
       onStreamFinished: {
         // A newer track may have replaced the cover meanwhile.
-        if (accentProcess.generation === root._artGeneration) root.artAccent = Model.accentFromHistogram(text)
+        if (accentProcess.generation !== root._artGeneration) return
+        root.artAccent = Model.accentFromHistogram(text)
+        // A gray cover keeps the theme: no accent means no tint either.
+        root.artBase = root.artAccent !== "" ? Model.baseFromHistogram(text) : ""
       }
     }
     onExited: {
@@ -435,6 +441,7 @@ Item {
         } else {
           root.safeArtPath = ""
           root.artAccent = ""
+          root.artBase = ""
         }
       } else if (exitCode === 0) {
         artCleanupProcess.remove(targetPath)
@@ -1173,6 +1180,7 @@ Item {
     return JSON.stringify({
       focus: focusId,
       coverAccent: artAccent,
+      coverBase: artBase,
       brief: brief ? brief.pillText : "",
       activities: activities.map(function(a) {
         return { id: a.id, module: a.module, title: a.title, subtitle: a.subtitle, progress: a.progress }

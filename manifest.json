@@ -130,7 +130,7 @@
         "key": "coverAccent",
         "type": "boolean",
         "label": "Cover colors",
-        "description": "Media takes its highlight color from the album cover.",
+        "description": "Media takes its colors from the album cover: the highlight, the popup's border and a tint of its background.",
         "defaultValue": true
       },
       {

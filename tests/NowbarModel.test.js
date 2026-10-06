@@ -416,3 +416,21 @@ test("Now Brief", () => {
   assert.equal(b.pillText, "22°C  ·  \u{f088c} 9:30  ·  \u{f06b0} Update")
   assert.equal(b.lines.length, 3)
 })
+
+test("cover base color and popup surface tint", () => {
+  const hist = [
+    "  6000: (20,40,120) #142878 x",
+    "   500: (230,40,60) #E6283C x",
+    "  3000: (128,128,128) #808080 x"
+  ].join("\n")
+  assert.equal(M.baseFromHistogram(hist), "#142878")
+  assert.equal(M.baseFromHistogram("junk"), "")
+  const dark = M.surfaceTint("#142878", true)
+  const light = M.surfaceTint("#142878", false)
+  const lum = (h) => (Math.max(...[1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))) + Math.min(...[1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)))) / 2 / 255
+  assert.ok(Math.abs(lum(dark) - 0.17) < 0.01, dark)
+  assert.ok(Math.abs(lum(light) - 0.91) < 0.01, light)
+  const b = parseInt(dark.slice(5, 7), 16), r = parseInt(dark.slice(1, 3), 16)
+  assert.ok(b > r, "keeps the blue hue: " + dark)
+  assert.equal(M.surfaceTint("nope", true), "")
+})
