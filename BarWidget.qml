@@ -73,8 +73,15 @@ Panel {
   readonly property color popupFg: bar ? bar.foreground : Color.foreground
   readonly property string family: bar ? bar.fontFamily : Style.font.family
 
+  // Media takes its accent from the cover (Service.qml's artAccent) when that
+  // option is on and the cover has a real color; everything else uses the theme.
+  readonly property color coverAccent: service && service.artAccent !== "" ? Qt.lighter(service.artAccent, 1.0) : Color.accent
+  readonly property bool hasCoverAccent: prefs.coverAccent && service !== null && service.artAccent !== ""
+
   function accentFor(activity) {
-    return activity && activity.urgent ? Color.urgent : Color.accent
+    if (activity && activity.urgent) return Color.urgent
+    if (activity && activity.module === "media" && hasCoverAccent) return coverAccent
+    return Color.accent
   }
 
   // A notch of a mouse wheel is 120; touchpads send many small deltas, so
@@ -579,6 +586,7 @@ Panel {
                   iconText: modelData.icon
                   text: modelData.label
                   foreground: root.popupFg
+                  accent: root.accentFor(root.focused)
                   selected: index === 0
                   tooltipText: index === 0 ? "Enter / middle click" : ""
                   onClicked: if (root.service && root.focused) root.service.act(root.focused.id, modelData.id)

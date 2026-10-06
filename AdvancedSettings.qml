@@ -177,6 +177,16 @@ Column {
   }
 
   Option {
+    label: "Cover colors"
+    hint: "Media takes its highlight color from the album cover."
+    ToggleSwitch {
+      foreground: root.foreground
+      checked: root.prefs.coverAccent === true
+      onToggled: root.changed("coverAccent", !checked)
+    }
+  }
+
+  Option {
     label: "Progress line"
     ToggleSwitch {
       foreground: root.foreground

@@ -33,6 +33,7 @@
       "moduleCharging": true,
       "modulePush": true,
       "autoFocus": true,
+      "coverAccent": true,
       "whenEmpty": "icon",
       "showProgress": true,
       "showCount": true,
@@ -103,6 +104,13 @@
         "key": "autoFocus",
         "type": "boolean",
         "label": "Focus new activities",
+        "defaultValue": true
+      },
+      {
+        "key": "coverAccent",
+        "type": "boolean",
+        "label": "Cover colors",
+        "description": "Media takes its highlight color from the album cover.",
         "defaultValue": true
       },
       {
