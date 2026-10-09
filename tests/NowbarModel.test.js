@@ -539,3 +539,111 @@ test("Quick toggles / Quick start item lists", () => {
   assert.deepEqual(d.quickStartExtras, ["stopwatch", "pomodoro", "sleep"])
   assert.deepEqual(M.entrySettings(d, {}), {})
 })
+
+test("parseUpdates reads the script's lines and skips junk", () => {
+  const text = [
+    "pacman\taether\t4.32.0-1\t4.32.0-2",
+    "pacman\tomarchy\t3.1-1\t3.2-1",
+    "omarchy\tOmarchy\t\tomarchy 3.1-1 -> 3.2-1",
+    "flatpak\torg.gaphor.Gaphor\t3.3.2\t3.3.2",
+    "aur\tyay-bin\t12.1\t12.2",
+    "error\taur\tyay -Qua failed",
+    "error\tbogus\tx",
+    "weird\tline",
+    "pacman\t\t1\t2",
+    "pacman\tbad\u0007name\t1\t2"
+  ].join("\n")
+  const r = M.parseUpdates(text)
+  assert.deepEqual(r.items.map(u => u.source + ":" + u.name), ["pacman:aether", "omarchy:Omarchy", "flatpak:org.gaphor.Gaphor", "aur:yay-bin", "pacman:bad name"])
+  assert.deepEqual(r.errors, ["aur"])
+  // Without the omarchy source, Omarchy's package stays among the official ones.
+  assert.equal(M.parseUpdates("pacman\tomarchy\t1\t2").items.length, 1)
+  assert.deepEqual(M.parseUpdates(""), { items: [], errors: [] })
+})
+
+test("updatesActivity sums up by source", () => {
+  const state = M.normalizeUpdates({
+    items: [
+      { source: "pacman", name: "a", from: "1", to: "2" },
+      { source: "pacman", name: "b", from: "1", to: "2" },
+      { source: "flatpak", name: "org.x.Y", from: "3", to: "3" },
+      { source: "omarchy", name: "Omarchy", from: "", to: "omarchy 1 -> 2" }
+    ],
+    errors: ["aur"],
+    checkedAt: new Date(2026, 9, 8, 14, 5).getTime()
+  })
+  const a = M.updatesActivity(state, false)
+  assert.equal(a.title, "4 updates")
+  assert.equal(a.subtitle, "Omarchy · 2 Official · 1 Flatpak")
+  assert.equal(a.module, "updates")
+  assert.equal(a.urgent, false)
+  assert.ok(a.details[0].includes("omarchy 1 -> 2"))
+  assert.ok(a.details.includes("a  ·  1 → 2"))
+  assert.ok(a.details.includes("org.x.Y  ·  3 (new build)"))
+  assert.ok(a.details.some(d => d.includes("Couldn't check AUR")))
+  assert.ok(a.details.includes("Checked at 14:05"))
+  assert.deepEqual(a.actions.map(x => x.id), ["update", "check"])
+  assert.equal(M.updatesActivity(state, true).subtitle, "Checking…")
+  assert.equal(M.updatesActivity(M.normalizeUpdates({}), false), null)
+  // Same list, same signature; another list, another one.
+  assert.equal(M.updatesActivity(state, true).signature, a.signature)
+  assert.notEqual(M.updatesActivity(M.normalizeUpdates({ items: [{ source: "pacman", name: "a", to: "3" }] }), false).signature, a.signature)
+})
+
+test("updates prefs, schedule and interval labels", () => {
+  const p = M.normalizePrefs({})
+  assert.equal(p.modules.updates, true)
+  assert.deepEqual(p.updateSourceList, ["omarchy", "pacman", "aur", "flatpak"])
+  assert.equal(p.updateInterval, 180)
+  assert.equal(p.updateOnStartup, true)
+  assert.deepEqual(M.normalizePrefs({ updateSources: "flatpak,nope,pacman" }).updateSourceList, ["pacman", "flatpak"])
+  assert.equal(M.normalizePrefs({ updateInterval: 1 }).updateInterval, 5)
+  assert.equal(M.normalizePrefs({ updateInterval: 99999 }).updateInterval, 10080)
+  assert.equal(M.updatesDue(0, 180, 1000), true)
+  assert.equal(M.updatesDue(1000, 180, 1000 + 179 * 60000), false)
+  assert.equal(M.updatesDue(1000, 180, 1000 + 180 * 60000), true)
+  assert.equal(M.intervalLabel(30), "30 min")
+  assert.equal(M.intervalLabel(180), "3 h")
+  assert.equal(M.intervalLabel(90), "1 h 30 min")
+  assert.equal(M.intervalLabel(1440), "1 d")
+  assert.deepEqual(M.normalizeUpdates({ items: [{ source: "x", name: "a" }, { source: "aur", name: "" }], errors: ["aur", "x"], checkedAt: "5" }),
+    { items: [], errors: ["aur"], checkedAt: 5 })
+})
+
+test("mergeUpdates keeps what a failed source listed; updateCommand", () => {
+  const prev = { items: [{ source: "aur", name: "x", from: "1", to: "2" }, { source: "pacman", name: "old", from: "1", to: "2" }], errors: [], checkedAt: 1 }
+  const m = M.mergeUpdates(prev, { items: [{ source: "pacman", name: "new", from: "1", to: "2" }], errors: ["aur"] }, 50)
+  assert.deepEqual(m.items.map(u => u.name), ["new", "x"])
+  assert.deepEqual(m.errors, ["aur"])
+  assert.equal(m.checkedAt, 50)
+  assert.deepEqual(M.updatesFor(m, ["pacman"]).items.map(u => u.name), ["new"])
+  assert.deepEqual(M.updatesFor(m, ["pacman"]).errors, [])
+  assert.equal(M.updateCommand([{ source: "pacman" }]), "omarchy-update")
+  assert.equal(M.updateCommand([{ source: "flatpak" }]), "flatpak update")
+  assert.equal(M.updateCommand([{ source: "aur" }, { source: "flatpak" }]), "omarchy-update && flatpak update")
+  assert.equal(M.updateCommand([]), "omarchy-update")
+})
+
+test("newUpdates counts what a check found that wasn't waiting before", () => {
+  const prev = { items: [{ source: "pacman", name: "a", to: "2" }, { source: "aur", name: "b", to: "1" }] }
+  assert.equal(M.newUpdates(prev, prev), 0)
+  assert.equal(M.newUpdates(prev, { items: [{ source: "pacman", name: "a", to: "2" }] }), 0)
+  assert.equal(M.newUpdates(prev, { items: [{ source: "pacman", name: "a", to: "3" }, { source: "flatpak", name: "c", to: "1" }] }), 2)
+  assert.equal(M.newUpdates({ items: [] }, prev), 2)
+})
+
+test("the updates card has a normal priority", () => {
+  const a = M.updatesActivity(M.normalizeUpdates({ items: [{ source: "pacman", name: "a", from: "1", to: "2" }] }), false)
+  const list = M.sortActivities([a, M.chargingActivity({ present: true, charging: true, percentage: 0.5 }), M.timerActivity(M.startTimer(60, 0), 0)])
+  assert.deepEqual(list.map(x => x.id), ["timer", "updates", "charging"])
+})
+
+test("only the update sources this system has are offered and checked", () => {
+  // A fresh Omarchy install: no flatpak.
+  const fresh = M.parseAvailableSources("omarchy\npacman\naur\n")
+  assert.deepEqual(fresh, ["omarchy", "pacman", "aur"])
+  assert.deepEqual(M.parseAvailableSources("flatpak\nparu\n\npacman"), ["pacman", "flatpak"])
+  assert.deepEqual(M.activeSources(["omarchy", "pacman", "aur", "flatpak"], fresh), ["omarchy", "pacman", "aur"])
+  assert.deepEqual(M.activeSources(["flatpak"], fresh), [])
+  assert.deepEqual(M.activeSources(["aur", "flatpak"], []), [])
+})

@@ -139,7 +139,12 @@ Panel {
 
   // Full size of the popup; the height follows the content (another card,
   // the options) smoothly once the popup is open.
-  readonly property real popupFullWidth: popup.fittedContentWidth(Style.space(360))
+  // The options are a bit wider: five tabs in one row.
+  property real popupFullWidth: popup.fittedContentWidth(Style.space(settingsOpen ? 420 : 360))
+  Behavior on popupFullWidth {
+    enabled: root.motion && root.opened && root.reveal === 1
+    NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+  }
   property real popupFullHeight: popup.fittedContentHeight(settingsOpen ? settingsView.implicitHeight : column.implicitHeight)
   Behavior on popupFullHeight {
     // Not while the card's own height animates: then it already follows it.
@@ -697,6 +702,7 @@ Panel {
             onTabChanged: settingsFlick.contentY = 0
             weatherWidgetState: root.service ? root.service.weatherWidgetState : ""
             indicatorsState: root.service ? root.service.indicatorsState : ""
+            updateSourcesAvailable: root.service ? root.service.availableUpdateSources : []
             onIndicatorsRequested: function(replace) { if (root.service) root.service.setIndicators(replace) }
             onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
             onBackRequested: root.settingsOpen = false

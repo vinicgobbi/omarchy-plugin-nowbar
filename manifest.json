@@ -38,6 +38,10 @@
       "moduleBluetooth": true,
       "moduleScreenshot": true,
       "moduleWeather": true,
+      "moduleUpdates": true,
+      "updateSources": "omarchy,pacman,aur,flatpak",
+      "updateInterval": 180,
+      "updateOnStartup": true,
       "weatherUnit": "auto",
       "autoFocus": true,
       "coverAccent": true,
@@ -135,6 +139,36 @@
         "type": "boolean",
         "label": "Weather",
         "description": "Weather card (wttr.in, Omarchy's saved location): the Now Brief.",
+        "defaultValue": true
+      },
+      {
+        "key": "moduleUpdates",
+        "type": "boolean",
+        "label": "Updates",
+        "description": "A card when updates are waiting (Omarchy, official packages, AUR, and Flatpak if installed), checked now and then. Checking needs no password; the card's Update button opens Omarchy's updater in a terminal, which asks for it.",
+        "defaultValue": true
+      },
+      {
+        "key": "updateSources",
+        "type": "string",
+        "label": "Update sources",
+        "description": "Comma separated: omarchy, pacman (official packages), aur (yay) and flatpak. The first three come with Omarchy; flatpak is checked only if installed. Empty: none.",
+        "defaultValue": "omarchy,pacman,aur,flatpak"
+      },
+      {
+        "key": "updateInterval",
+        "type": "integer",
+        "label": "Check for updates every (min)",
+        "min": 5,
+        "max": 10080,
+        "step": 15,
+        "defaultValue": 180
+      },
+      {
+        "key": "updateOnStartup",
+        "type": "boolean",
+        "label": "Check for updates at startup",
+        "description": "Once each time the computer starts, about a minute after login.",
         "defaultValue": true
       },
       {

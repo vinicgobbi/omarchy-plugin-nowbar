@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# Lists the updates waiting, for the Now Bar's Updates card. Run by the
+# service now and then (see the Updates tab of the options), or by hand:
+#
+#   nowbar-updates omarchy pacman aur flatpak
+#   nowbar-updates --available     # the sources this system can check
+#
+# One line per update, tab separated: <source> <name> <installed> <new>
+# A source that couldn't be checked prints: error <source> <message>
+# Omarchy, official packages (checkupdates, from pacman-contrib) and the AUR
+# (yay) come with every Omarchy install; Flatpak only if you installed it.
+# A source whose tool is missing is left out, never reported as failing.
+# Only reads: checkupdates syncs a temporary copy of the package databases,
+# so nothing here needs sudo or touches the system's own.
+
+set -uo pipefail
+
+limit() { timeout 90 "$@"; }
+
+# "name old -> new" (checkupdates, yay -Qua) to tab separated lines.
+arrows() {
+  awk -v src="$1" 'NF >= 4 && $3 == "->" { printf "%s\t%s\t%s\t%s\n", src, $1, $2, $4 }'
+}
+
+has() { command -v "$1" >/dev/null 2>&1; }
+
+# Each source and the tool it needs.
+tool_for() {
+  case $1 in
+    omarchy) echo omarchy-update-available ;;
+    pacman) echo checkupdates ;;
+    aur) echo yay ;;
+    flatpak) echo flatpak ;;
+  esac
+}
+
+if [[ ${1:-} == "--available" ]]; then
+  for source in omarchy pacman aur flatpak; do
+    has "$(tool_for "$source")" && echo "$source"
+  done
+  exit 0
+fi
+
+check_omarchy() {
+  local out
+  if out=$(limit omarchy-update-available 2>/dev/null); then
+    printf 'omarchy\tOmarchy\t\t%s\n' "$(head -n1 <<<"$out")"
+  fi
+}
+
+check_pacman() {
+  local out code
+  out=$(limit checkupdates --nocolor 2>/dev/null)
+  code=$?
+  # 0: updates, 2: none, anything else: it failed (offline, locked...).
+  case $code in
+    0) arrows pacman <<<"$out" ;;
+    2) ;;
+    *) printf 'error\tpacman\tcheckupdates failed (exit %s)\n' "$code" ;;
+  esac
+}
+
+check_aur() {
+  local out code
+  out=$(limit yay -Qua 2>/dev/null)
+  code=$?
+  # yay exits 1 when there is simply nothing to update.
+  if (( code == 0 || code == 1 )); then
+    arrows aur <<<"$out"
+  else
+    printf 'error\taur\tyay -Qua failed (exit %s)\n' "$code"
+  fi
+}
+
+check_flatpak() {
+  local updates installed
+  if ! updates=$(limit flatpak remote-ls --updates --columns=application,version 2>/dev/null); then
+    printf 'error\tflatpak\tflatpak remote-ls failed\n'
+    return
+  fi
+  [[ -n $updates ]] || return 0
+  installed=$(flatpak list --columns=application,version 2>/dev/null || true)
+  awk -F'\t' 'NR == FNR { have[$1] = $2; next } $1 != "" { printf "flatpak\t%s\t%s\t%s\n", $1, have[$1], $2 }' \
+    <(printf '%s\n' "$installed") <(printf '%s\n' "$updates")
+}
+
+for source in "$@"; do
+  tool=$(tool_for "$source")
+  if [[ -z $tool ]] || ! has "$tool"; then continue; fi
+  case $source in
+    omarchy) check_omarchy ;;
+    pacman) check_pacman ;;
+    aur) check_aur ;;
+    flatpak) check_flatpak ;;
+  esac
+done | head -c 262144

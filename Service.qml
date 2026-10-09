@@ -39,7 +39,8 @@ Item {
 
   function saveState() {
     if (!stateLoaded) return
-    stateFile.setText(JSON.stringify({ timer: timerState, stopwatch: stopwatchState, pomodoro: pomodoroState, sleep: sleepState }) + "\n")
+    stateFile.setText(JSON.stringify({ timer: timerState, stopwatch: stopwatchState, pomodoro: pomodoroState, sleep: sleepState,
+      updates: updatesState, bootId: updatesBootId }) + "\n")
   }
 
   function restoreState(text) {
@@ -49,6 +50,9 @@ Item {
     stopwatchState = Model.normalizeStopwatch(data.stopwatch)
     pomodoroState = Model.normalizePomodoro(data.pomodoro)
     sleepState = Model.normalizeSleep(data.sleep)
+    updatesState = Model.normalizeUpdates(data.updates)
+    updatesSavedBootId = typeof data.bootId === "string" ? data.bootId : ""
+    updatesBootId = updatesSavedBootId
     stateLoaded = true
     root.now = Date.now()
     checkTimer()
@@ -1375,9 +1379,135 @@ Item {
   Timer {
     interval: 3 * 3600 * 1000
     repeat: true
-    running: root.weatherEnabled
+    // The Updates card tells it otherwise.
+    running: root.weatherEnabled && !root.modules.updates
     triggeredOnStart: true
     onTriggered: if (!updateProcess.running) updateProcess.running = true
+  }
+
+  // --- updates waiting (bin/nowbar-updates) -----------------------------------------
+  // Checked every `updateInterval` minutes (counted from the last check, kept
+  // in state.json across restarts), and once after the computer starts when
+  // "Check at startup" is on. Nothing here needs sudo; the Update button opens
+  // a terminal running Omarchy's updater, which asks for the password there.
+
+  property var updatesState: Model.normalizeUpdates(null)
+  property bool updatesChecking: false
+  // This boot's id, and the one the last startup check ran in: a shell
+  // restart in the same boot isn't a startup.
+  property string updatesBootId: ""
+  property string updatesSavedBootId: ""
+  // With "Check at startup" off, the first check comes one interval after this.
+  readonly property double serviceStartedAt: Date.now()
+  // What this system can check (see bin/nowbar-updates --available): a
+  // fresh Omarchy has Omarchy, official and AUR; Flatpak only if installed.
+  property var availableUpdateSources: []
+  readonly property var updateSources: Model.activeSources(prefs.updateSourceList, availableUpdateSources)
+  readonly property var shownUpdates: Model.updatesFor(updatesState, updateSources)
+  readonly property string updatesScript: decodeURIComponent(String(Qt.resolvedUrl("bin/nowbar-updates")).replace(/^file:\/\//, ""))
+
+  function checkUpdates() {
+    if (!modules.updates || updatesProcess.running || updateSources.length === 0) return false
+    updatesProcess.command = [updatesScript].concat(updateSources)
+    updatesChecking = true
+    updatesProcess.running = true
+    return true
+  }
+
+  function checkUpdatesIfDue() {
+    var last = updatesState.checkedAt > 0 ? updatesState.checkedAt : (prefs.updateOnStartup ? 0 : serviceStartedAt)
+    if (Model.updatesDue(last, prefs.updateInterval, Date.now())) checkUpdates()
+  }
+
+  Process {
+    id: updatesProcess
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var prev = Model.updatesFor(root.updatesState, root.updateSources)
+        root.updatesState = Model.mergeUpdates(root.updatesState, Model.parseUpdates(text), Date.now())
+        root.saveState()
+        // The card was already there: something new waiting brings it to
+        // the pill all the same, like a new activity would.
+        if (prev.items.length > 0 && Model.newUpdates(prev, root.shownUpdates) > 0) root.focusNewcomer("updates")
+      }
+    }
+    onExited: root.updatesChecking = false
+  }
+
+  Process {
+    id: updateSourcesProcess
+    command: [root.updatesScript, "--available"]
+    running: root.modules.updates
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.availableUpdateSources = Model.parseAvailableSources(text)
+    }
+  }
+
+  Process {
+    id: bootIdProcess
+    command: ["cat", "/proc/sys/kernel/random/boot_id"]
+    running: root.stateLoaded && root.modules.updates
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var id = String(text || "").trim()
+        if (!id) return
+        root.updatesBootId = id
+        if (id !== root.updatesSavedBootId && root.prefs.updateOnStartup) updatesStartup.start()
+      }
+    }
+  }
+
+  // A little after login, so the network is up.
+  Timer {
+    id: updatesStartup
+    interval: 45000
+    onTriggered: {
+      if (!root.checkUpdates()) return
+      root.updatesSavedBootId = root.updatesBootId
+      root.saveState()
+    }
+  }
+
+  Timer {
+    interval: 60000
+    repeat: true
+    running: root.modules.updates && root.stateLoaded
+    onTriggered: root.checkUpdatesIfDue()
+  }
+
+  // Updating anywhere (the Update button, a terminal) writes pacman's log or
+  // flatpak's .changed stamp: check again once it has been quiet for a bit,
+  // so the card goes away by itself. Needs inotifywait.
+  Process {
+    id: updatesWatch
+    command: ["sh", "-c",
+      "command -v inotifywait >/dev/null 2>&1 || exit 3; set --; "
+      + "for f in /var/log/pacman.log /var/lib/flatpak/.changed \"$HOME/.local/share/flatpak/.changed\"; do [ -e \"$f\" ] && set -- \"$@\" \"$f\"; done; "
+      + "[ $# -gt 0 ] || exit 4; exec setpriv --pdeathsig TERM inotifywait -mq -e modify,attrib,close_write --format x -- \"$@\""]
+    running: root.modules.updates && root.stateLoaded
+    stdout: SplitParser {
+      onRead: function(line) { updatesSettle.restart() }
+    }
+    onExited: function(exitCode) { if (exitCode !== 3 && exitCode !== 4 && root.modules.updates) updatesWatchRetry.restart() }
+  }
+
+  Timer {
+    id: updatesSettle
+    interval: 20000
+    onTriggered: root.checkUpdates()
+  }
+
+  Timer {
+    id: updatesWatchRetry
+    interval: 60000
+    onTriggered: if (root.modules.updates && !updatesWatch.running) updatesWatch.running = true
+  }
+
+  function runUpdate() {
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", Model.updateCommand(shownUpdates.items)])
   }
 
   // --- pushed live updates (IPC) ---------------------------------------------------
@@ -1403,7 +1533,8 @@ Item {
     for (var m = 0; m < mediaInfos.length; m++) list.push(Model.mediaActivity(mediaInfos[m]))
     for (var b in btRecent) list.push(Model.bluetoothActivity(btRecent[b]))
     if (screenshot) list.push(Model.screenshotActivity(screenshot))
-    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable))
+    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates))
+    if (modules.updates) list.push(Model.updatesActivity(shownUpdates, updatesChecking))
     for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })
   }
@@ -1441,6 +1572,19 @@ Item {
     })
     knownIds = ids
     if (next !== focusId) focusId = next
+  }
+
+  // Gives `id` the focus as if it had just shown up: only with "Focus new
+  // activities" on, not right after a switch by hand, and not over something
+  // more important.
+  function focusNewcomer(id) {
+    if (!prefs.autoFocus || Date.now() < manualUntil) return false
+    var i = Model.indexOfId(activities, id)
+    if (i < 0) return false
+    var a = activities[i]
+    if (focused && focused.id !== id && focused.priority < a.priority) return false
+    focusId = id
+    return true
   }
 
   function step(delta) {
@@ -1545,6 +1689,9 @@ Item {
       modeAction(actionId)
     } else if (a && a.module === "media") {
       mediaAction(a.target, actionId)
+    } else if (activityId === "updates") {
+      if (actionId === "update") runUpdate()
+      else if (actionId === "check") checkUpdates()
     } else if (activityId.indexOf("push:") === 0 && actionId === "remove") {
       removePush(activityId.slice(5))
     } else {
@@ -1641,18 +1788,24 @@ Item {
   IpcHandler {
     target: "nowbar"
 
-    // Open the popup on the options: settings [activities|look|quick|weather]
+    // Open the popup on the options: settings [activities|look|quick|weather|updates]
     function settings(tab: string): string {
       var t = String(tab || "")
       if (t === "timers") t = "quick"   // the tab's old name
-      if (t !== "" && ["activities", "look", "quick", "weather"].indexOf(t) === -1)
-        return "unknown tab: use activities, look, quick or weather"
+      if (t !== "" && ["activities", "look", "quick", "weather", "updates"].indexOf(t) === -1)
+        return "unknown tab: use activities, look, quick, weather or updates"
       root.settingsRequested(t)
       if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
       return "ok"
     }
 
     function status(): string { return root.statusJson() }
+    // Check for updates now (the Updates card).
+    function updates(): string {
+      if (!root.modules.updates) return "error: the updates module is turned off"
+      if (root.updatesChecking) return "already checking"
+      return root.checkUpdates() ? "checking" : "error: no source turned on"
+    }
     function next(): string { return root.step(1) ? "ok" : "empty" }
     function prev(): string { return root.step(-1) ? "ok" : "empty" }
     function toggle(): string {

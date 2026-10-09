@@ -123,6 +123,7 @@ var PRIORITY = {
   bluetooth: 55,
   mediaPlaying: 60,
   push: 65,
+  updates: 65,
   sleep: 70,
   reminder: 75,
   charging: 80,
@@ -1076,6 +1077,184 @@ function screenshotActivity(s) {
   }
 }
 
+// --- updates waiting (bin/nowbar-updates, now and then) ----------------------------
+
+// Omarchy, official packages (checkupdates) and the AUR (yay) come with every
+// Omarchy install; Flatpak only when installed. Only the sources this system
+// can check (`nowbar-updates --available`) are offered or checked.
+var UPDATE_SOURCES = ["omarchy", "pacman", "aur", "flatpak"]
+var UPDATE_SOURCE_LABELS = { omarchy: "Omarchy", pacman: "Official", aur: "AUR", flatpak: "Flatpak" }
+// Minutes; the Updates tab's presets. Any other value is a custom interval.
+var UPDATE_INTERVALS = [30, 60, 180, 360, 720, 1440]
+var MAX_UPDATES = 2000
+
+// The script's output -> { items: [{ source, name, from, to }], errors: [source] }.
+// Omarchy's own package is told by the omarchy source; it isn't counted twice
+// among the official packages.
+function parseUpdates(text) {
+  var items = []
+  var errors = []
+  var lines = String(text || "").split("\n")
+  var hasOmarchy = false
+  for (var i = 0; i < lines.length && items.length < MAX_UPDATES; i++) {
+    var f = lines[i].split("\t")
+    if (f[0] === "error") {
+      if (UPDATE_SOURCES.indexOf(f[1]) !== -1 && errors.indexOf(f[1]) === -1) errors.push(f[1])
+      continue
+    }
+    if (UPDATE_SOURCES.indexOf(f[0]) === -1 || f.length < 4) continue
+    var name = clean(f[1], 80)
+    if (!name) continue
+    if (f[0] === "omarchy") hasOmarchy = true
+    items.push({ source: f[0], name: name, from: clean(f[2], 40), to: clean(f[3], 80) })
+  }
+  if (hasOmarchy) items = items.filter(function(u) { return !(u.source === "pacman" && (u.name === "omarchy" || u.name === "omarchy-dev")) })
+  return { items: items, errors: errors }
+}
+
+// What was stored in state.json -> the same shape, or nothing found yet.
+function normalizeUpdates(data) {
+  var d = data && typeof data === "object" ? data : {}
+  var items = Array.isArray(d.items) ? d.items.slice(0, MAX_UPDATES).filter(function(u) {
+    return u && UPDATE_SOURCES.indexOf(u.source) !== -1 && typeof u.name === "string" && u.name !== ""
+  }).map(function(u) {
+    return { source: u.source, name: clean(u.name, 80), from: clean(u.from, 40), to: clean(u.to, 80) }
+  }) : []
+  var errors = Array.isArray(d.errors) ? d.errors.filter(function(e) { return UPDATE_SOURCES.indexOf(e) !== -1 }) : []
+  return { items: items, errors: errors, checkedAt: Math.max(0, num(d.checkedAt, 0)) }
+}
+
+// A new check's result over the last one: a source that couldn't be checked
+// (offline, a lock held) keeps what it listed before.
+function mergeUpdates(prev, result, now) {
+  var errors = result.errors || []
+  var kept = (prev && prev.items ? prev.items : []).filter(function(u) { return errors.indexOf(u.source) !== -1 })
+  return { items: (result.items || []).concat(kept).slice(0, MAX_UPDATES), errors: errors.slice(), checkedAt: now }
+}
+
+// Updates in `next` that `prev` didn't list (another package, or a newer
+// version of one already waiting): a check that found something new.
+function newUpdates(prev, next) {
+  var seen = {}
+  var old = prev && prev.items ? prev.items : []
+  for (var i = 0; i < old.length; i++) seen[old[i].source + ":" + old[i].name + ":" + old[i].to] = true
+  var count = 0
+  var list = next && next.items ? next.items : []
+  for (var j = 0; j < list.length; j++) if (!seen[list[j].source + ":" + list[j].name + ":" + list[j].to]) count++
+  return count
+}
+
+// `nowbar-updates --available` -> the known sources it names, in order.
+function parseAvailableSources(text) {
+  var named = String(text || "").split("\n").map(function(x) { return x.trim() })
+  return UPDATE_SOURCES.filter(function(s) { return named.indexOf(s) !== -1 })
+}
+
+// The sources to check: turned on in the options and available here.
+function activeSources(wanted, available) {
+  return (wanted || []).filter(function(s) { return (available || []).indexOf(s) !== -1 })
+}
+
+// Only the sources turned on in the options.
+function updatesFor(state, sources) {
+  var on = sources || UPDATE_SOURCES
+  return {
+    items: state.items.filter(function(u) { return on.indexOf(u.source) !== -1 }),
+    errors: state.errors.filter(function(e) { return on.indexOf(e) !== -1 }),
+    checkedAt: state.checkedAt
+  }
+}
+
+// What the Update button runs in a terminal: Omarchy's updater for system
+// and AUR packages, flatpak's for flatpaks. Fixed commands, nothing from
+// the package lists goes in.
+function updateCommand(items) {
+  var system = false
+  var flatpak = false
+  for (var i = 0; i < (items || []).length; i++) {
+    if (items[i].source === "flatpak") flatpak = true
+    else system = true
+  }
+  var parts = []
+  if (system || !flatpak) parts.push("omarchy-update")
+  if (flatpak) parts.push("flatpak update")
+  return parts.join(" && ")
+}
+
+// Whether a check is due: `minutes` after the last one, or never checked.
+function updatesDue(checkedAt, minutes, now) {
+  if (!(checkedAt > 0)) return true
+  return now - checkedAt >= Math.max(1, minutes) * 60000
+}
+
+function intervalLabel(minutes) {
+  if (minutes % 1440 === 0) return (minutes / 1440) + " d"
+  if (minutes % 60 === 0) return (minutes / 60) + " h"
+  if (minutes > 60) return Math.floor(minutes / 60) + " h " + (minutes % 60) + " min"
+  return minutes + " min"
+}
+
+function updateLine(u) {
+  if (u.source === "omarchy") return "\u{f06b0}  " + (u.to || "Omarchy update")
+  var change = u.from && u.to && u.from !== u.to ? u.from + " → " + u.to : (u.to ? u.to + " (new build)" : "")
+  return u.name + (change ? "  ·  " + change : "")
+}
+
+// One card for everything waiting, as important as a script's update: it
+// takes the pill when updates show up, unless something more important is on.
+function updatesActivity(state, checking) {
+  var items = state && state.items ? state.items : []
+  if (items.length === 0) return null
+  var counts = {}
+  for (var i = 0; i < items.length; i++) counts[items[i].source] = (counts[items[i].source] || 0) + 1
+  var parts = []
+  for (var j = 0; j < UPDATE_SOURCES.length; j++) {
+    var src = UPDATE_SOURCES[j]
+    if (!counts[src]) continue
+    parts.push(src === "omarchy" ? "Omarchy" : counts[src] + " " + UPDATE_SOURCE_LABELS[src])
+  }
+  // Omarchy first, then the rest in the order they came.
+  var sorted = items.filter(function(u) { return u.source === "omarchy" }).concat(items.filter(function(u) { return u.source !== "omarchy" }))
+  var details = sorted.slice(0, 6).map(updateLine)
+  if (items.length > 6) details.push("…and " + (items.length - 6) + " more")
+  if (state.errors && state.errors.length) {
+    details.push("\u{f0026}  Couldn't check " + state.errors.map(function(e) { return UPDATE_SOURCE_LABELS[e] }).join(", "))
+  }
+  if (state.checkedAt > 0) {
+    var d = new Date(state.checkedAt)
+    details.push("Checked at " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()))
+  }
+  var n = items.length
+  var title = n === 1 ? "1 update" : n + " updates"
+  return {
+    id: "updates",
+    module: "updates",
+    priority: PRIORITY.updates,
+    icon: "\u{f06b0}",
+    urgent: false,
+    title: title,
+    subtitle: checking ? "Checking…" : parts.join(" · "),
+    pillText: title,
+    progress: -1,
+    details: details,
+    actions: [
+      { id: "update", label: "Update", icon: "\u{f06b0}" },
+      { id: "check", label: checking ? "Checking…" : "Check now", icon: "\u{f0450}" }
+    ],
+    // Hidden by hand, it comes back when the list changes.
+    signature: updatesSignature(items)
+  }
+}
+
+function updatesSignature(items) {
+  var h = 5381
+  for (var i = 0; i < items.length; i++) {
+    var t = items[i].source + ":" + items[i].name + ":" + items[i].to + ";"
+    for (var k = 0; k < t.length; k++) h = ((h * 33) ^ t.charCodeAt(k)) >>> 0
+  }
+  return items.length + ":" + h.toString(16)
+}
+
 // --- weather (the Now Brief) ----------------------------------------------------------
 // A card that is always in the carousel (when there is data) but never takes
 // the pill from a live activity: it is "ambient". The pill shows it only when
@@ -1350,7 +1529,7 @@ function resolveFocus(s) {
 
 // --- bar widget preferences -----------------------------------------------------------
 
-var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather"]
+var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
 
 // The popup's Quick toggles and Quick start extras, in the order shown.
 var QUICK_TOGGLES = ["dnd", "nightlight", "stayAwake", "record", "reminder", "dictation"]
@@ -1384,6 +1563,10 @@ function defaultPrefs() {
     moduleBluetooth: true,
     moduleScreenshot: true,
     moduleWeather: true,
+    moduleUpdates: true,
+    updateSources: UPDATE_SOURCES.join(","),        // which package sources the Updates card checks
+    updateInterval: 180,    // minutes between checks
+    updateOnStartup: true,  // also check right after login
     weatherUnit: "auto",    // "auto" (country, then locale), "metric" or "imperial"
     autoFocus: true,        // a new activity takes the pill
     whenEmpty: "brief",     // "brief": weather/next reminder/updates; "icon": empty pill; "hide": no pill
@@ -1433,6 +1616,9 @@ function normalizePrefs(input) {
   out.quickToggleItems = out.quickToggles.join(",")
   out.quickStartExtras = parseIdList(src.quickStartItems, QUICK_START_EXTRAS)
   out.quickStartItems = out.quickStartExtras.join(",")
+  out.updateSourceList = parseIdList(src.updateSources, UPDATE_SOURCES)
+  out.updateSources = out.updateSourceList.join(",")
+  out.updateInterval = clampInt(src.updateInterval, 5, 10080, d.updateInterval)
   out.modules = {}
   for (var i = 0; i < MODULES.length; i++) out.modules[MODULES[i]] = out[moduleKey(MODULES[i])]
   return out
@@ -1490,6 +1676,18 @@ if (typeof module !== "undefined") {
     useImperial: useImperial,
     parseWttr: parseWttr,
     weatherActivity: weatherActivity,
+    parseUpdates: parseUpdates,
+    normalizeUpdates: normalizeUpdates,
+    updatesDue: updatesDue,
+    updatesActivity: updatesActivity,
+    mergeUpdates: mergeUpdates,
+    newUpdates: newUpdates,
+    parseAvailableSources: parseAvailableSources,
+    activeSources: activeSources,
+    updatesFor: updatesFor,
+    updateCommand: updateCommand,
+    intervalLabel: intervalLabel,
+    UPDATE_INTERVALS: UPDATE_INTERVALS,
     PRIORITY: PRIORITY,
     idleTimer: idleTimer,
     idleStopwatch: idleStopwatch,

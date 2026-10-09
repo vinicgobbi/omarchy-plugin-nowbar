@@ -35,6 +35,11 @@ activities, and click it for the details and controls.
 - **Weather card:** current conditions, the next hours and 3 days. When
   nothing else is going on, it is what the pill shows. It can replace
   Omarchy's weather widget.
+- **Updates waiting:** Omarchy, official packages and the AUR (plus Flatpak,
+  if you installed it) are checked now and then (every 3 hours by default, any interval you like, and
+  once after the computer starts). When something new is found, a card takes
+  the pill like any new activity (unless something more important is on),
+  with an **Update** button.
 - **Media keys:** the Now Bar takes over Omarchy's media controls (play/pause,
   next, previous, switching players), with the OSD.
 - **Live updates from scripts:** your own scripts can show their progress in
@@ -56,7 +61,8 @@ activities, and click it for the details and controls.
 | Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left | UPower                      |
 | Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s | Quickshell Bluetooth                  |
 | Screenshot toolbar      | A screenshot just saved: thumbnail, Edit / Copy / Open, for 15 s | The screenshots folder                  |
-| Now Brief               | Weather card, plus a notice when an Omarchy update is available | wttr.in, `omarchy-update-available`      |
+| Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off) | wttr.in, `omarchy-update-available` |
+| Software update         | Updates waiting, by source, with the main packages; Update / Check now | `omarchy-update-available`, `checkupdates`, `yay` (all in Omarchy); `flatpak` if installed |
 | Live Updates (Android)  | Anything a script sends with `nowbar push`, or a command run with `nowbar-run` | IPC                         |
 
 Not ported, since the desktop has no source for them: phone calls,
@@ -75,7 +81,14 @@ Scripts can still show those through `push`.
 omarchy plugin add https://github.com/vinicgobbi/omarchy-plugin-nowbar --enable
 ```
 
-No step needs `sudo`, polkit or the keyring.
+No install step needs `sudo`, polkit or the keyring.
+
+> [!NOTE]
+> The **Update** button on the Updates card opens a terminal running
+> `omarchy-update` (and `flatpak update` when Flatpaks are waiting). That
+> updater asks for your password in the terminal, like it does when you run
+> it yourself, and asks before changing anything. Checking for updates never
+> needs a password.
 
 ### Optional dependencies
 
@@ -94,14 +107,19 @@ to run.
 | `nmcli` (`networkmanager`)            | VPN connections in the Modes card                | VPN connections aren't shown                      |
 | `tailscale` (`tailscale`)             | Tailscale in the Modes card                      | Tailscale isn't shown                             |
 | `voxtype` (`voxtype`)                 | Dictation activity and the Dictate toggle        | Both are hidden                                   |
+| `flatpak` (`flatpak`)                 | Flatpaks on the Updates card                     | Flatpak isn't offered or checked                  |
 
-`jq`, which the scripts and a few checks use, comes with Omarchy.
+`jq`, which the scripts and a few checks use, comes with Omarchy, and so do
+the tools the Updates card uses for Omarchy, official packages
+(`checkupdates`, from `pacman-contrib`) and the AUR (`yay`).
 
 **External services.** The weather card asks [wttr.in](https://wttr.in) for
 the weather every 20 minutes (for the location saved in Omarchy, or a guess
-from your IP), and an Omarchy update check runs every 3 hours; turning the
-Weather activity off stops both. Cover art is downloaded from wherever the
-player points to (https only, never this machine or the local network).
+from your IP); turning the Weather activity off stops it. The Updates card
+checks the package mirrors, the AUR and the Flatpak remotes at the interval
+you pick (3 hours by default); turning it off stops that. Cover art is
+downloaded from wherever the player points to (https only, never this
+machine or the local network).
 
 ### What changes when you enable it
 
@@ -314,7 +332,8 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `sleep <duration>`        | Pause the media after `30` (minutes), `1h`, or at `23:00`       |
 | `quick <id>`              | A Quick toggle: `dnd`, `nightlight`, `stayAwake`, `record`, `reminder`, `dictation` |
 | `weather`                 | Open the popup on the weather card                              |
-| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `quick`, `weather`) |
+| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `quick`, `weather`, `updates`) |
+| `updates`                 | Check for updates now                                           |
 | `push <id> <json>`        | Add or update an activity from a script                         |
 | `remove <id>`             | Remove a pushed activity                                        |
 | `status`                  | JSON with the activities, the focused one, the cover colors and the weather |
@@ -338,6 +357,10 @@ options, one tab at a time (Tab / Shift+Tab to switch):
   Pomodoro lengths.
 - **Weather:** °C, °F or automatic, and replacing (or restoring) Omarchy's
   weather widget.
+- **Updates:** which sources are checked (Omarchy, official, AUR, and
+  Flatpak when it is installed; a source whose tool is missing isn't listed),
+  how often (30 min to 1 day, or any number of minutes from 5 to 7 days), and
+  whether to check once after the computer starts.
 
 The same options are in the widget's settings. **Reset** restores them all.
 
@@ -359,8 +382,16 @@ The same options are in the widget's settings. **Reset** restores them all.
   `inotify-tools` installed. "Edit" opens `$OMARCHY_SCREENSHOT_EDITOR`
   (`tensaku-edit` by default).
 - **Weather** is fetched every 20 minutes (and when the popup opens with a
-  reading older than 10), and `omarchy-update-available` runs every 3 hours.
-  Turning the "Weather" activity off stops both.
+  reading older than 10). Turning the "Weather" activity off stops it.
+- **Updates** are checked by `bin/nowbar-updates`, which only reads:
+  `checkupdates` syncs a temporary copy of the package databases, never the
+  system's. The interval counts from the last check, kept in `state.json`, so
+  restarting the shell doesn't reset it. "Check at startup" runs once per boot,
+  about a minute after login. With `inotify-tools`, updating by any means
+  (the Update button, a terminal) is noticed in pacman's log and Flatpak's
+  `.changed` stamp, and the card is checked again so it goes away by itself.
+  A source that can't be checked (offline, a held lock) keeps what it listed
+  before, and the card says so.
 - **Timers, stopwatch, Pomodoro and sleep timer** are kept in
   `~/.local/state/vinicgobbi.nowbar/state.json`. When one ends, a notification
   is sent with `omarchy-notification-send`, so Do Not Disturb applies to it.
