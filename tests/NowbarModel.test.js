@@ -647,3 +647,10 @@ test("only the update sources this system has are offered and checked", () => {
   assert.deepEqual(M.activeSources(["flatpak"], fresh), [])
   assert.deepEqual(M.activeSources(["aur", "flatpak"], []), [])
 })
+
+test("actions that open an app are marked, so the popup closes first", () => {
+  const u = M.updatesActivity(M.normalizeUpdates({ items: [{ source: "pacman", name: "a", from: "1", to: "2" }] }), false)
+  assert.deepEqual(u.actions.filter(a => a.opensApp).map(a => a.id), ["update"])
+  const s = M.screenshotActivity({ path: "/tmp/x.png", name: "x.png", at: 0 })
+  assert.deepEqual(s.actions.filter(a => a.opensApp).map(a => a.id), ["edit", "open"])
+})

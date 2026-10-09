@@ -4,9 +4,11 @@
 //
 // An activity is:
 //   { id, module, priority, icon, urgent, title, subtitle, pillText,
-//     progress (0..1, or -1 for none), details: [string], actions: [{id, label, icon}],
+//     progress (0..1, or -1 for none), details: [string], actions: [{id, label, icon, opensApp?}],
 //     signature }
 // actions[0] is the primary action (middle click on the pill, Enter in the popup).
+// An action with `opensApp` opens a window (editor, terminal...): the popup
+// closes first, so it isn't left open over the app, holding the keyboard.
 // `signature` changes whenever the activity changes state; a dismissed
 // activity comes back once its signature differs from the one dismissed.
 
@@ -1069,9 +1071,9 @@ function screenshotActivity(s) {
     progress: -1,
     details: [],
     actions: [
-      { id: "edit", label: "Edit", icon: "\u{f03eb}" },
+      { id: "edit", label: "Edit", icon: "\u{f03eb}", opensApp: true },
       { id: "copy", label: "Copy", icon: "\u{f018f}" },
-      { id: "open", label: "Open", icon: "\u{f03cc}" }
+      { id: "open", label: "Open", icon: "\u{f03cc}", opensApp: true }
     ],
     signature: clean(s.name, 80)
   }
@@ -1238,7 +1240,7 @@ function updatesActivity(state, checking) {
     progress: -1,
     details: details,
     actions: [
-      { id: "update", label: "Update", icon: "\u{f06b0}" },
+      { id: "update", label: "Update", icon: "\u{f06b0}", opensApp: true },
       { id: "check", label: checking ? "Checking…" : "Check now", icon: "\u{f0450}" }
     ],
     // Hidden by hand, it comes back when the list changes.

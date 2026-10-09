@@ -95,6 +95,17 @@ Panel {
     if (service) service.refreshWeatherIfStale()
   }
 
+  // Runs one of the focused card's actions. One that opens an app (Update,
+  // Edit, Open) closes the popup first: the window it opens takes the focus,
+  // and a popup left open over it would keep the keyboard (and, while a
+  // password prompt is up, could get stuck open until the app is done).
+  function runAction(action) {
+    if (!service || !focused || !action) return
+    var id = focused.id
+    if (action.opensApp) close()
+    service.act(id, action.id)
+  }
+
   // --- motion -------------------------------------------------------------------
 
   // Off with the "Animations" option, and while the bar repaints for a theme
@@ -664,7 +675,7 @@ Panel {
           else if (root.service) root.service.step(direction)
         }
         onActivateRequested: {
-          if (!root.settingsOpen && root.focused && root.service) root.service.primary(root.focused.id)
+          if (!root.settingsOpen && root.focused && root.focused.actions.length > 0) root.runAction(root.focused.actions[0])
         }
         onDeleteRequested: {
           if (!root.settingsOpen && root.focused && root.service) root.service.dismiss(root.focused.id)
@@ -1087,7 +1098,7 @@ Panel {
                     accent: root.accentFor(root.focused)
                     selected: index === 0
                     tooltipText: index === 0 ? "Enter / middle click" : ""
-                    onClicked: if (root.service && root.focused) root.service.act(root.focused.id, modelData.id)
+                    onClicked: root.runAction(modelData)
                   }
                 }
 

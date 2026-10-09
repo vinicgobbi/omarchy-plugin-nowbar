@@ -88,7 +88,8 @@ No install step needs `sudo`, polkit or the keyring.
 > `omarchy-update` (and `flatpak update` when Flatpaks are waiting). That
 > updater asks for your password in the terminal, like it does when you run
 > it yourself, and asks before changing anything. Checking for updates never
-> needs a password.
+> needs a password. The popup closes when you click Update, so the terminal
+> gets the keyboard for the password.
 
 ### Optional dependencies
 
