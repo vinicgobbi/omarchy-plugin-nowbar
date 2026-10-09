@@ -36,7 +36,10 @@ activities, and click it for the details and controls.
   recording, reminder and dictation, on and off. They can replace Omarchy's
   indicators widget.
 - **Quick start:** timers, stopwatch, Pomodoro and a sleep timer for the
-  media, one click away.
+  media, one click away, plus a field for any timer (`12m`, `1h30m`, `14:30`).
+- **Countdowns you can feel:** timers, the Pomodoro and the sleep timer fill
+  a ring (in the pill and on the card), the pill glows in their last 10
+  seconds, and a finished timer stays as "Time's up" with Repeat / +1 min / OK.
 - **Weather card:** current conditions, the next hours and 3 days. When
   nothing else is going on, it is what the pill shows. It can replace
   Omarchy's weather widget.
@@ -55,18 +58,18 @@ activities, and click it for the details and controls.
 | Samsung Now Bar         | Here                                                        | Source                                       |
 | ----------------------- | ----------------------------------------------------------- | -------------------------------------------- |
 | Media player            | One card per player: cover (click: open the player) on a blurred backdrop, title · artist, album, seekable bar with elapsed / remaining time, volume, shuffle, previous, play/pause, next, repeat, and 10 s back / forward on long media | MPRIS |
-| Timer / Stopwatch       | Pause, +1 min, laps; a timer can also run until a time (`14:30`); kept across shell restarts | This plugin (notifies when the timer ends) |
-| Focus modes             | Pomodoro: focus / break cycles, a long break every 4        | This plugin (notifies at each change)        |
+| Timer / Stopwatch       | Ring that fills up, pause, +1 min, laps; a timer can also run until a time (`14:30`); "Time's up" with Repeat / +1 min / OK; kept across shell restarts | This plugin (notifies when the timer ends) |
+| Focus modes             | Pomodoro: focus / break cycles, a long break every 4, blocks done today, and (an option) Do Not Disturb while focusing | This plugin (notifies at each change) |
 | Media sleep timer       | Pauses every player when it ends                            | This plugin                                  |
-| Alarms / reminders      | Countdown to the next reminder, clear                       | `omarchy-reminder`                           |
-| Voice / screen recorder | Screen recording with elapsed time, stop                    | `gpu-screen-recorder`                        |
+| Alarms / reminders      | Countdown to the next reminder, +5 min, clear; when one goes off, a card to snooze it (5 or 15 min) | `omarchy-reminder`        |
+| Voice / screen recorder | Screen recording with elapsed time and a breathing red dot, stop; once saved, the video's thumbnail with Play / Copy / Folder | `gpu-screen-recorder`, `ffmpegthumbnailer` |
 | Interpreter / voice     | Dictation: listening / transcribing                         | `omarchy-voxtype-status`                     |
 | Privacy indicator       | Camera and/or microphone in use, which apps, mute the mic   | PipeWire, and who has `/dev/video*` open     |
 | Modes & Routines / DND  | Do Not Disturb, stay awake, night light, VPN (while on), turn off | The shell's IPC, `nmcli`, `tailscale`  |
 | Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left | UPower                      |
-| Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s | Quickshell Bluetooth                  |
+| Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s (headphones: "Use for audio"); a connected device at 15% or less, until charged | Quickshell Bluetooth, `wpctl` |
 | Screenshot toolbar      | A screenshot just saved: thumbnail, Edit / Copy / Open, for 15 s | The screenshots folder                  |
-| Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off) | wttr.in, `omarchy-update-available` |
+| Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off); "Rain likely around 15:00" as its own activity | wttr.in, `omarchy-update-available` |
 | Software update         | Updates waiting, by source, with the main packages; Update / Check now | `omarchy-update-available`, `checkupdates`, `yay` (all in Omarchy); `flatpak` if installed |
 | Live Updates (Android)  | Anything a script sends with `nowbar push`, or a command run with `nowbar-run` | IPC                         |
 
@@ -366,8 +369,9 @@ options, one tab at a time (Tab / Shift+Tab to switch):
 - **Quick:** the two rows at the bottom of the popup. Quick toggles: show
   them or not, which ones, and replacing (or restoring) Omarchy's indicators
   widget. Quick start: show it or not, the timers (minutes, comma separated;
-  empty for none), which extras (stopwatch, Pomodoro, sleep timer), and the
-  Pomodoro lengths.
+  empty for none), which extras (stopwatch, Pomodoro, sleep timer), the
+  Pomodoro lengths, and Do Not Disturb while focusing (off by default; it
+  only turns off what it turned on).
 - **Weather:** °C, °F or automatic, and replacing (or restoring) Omarchy's
   weather widget.
 - **Updates:** which sources are checked (Omarchy, official, AUR, and

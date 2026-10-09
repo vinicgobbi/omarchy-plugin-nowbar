@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Effects
+import QtQuick.Shapes
 import Quickshell
 import qs.Ui
 import qs.Commons
@@ -59,7 +60,7 @@ Panel {
   readonly property string coverUrl: focused && service && focused.id === service.artActivityId ? service.safeArtPath : ""
   // Screenshot cards show the file itself (a local file in the screenshots
   // folder; decoded at thumbnail size only).
-  readonly property string shotUrl: focused && focused.module === "screenshot" && focused.image ? Util.fileUrl(focused.image) : ""
+  readonly property string shotUrl: focused && (focused.module === "screenshot" || focused.id === "recorded") && focused.image ? Util.fileUrl(focused.image) : ""
   readonly property string cardImage: coverUrl || shotUrl
 
   // The weather card is "ambient": it counts in the carousel and in the "2/3"
@@ -96,6 +97,9 @@ Panel {
     if (Date.now() - settingsRequestedAt < 2000) settingsOpen = true
     if (service) service.refreshWeatherIfStale()
   }
+
+  // Back to the popup's own keys (after typing a timer).
+  function forceKeyFocus() { keyCatcher.forceActiveFocus() }
 
   // Runs one of the focused card's actions. One that opens an app (Update,
   // Edit, Open) closes the popup first: the window it opens takes the focus,
@@ -524,11 +528,59 @@ Panel {
   }
   property real pulse: 0
 
+  readonly property bool attention: pillItem !== null && (pillItem.ending === true || pillItem.done === true)
+  property real glow: 0
+  SequentialAnimation {
+    running: root.attention && root.motion
+    loops: Animation.Infinite
+    onRunningChanged: if (!running) root.glow = 0
+    NumberAnimation { target: root; property: "glow"; to: 1; duration: 450; easing.type: Easing.InOutSine }
+    NumberAnimation { target: root; property: "glow"; to: 0; duration: 550; easing.type: Easing.InOutSine }
+  }
+
   SequentialAnimation {
     id: urgentPulse
     loops: 3
     NumberAnimation { target: root; property: "pulse"; to: 1; duration: 380; easing.type: Easing.InOutSine }
     NumberAnimation { target: root; property: "pulse"; to: 0; duration: 520; easing.type: Easing.InOutSine }
+  }
+
+  // A circle filling clockwise from the top: how far a countdown has gone.
+  component Ring: Shape {
+    id: ring
+    property real progress: 0
+    property color color: root.fg
+    property real thickness: Math.max(2, Style.space(2))
+    preferredRendererType: Shape.CurveRenderer
+    // Countdowns tick each second: sweep there instead of stepping.
+    Behavior on progress {
+      enabled: root.motion
+      NumberAnimation { duration: 950 }
+    }
+
+    ShapePath {
+      strokeColor: Util.alpha(ring.color, 0.22)
+      strokeWidth: ring.thickness
+      fillColor: "transparent"
+      capStyle: ShapePath.RoundCap
+      PathAngleArc {
+        centerX: ring.width / 2; centerY: ring.height / 2
+        radiusX: (ring.width - ring.thickness) / 2; radiusY: radiusX
+        startAngle: -90; sweepAngle: 360
+      }
+    }
+
+    ShapePath {
+      strokeColor: ring.color
+      strokeWidth: ring.thickness
+      fillColor: "transparent"
+      capStyle: ShapePath.RoundCap
+      PathAngleArc {
+        centerX: ring.width / 2; centerY: ring.height / 2
+        radiusX: (ring.width - ring.thickness) / 2; radiusY: radiusX
+        startAngle: -90; sweepAngle: 360 * Math.max(0, Math.min(1, ring.progress))
+      }
+    }
   }
 
   // Three bars bouncing at their own pace: something is playing.
@@ -788,6 +840,16 @@ Panel {
       running: root.pillCharging
     }
 
+    // A countdown's last seconds, "Time's up", a reminder going off: the pill
+    // glows in its color, on and off, while it lasts.
+    Rectangle {
+      anchors.fill: parent
+      radius: pill.radius
+      color: root.accentFor(root.pillItem)
+      opacity: 0.35 * root.glow
+      visible: opacity > 0
+    }
+
     // Red wash for the urgent pulse, under the text.
     Rectangle {
       anchors.fill: parent
@@ -810,11 +872,14 @@ Panel {
         width: Style.space(16)
         height: pillIcon.implicitHeight
         readonly property bool playing: pill.hasActivity && root.pillItem.module === "media" && root.pillItem.playing === true
+        // Timer, Pomodoro, sleep timer: a little ring that fills up.
+        readonly property bool countdown: pill.hasActivity && root.pillItem.module === "timer" && root.pillItem.progress >= 0
+        readonly property bool recordingNow: pill.hasActivity && root.pillItem.id === "recording"
 
         Text {
           id: pillIcon
           anchors.fill: parent
-          visible: !parent.playing
+          visible: !parent.playing && !parent.countdown && !parent.recordingNow
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
           textFormat: Text.PlainText
@@ -823,6 +888,34 @@ Panel {
           opacity: pill.hasActivity ? 1 : 0.6
           font.family: root.family
           font.pixelSize: Style.font.body
+        }
+
+        Ring {
+          anchors.centerIn: parent
+          visible: parent.countdown
+          width: Style.space(13)
+          height: width
+          thickness: Math.max(2, Style.space(2))
+          progress: parent.countdown ? root.pillItem.progress : 0
+          color: root.accentFor(root.pillItem)
+        }
+
+        // Recording: a red dot breathing, like a camera's.
+        Rectangle {
+          anchors.centerIn: parent
+          visible: parent.recordingNow
+          width: Style.space(9)
+          height: width
+          radius: width / 2
+          color: Color.urgent
+
+          SequentialAnimation on opacity {
+            running: root.motion && parent.visible
+            loops: Animation.Infinite
+            onRunningChanged: if (!running) parent.opacity = 1
+            NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
+          }
         }
 
         Equalizer {
@@ -1112,7 +1205,7 @@ Panel {
         x: Math.round((parent.width - width) / 2)
         y: root.barPos === "bottom" ? parent.height - height
           : (root.barPos === "left" || root.barPos === "right" ? Math.round((parent.height - height) / 2) : 0)
-        blocked: root.settingsOpen && settingsView.editing
+        blocked: (root.settingsOpen && settingsView.editing) || customTimer.activeFocus
 
         onMoveRequested: function(dx, dy) {
           if (!root.settingsOpen && dx !== 0 && root.service) root.service.step(dx)
@@ -1333,6 +1426,15 @@ Panel {
                     anchors.margins: Style.space(2)
                     visible: cardIcon.hasCover
                     source: root.cardImage
+                  }
+
+                  // Timer, Pomodoro, sleep timer: a ring around the icon fills up.
+                  Ring {
+                    anchors.fill: parent
+                    visible: !cardIcon.hasCover && root.focused !== null && root.focused.module === "timer" && root.focused.progress >= 0
+                    thickness: Math.max(3, Style.space(3))
+                    progress: visible ? root.focused.progress : 0
+                    color: root.accentFor(root.focused)
                   }
 
                   // Click the cover: bring the player's window up.
@@ -1847,6 +1949,42 @@ Panel {
               foreground: root.popupFg
               tooltipText: "Pause the media in 30 minutes"
               onClicked: if (root.service) root.service.startSleep(1800)
+            }
+          }
+
+          // Any timer: "12m", "1h30m", "90" (seconds), or a time ("14:30").
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.quickStartShown
+            opacity: root.stage(3)
+            transform: Translate { x: root.enterShiftX(3); y: root.enterShiftY(3) }
+
+            TextField {
+              id: customTimer
+              width: parent.width - customStart.width - parent.spacing
+              foreground: root.popupFg
+              font.family: root.family
+              placeholderText: "Timer: 12m, 1h30m or 14:30"
+              readonly property int seconds: Model.parseTimerArg(text, Date.now())
+              onAccepted: start()
+              function start() {
+                if (seconds <= 0 || !root.service) return
+                root.service.startTimer(seconds)
+                text = ""
+                root.forceKeyFocus()
+              }
+            }
+
+            Button {
+              id: customStart
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "\u{f040a}"
+              foreground: root.popupFg
+              enabled: customTimer.seconds > 0
+              opacity: enabled ? 1 : 0.4
+              tooltipText: customTimer.seconds > 0 ? "Start a " + Model.formatDuration(customTimer.seconds * 1000) + " timer (Enter)" : "Type a duration or a time"
+              onClicked: customTimer.start()
             }
           }
         }

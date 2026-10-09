@@ -718,3 +718,82 @@ test("mixOklab: ends exact, a clean middle between opposite colors", () => {
   assert.ok(lum(m) > lum(rgbMid))
   assert.ok(m.g <= Math.max(m.r, m.b) + 0.05)
 })
+
+test("timer: time's up card, ending flag", () => {
+  const t = M.startTimer(300, 0)
+  assert.equal(M.timerActivity(t, 280000).ending, false)
+  assert.equal(M.timerActivity(t, 295000).ending, true)
+  const d = M.doneTimer(t, 300000)
+  const a = M.timerActivity(d, 300500)
+  assert.equal(a.title, "Time's up")
+  assert.equal(a.done, true)
+  assert.deepEqual(a.actions.map(x => x.id), ["repeat", "add", "ok"])
+  assert.equal(M.doneExpired(d, 300000 + M.TIMER_DONE_MS - 1), false)
+  assert.equal(M.doneExpired(d, 300000 + M.TIMER_DONE_MS), true)
+  assert.equal(M.normalizeTimer(d).state, "idle")
+})
+
+test("pomodoro: focus blocks counted per day", () => {
+  const day1 = new Date(2026, 9, 8, 10, 0).getTime()
+  const day2 = new Date(2026, 9, 9, 9, 0).getTime()
+  let s = M.countFocusDone(null, day1)
+  s = M.countFocusDone(s, day1)
+  assert.equal(s.count, 2)
+  assert.equal(M.normalizePomodoroStats(s, day2).count, 0)
+  const cfg = M.pomodoroConfig({})
+  const a = M.pomodoroActivity(M.startPomodoro(cfg, day1), cfg, day1, s)
+  assert.ok(a.subtitle.endsWith("· 2 today"))
+  assert.ok(!M.pomodoroActivity(M.startPomodoro(cfg, day1), cfg, day1, { day: "x", count: 0 }).subtitle.includes("today"))
+})
+
+test("reminders: postpone, fired, unit check", () => {
+  assert.equal(M.validReminderUnit("omarchy-reminder-5m-1791507560"), true)
+  assert.equal(M.validReminderUnit("omarchy-reminder-5m-1; rm -rf ~"), false)
+  assert.equal(M.validReminderUnit("other.timer"), false)
+  assert.equal(M.postponeMinutes(10 * 60000, 0, 5), 15)
+  assert.equal(M.postponeMinutes(90000, 0, 5), 7)
+  const before = [{ unit: "a", at: 1000 }, { unit: "b", at: 999999 }]
+  assert.deepEqual(M.firedReminders(before, [{ unit: "b", at: 999999 }], 1500).map(r => r.unit), ["a"])
+  // Cleared early (not due yet): not "fired".
+  assert.deepEqual(M.firedReminders(before, [], 1500).map(r => r.unit), ["a"])
+  const f = M.firedReminderActivity({ label: "Oven", at: 1000 })
+  assert.equal(f.title, "Oven")
+  assert.deepEqual(f.actions.map(x => x.id), ["snooze5", "snooze15", "ok"])
+  const r = M.remindersActivity([{ unit: "u", label: "Call", message: "Call", at: 600000, minutes: 10 }], 0)
+  assert.deepEqual(r.actions.map(x => x.id), ["postpone", "clear"])
+})
+
+test("recorded video: only Omarchy's recordings in the folder", () => {
+  const dir = "/home/u/Videos"
+  assert.equal(M.validRecordingPath(dir + "/screenrecording-2026-10-08_22-10-01.mp4", dir), true)
+  assert.equal(M.validRecordingPath(dir + "/screenrecording-2026-10-08_22-10-01.mp4", dir + "/"), true)
+  assert.equal(M.validRecordingPath(dir + "/../x/screenrecording-1.mp4", dir), false)
+  assert.equal(M.validRecordingPath("/etc/passwd", dir), false)
+  assert.equal(M.validRecordingPath(dir + "/notes.mp4", dir), false)
+  const a = M.recordedActivity({ path: dir + "/screenrecording-1.mp4", name: "screenrecording-1.mp4", thumb: "/c/t.png" })
+  assert.equal(a.image, "/c/t.png")
+  assert.deepEqual(a.actions.filter(x => x.opensApp).map(x => x.id), ["open", "folder"])
+})
+
+test("bluetooth: audio action, low battery card", () => {
+  assert.deepEqual(M.bluetoothActivity({ address: "AA:BB", name: "Buds", battery: 0.8, audio: true }).actions.map(x => x.id), ["audio"])
+  assert.deepEqual(M.bluetoothActivity({ address: "AA:BB", name: "Mouse", battery: 0.8 }).actions, [])
+  assert.equal(M.btLowActivity({ address: "AA:BB", name: "Mouse", battery: 0.5 }), null)
+  assert.equal(M.btLowActivity({ address: "AA:BB", name: "Mouse", battery: -1 }), null)
+  const low = M.btLowActivity({ address: "AA:BB", name: "Mouse", battery: 0.12 })
+  assert.equal(low.id, "btlow:AA:BB")
+  assert.equal(low.title, "Mouse battery low")
+  assert.equal(low.signature, "low:3")
+})
+
+test("rain alert: likely soon or in the next slot, not while raining", () => {
+  const w = (rain0, rain1, raining) => ({ raining, location: "Here", hours: [{ hour: 12, rain: rain0 }, { hour: 15, rain: rain1 }] })
+  assert.equal(M.rainActivity(w(10, 20, false)), null)
+  assert.equal(M.rainActivity(w(80, 90, true)), null)
+  assert.equal(M.rainActivity(w(70, 0, false)).title, "Rain likely soon")
+  const a = M.rainActivity(w(20, 75, false))
+  assert.equal(a.title, "Rain likely around 15:00")
+  assert.equal(a.subtitle, "75% chance · Here")
+  assert.equal(a.signature, "rain:15")
+  assert.equal(M.rainActivity(null), null)
+})

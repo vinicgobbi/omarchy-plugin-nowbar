@@ -31,6 +31,10 @@ Item {
   property var timerState: Model.idleTimer()
   property var stopwatchState: Model.idleStopwatch()
   property var pomodoroState: Model.idlePomodoro()
+  // Focus blocks finished today, and whether the Pomodoro turned Do Not
+  // Disturb on (so it only turns off what it turned on).
+  property var pomodoroStats: Model.normalizePomodoroStats(null, Date.now())
+  property bool pomodoroDndOwned: false
   property var sleepState: Model.idleSleep()
   readonly property var pomodoroCfg: Model.pomodoroConfig(prefs)
   property bool stateLoaded: false
@@ -40,7 +44,7 @@ Item {
   function saveState() {
     if (!stateLoaded) return
     stateFile.setText(JSON.stringify({ timer: timerState, stopwatch: stopwatchState, pomodoro: pomodoroState, sleep: sleepState,
-      updates: updatesState, bootId: updatesBootId }) + "\n")
+      updates: updatesState, bootId: updatesBootId, pomodoroStats: pomodoroStats, pomodoroDnd: pomodoroDndOwned }) + "\n")
   }
 
   function restoreState(text) {
@@ -51,6 +55,8 @@ Item {
     pomodoroState = Model.normalizePomodoro(data.pomodoro)
     sleepState = Model.normalizeSleep(data.sleep)
     updatesState = Model.normalizeUpdates(data.updates)
+    pomodoroStats = Model.normalizePomodoroStats(data.pomodoroStats, Date.now())
+    pomodoroDndOwned = data.pomodoroDnd === true
     updatesSavedBootId = typeof data.bootId === "string" ? data.bootId : ""
     updatesBootId = updatesSavedBootId
     stateLoaded = true
@@ -107,6 +113,29 @@ Item {
     return true
   }
 
+  // --- Pomodoro: Do Not Disturb during focus (an option) ---------------------------
+
+  readonly property bool pomodoroWantsDnd: prefs.pomodoroDnd === true && pomodoroState.state !== "idle" && pomodoroState.phase === "focus"
+  onPomodoroWantsDndChanged: syncPomodoroDnd()
+  onStateLoadedChanged: if (stateLoaded) syncPomodoroDnd()
+
+  function syncPomodoroDnd() {
+    if (!stateLoaded) return
+    if (pomodoroWantsDnd && !pomodoroDndOwned) {
+      // Already on by hand: leave it, and leave it on afterwards too.
+      if (modesState.dnd === true) return
+      Quickshell.execDetached(["omarchy-shell", "-q", "notifications", "setDnd", "on"])
+      pomodoroDndOwned = true
+      saveState()
+      modesFollowUp.restart()
+    } else if (!pomodoroWantsDnd && pomodoroDndOwned) {
+      Quickshell.execDetached(["omarchy-shell", "-q", "notifications", "setDnd", "off"])
+      pomodoroDndOwned = false
+      saveState()
+      modesFollowUp.restart()
+    }
+  }
+
   // Fixed headline first in every notification: the helper treats leading
   // "--x" words as options.
   function notify(glyph, headline, body) {
@@ -119,11 +148,18 @@ Item {
     var changed = false
     if (Model.timerFinished(timerState, t)) {
       notify("\u{f13ab}", "Timer finished", Model.presetLabel(timerState.durationMs / 1000) + " timer is up")
+      // "Time's up" for a moment, with Repeat / +1 min / OK, in the pill.
+      timerState = Model.doneTimer(timerState, t)
+      focusId = "timer"
+      changed = true
+    }
+    if (Model.doneExpired(timerState, t)) {
       timerState = Model.idleTimer()
       changed = true
     }
     if (Model.timerFinished(pomodoroState, t)) {
       var was = pomodoroState.phase
+      if (was === "focus") pomodoroStats = Model.countFocusDone(pomodoroStats, t)
       pomodoroState = Model.nextPomodoro(pomodoroState, pomodoroCfg, t)
       notify("\u{f04fe}", was === "focus" ? "Focus done" : "Break over",
         was === "focus" ? "Take a " + (pomodoroState.phase === "longBreak" ? "long " : "") + "break: " + Model.presetLabel(pomodoroState.durationMs / 1000)
@@ -763,9 +799,47 @@ Item {
     command: ["omarchy-reminder", "show", "--json"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.reminders = Model.parseReminders(text)
+      onStreamFinished: {
+        var next = Model.parseReminders(text)
+        var fired = Model.firedReminders(root.reminders, next, Date.now())
+        root.reminders = next
+        if (fired.length > 0) {
+          var f = fired[fired.length - 1]
+          root.firedReminder = { label: f.label, message: f.message, at: f.at }
+          firedReminderTimer.restart()
+        }
+      }
     }
     onExited: function(exitCode) { if (exitCode !== 0) root.reminders = [] }
+  }
+
+  // A reminder that just went off: "Reminder · now" for a minute, to snooze.
+  property var firedReminder: null
+
+  Timer {
+    id: firedReminderTimer
+    interval: Model.REMINDER_DONE_MS
+    onTriggered: root.firedReminder = null
+  }
+
+  // The next reminder, 5 minutes later: its timer stopped, a new one set for
+  // what was left plus 5 (omarchy-reminder only counts from now).
+  function postponeReminder() {
+    var t = Date.now()
+    var next = null
+    for (var i = 0; i < reminders.length && !next; i++) if (reminders[i].at > t) next = reminders[i]
+    if (!next || !Model.validReminderUnit(next.unit)) return
+    Quickshell.execDetached(["systemctl", "--user", "stop", next.unit + ".timer"])
+    Quickshell.execDetached(["omarchy-reminder", String(Model.postponeMinutes(next.at, t, 5)), next.message || next.label])
+    remindersFollowUp.restart()
+  }
+
+  function snoozeReminder(minutes) {
+    var f = firedReminder
+    firedReminder = null
+    if (!f) return
+    Quickshell.execDetached(["omarchy-reminder", String(minutes), f.message || f.label])
+    remindersFollowUp.restart()
   }
 
   // omarchy-reminder creates (and clears) transient systemd user timers; their
@@ -817,16 +891,25 @@ Item {
   Process {
     id: recordingProcess
     // Only this user's recorder: another account recording doesn't count.
-    command: ["sh", "-c", "pid=$(pgrep -o -u \"$(id -u)\" -f '^gpu-screen-recorder') || exit 1; ps -o etimes= -p \"$pid\""]
-    // Prints the recorder's uptime in seconds, nothing when not recording.
+    command: ["sh", "-c", "pid=$(pgrep -o -u \"$(id -u)\" -f '^gpu-screen-recorder') || exit 1; ps -o etimes= -p \"$pid\"; "
+      + "head -c 512 /tmp/omarchy-screenrecord-filename 2>/dev/null"]
+    // Prints the recorder's uptime in seconds (nothing when not recording),
+    // then the file omarchy-capture-screenrecording is writing to.
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var out = String(text || "").trim()
+        var lines = String(text || "").split("\n")
+        var out = String(lines[0] || "").trim()
         if (out === "") {
-          if (root.recording.active) root.recording = { active: false, startedAt: 0 }
+          if (root.recording.active) {
+            root.recording = { active: false, startedAt: 0 }
+            // It stopped: show the video once Omarchy is done with it.
+            if (root.recordingPath !== "") { recordedPoll.tries = 0; recordedPoll.restart() }
+          }
           return
         }
+        var file = String(lines[1] || "").trim()
+        if (Model.validRecordingPath(file, root.recordingDir)) root.recordingPath = file
         // Keep the first estimate: re-reading it every poll would jitter by a second.
         if (root.recording.active) return
         var secs = parseInt(out, 10)
@@ -841,6 +924,69 @@ Item {
     running: root.modules.recording
     triggeredOnStart: true
     onTriggered: root.refreshRecording()
+  }
+
+  // --- a recording just saved ----------------------------------------------------------
+  // Same folder as omarchy-capture-screenrecording. After it stops, Omarchy
+  // trims and normalizes the file (then removes its filename note): the card
+  // shows up once that is done, with a thumbnail (ffmpegthumbnailer, part of
+  // Omarchy) and Play / Copy / Folder, for 20 seconds.
+
+  readonly property string recordingDir: Quickshell.env("OMARCHY_SCREENRECORD_DIR") || Quickshell.env("XDG_VIDEOS_DIR") || (Quickshell.env("HOME") + "/Videos")
+  property string recordingPath: ""
+  // { path, name, thumb, until } or null
+  property var recorded: null
+  property string recordedThumb: ""
+
+  Timer {
+    id: recordedPoll
+    property int tries: 0
+    interval: 1000
+    onTriggered: {
+      if (recordedCheck.running) return
+      tries += 1
+      var thumb = root._artCacheDir + "/recording-" + Date.now() + ".png"
+      recordedCheck.thumb = thumb
+      recordedCheck.command = ["sh", "-c",
+        "[ -e /tmp/omarchy-screenrecord-filename ] && exit 2; "
+        + "[ -f \"$1\" ] && [ ! -L \"$1\" ] && [ ! -e \"${1%.mp4}-processed.mp4\" ] || exit 2; "
+        + "command -v ffmpegthumbnailer >/dev/null 2>&1 && ffmpegthumbnailer -i \"$1\" -o \"$2\" -s 256 -q 6 >/dev/null 2>&1; "
+        // 0: with a thumbnail, 3: without one (the card shows an icon).
+        + "[ -s \"$2\" ] && exit 0; exit 3",
+        "_", root.recordingPath, thumb]
+      recordedCheck.running = true
+    }
+  }
+
+  Process {
+    id: recordedCheck
+    property string thumb: ""
+    onExited: function(exitCode) {
+      if (exitCode === 2) {
+        // Still being processed: try again, for up to a minute.
+        if (recordedPoll.tries < 60) recordedPoll.restart()
+        else root.recordingPath = ""
+        return
+      }
+      if ((exitCode !== 0 && exitCode !== 3) || !root.modules.recording) { root.recordingPath = ""; return }
+      var path = root.recordingPath
+      var shot = exitCode === 0 ? thumb : ""
+      if (root.recordedThumb) artCleanupProcess.remove(root.recordedThumb)
+      root.recordedThumb = shot
+      root.recorded = { path: path, name: path.slice(path.lastIndexOf("/") + 1), thumb: shot, until: Date.now() + Model.RECORDED_SHOW_MS }
+      root.recordingPath = ""
+      root.now = Date.now()
+    }
+  }
+
+  function recordedAction(action) {
+    var r = recorded
+    if (!r) return
+    if (action === "open") Quickshell.execDetached(["xdg-open", r.path])
+    else if (action === "folder") Quickshell.execDetached(["xdg-open", root.recordingDir])
+    // As a file: pastes into a chat, a file manager...
+    else if (action === "copy") Quickshell.execDetached(["wl-copy", "--type", "text/uri-list", Util.fileUrl(r.path)])
+    recorded = null
   }
 
   // --- dictation (voxtype) ---------------------------------------------------------
@@ -1222,6 +1368,7 @@ Item {
       address: address,
       name: dev.name || dev.deviceName || "",
       battery: dev.batteryAvailable ? dev.battery : -1,
+      audio: String(dev.icon || "").indexOf("audio") === 0,
       until: Date.now() + Model.BLUETOOTH_SHOW_MS
     }
     btRecent = next
@@ -1236,6 +1383,34 @@ Item {
       else changed = true
     }
     if (changed) btRecent = next
+  }
+
+  // Plays through the device: its PipeWire sink (bluez_output.<MAC>) becomes
+  // the default output (wireplumber's wpctl). The sink can take a few seconds
+  // to show up after connecting.
+  function useForAudio(address) {
+    var mac = String(address || "")
+    if (!/^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/.test(mac)) return
+    Quickshell.execDetached(["sh", "-c",
+      "m=$(printf %s \"$1\" | tr : _); i=0; while [ $i -lt 10 ]; do "
+      + "id=$(pw-dump 2>/dev/null | jq -r --arg p \"bluez_output.$m\" "
+      + "'[.[] | select(.type == \"PipeWire:Interface:Node\") | select((.info.props[\"node.name\"] // \"\") | startswith($p))][0].id // empty'); "
+      + "[ -n \"$id\" ] && exec wpctl set-default \"$id\"; i=$((i + 1)); sleep 0.5; done; exit 1", "_", mac])
+  }
+
+  // Connected devices running low (mouse, keyboard, headphones), as long as
+  // they are low.
+  readonly property var btLowDevices: {
+    var _tick = root.now
+    var out = []
+    var list = Bluetooth.devices ? Bluetooth.devices.values : []
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i]
+      if (!d || !d.connected || !d.batteryAvailable) continue
+      var a = Model.btLowActivity({ address: d.address, name: d.name || d.deviceName, battery: d.battery })
+      if (a) out.push(a)
+    }
+    return out
   }
 
   // Only changes count: devices already connected when the shell starts
@@ -1563,7 +1738,7 @@ Item {
     var list = []
     list.push(Model.timerActivity(timerState, t))
     list.push(Model.stopwatchActivity(stopwatchState, t))
-    list.push(Model.pomodoroActivity(pomodoroState, pomodoroCfg, t))
+    list.push(Model.pomodoroActivity(pomodoroState, pomodoroCfg, t, Model.normalizePomodoroStats(pomodoroStats, t)))
     list.push(Model.sleepActivity(sleepState, t))
     list.push(Model.remindersActivity(reminders, t))
     list.push(Model.recordingActivity(recording, t))
@@ -1574,8 +1749,12 @@ Item {
     list.push(Model.batteryActivity(chargingInfo))
     for (var m = 0; m < mediaInfos.length; m++) list.push(Model.mediaActivity(mediaInfos[m]))
     for (var b in btRecent) list.push(Model.bluetoothActivity(btRecent[b]))
+    for (var bl = 0; bl < btLowDevices.length; bl++) list.push(btLowDevices[bl])
     if (screenshot) list.push(Model.screenshotActivity(screenshot))
+    if (recorded) list.push(Model.recordedActivity(recorded))
+    if (firedReminder) list.push(Model.firedReminderActivity(firedReminder))
     if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates))
+    if (weatherEnabled) list.push(Model.rainActivity(weather))
     if (modules.updates) list.push(Model.updatesActivity(shownUpdates, updatesChecking))
     for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })
@@ -1741,6 +1920,21 @@ Item {
       saveState()
     } else if (activityId === "screenshot") {
       screenshotAction(actionId)
+    } else if (activityId === "recorded") {
+      recordedAction(actionId)
+    } else if (activityId === "reminderDone") {
+      if (actionId === "snooze5") snoozeReminder(5)
+      else if (actionId === "snooze15") snoozeReminder(15)
+      else firedReminder = null
+    } else if (activityId === "reminders" && actionId === "postpone") {
+      postponeReminder()
+    } else if (activityId.indexOf("bt:") === 0 && actionId === "audio") {
+      useForAudio(activityId.slice(3))
+    } else if (activityId === "timer" && timerState.state === "done") {
+      if (actionId === "repeat") timerState = Model.startTimer(timerState.durationMs / 1000, t)
+      else if (actionId === "add") timerState = Model.startTimer(60, t)
+      else timerState = Model.idleTimer()
+      saveState()
     } else if (activityId === "timer") {
       if (actionId === "pause") timerState = Model.pauseTimer(timerState, t)
       else if (actionId === "resume") timerState = Model.resumeTimer(timerState, t)
@@ -1800,7 +1994,8 @@ Item {
 
   // One clock for everything that counts: timer, stopwatch, recording,
   // reminders, pushes with a TTL, and the media position.
-  readonly property bool needsTick: timerState.state === "running"
+  readonly property bool needsTick: timerState.state === "running" || timerState.state === "done"
+    || recorded !== null
     || stopwatchState.state === "running"
     || recording.active
     || reminders.length > 0
@@ -1825,6 +2020,7 @@ Item {
       root.checkTimer()
       root.pruneBluetooth(root.now)
       if (root.screenshot && root.screenshot.until <= root.now) root.screenshot = null
+      if (root.recorded && root.recorded.until <= root.now) root.recorded = null
       var pruned = Model.prunePushes(root.pushes, root.now)
       if (pruned !== root.pushes) root.pushes = pruned
     }

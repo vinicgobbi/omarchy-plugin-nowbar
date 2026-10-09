@@ -697,6 +697,12 @@ Column {
         onModified: function(v) { root.changed("pomodoroLongBreak", v) }
       }
     }
+
+    SwitchOption {
+      key: "pomodoroDnd"
+      label: "Do Not Disturb while focusing"
+      hint: "Turned on for each focus block and off for the breaks (left alone if you had it on already)."
+    }
   }
 
   // --- Weather ---------------------------------------------------------------------

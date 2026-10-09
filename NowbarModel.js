@@ -121,6 +121,9 @@ var PRIORITY = {
   timer: 40,
   pomodoro: 42,
   reminderSoon: 45,
+  reminderDone: 44,
+  btLow: 52,
+  rain: 58,
   stopwatch: 50,
   bluetooth: 55,
   mediaPlaying: 60,
@@ -138,11 +141,24 @@ var PRIORITY = {
 var REMINDER_SOON_SECONDS = 5 * 60
 
 // --- timer & stopwatch -------------------------------------------------------
-// timer:     { state: "idle"|"running"|"paused", durationMs, endsAt, remainingMs }
+// timer:     { state: "idle"|"running"|"paused"|"done", durationMs, endsAt, remainingMs, doneAt }
 // stopwatch: { state: "idle"|"running"|"paused", startedAt, accumulatedMs, laps: [ms] }
 
 var MAX_TIMER_MS = 24 * 3600 * 1000
 var MAX_LAPS = 99
+// A finished timer stays this long as "Time's up", with Repeat / +1 min / OK.
+var TIMER_DONE_MS = 30000
+// The last seconds of a countdown: the pill pulses.
+var ENDING_MS = 10000
+
+function doneTimer(t, now) {
+  return { state: "done", durationMs: t.durationMs, endsAt: 0, remainingMs: 0, doneAt: now }
+}
+
+// The "Time's up" card is over.
+function doneExpired(t, now) {
+  return !!t && t.state === "done" && now - t.doneAt >= TIMER_DONE_MS
+}
 
 function idleTimer() {
   return { state: "idle", durationMs: 0, endsAt: 0, remainingMs: 0 }
@@ -254,6 +270,27 @@ function lapStopwatch(s, now) {
 
 function timerActivity(t, now) {
   if (!t || t.state === "idle") return null
+  if (t.state === "done") {
+    return {
+      id: "timer",
+      module: "timer",
+      priority: PRIORITY.timer,
+      icon: "\u{f0e1b}",
+      urgent: false,
+      done: true,
+      title: "Time's up",
+      subtitle: "Timer \u00b7 " + presetLabel(t.durationMs / 1000),
+      pillText: "Time's up",
+      progress: 1,
+      details: [],
+      actions: [
+        { id: "repeat", label: "Repeat", icon: "\u{f0456}" },
+        { id: "add", label: "+1 min", icon: "\u{f0415}" },
+        { id: "ok", label: "OK", icon: "\u{f012c}" }
+      ],
+      signature: "done:" + t.doneAt
+    }
+  }
   var remaining = timerRemaining(t, now)
   var running = t.state === "running"
   var text = formatCountdown(remaining)
@@ -267,6 +304,7 @@ function timerActivity(t, now) {
     subtitle: "Timer · " + presetLabel(t.durationMs / 1000),
     pillText: running ? text : text + " ‖",
     progress: t.durationMs > 0 ? 1 - remaining / t.durationMs : -1,
+    ending: running && remaining <= ENDING_MS,
     details: [],
     actions: running
       ? [{ id: "pause", label: "Pause", icon: "\u{f03e4}" }, { id: "add", label: "+1 min", icon: "\u{f0415}" }, { id: "cancel", label: "Cancel", icon: "\u{f0156}" }]
@@ -376,7 +414,24 @@ function nextPomodoro(p, cfg, now) {
 
 var PHASE_LABEL = { focus: "Focus", "break": "Break", longBreak: "Long break" }
 
-function pomodoroActivity(p, cfg, now) {
+// Focus blocks finished today, kept as { day: "YYYY-MM-DD", count }.
+function dayKey(now) {
+  var d = new Date(now)
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+}
+
+function normalizePomodoroStats(s, now) {
+  var day = dayKey(now)
+  if (!s || typeof s !== "object" || s.day !== day) return { day: day, count: 0 }
+  return { day: day, count: Math.max(0, Math.min(999, Math.floor(num(s.count, 0)))) }
+}
+
+function countFocusDone(stats, now) {
+  var s = normalizePomodoroStats(stats, now)
+  return { day: s.day, count: s.count + 1 }
+}
+
+function pomodoroActivity(p, cfg, now, stats) {
   if (!p || p.state === "idle") return null
   var remaining = timerRemaining(p, now)
   var running = p.state === "running"
@@ -390,9 +445,11 @@ function pomodoroActivity(p, cfg, now) {
     icon: p.phase === "focus" ? "\u{f04fe}" : "\u{f0176}",
     urgent: false,
     title: label + " \u00b7 " + text + (running ? "" : " (paused)"),
-    subtitle: "Pomodoro \u00b7 " + (p.phase === "focus" ? "round " + Math.max(1, round) + "/" + cfg.every : p.focusDone + " done"),
+    subtitle: "Pomodoro \u00b7 " + (p.phase === "focus" ? "round " + Math.max(1, round) + "/" + cfg.every : p.focusDone + " done")
+      + (stats && stats.count > 0 ? " \u00b7 " + stats.count + " today" : ""),
     pillText: label + " " + text + (running ? "" : " \u2016"),
     progress: p.durationMs > 0 ? 1 - remaining / p.durationMs : -1,
+    ending: running && remaining <= ENDING_MS,
     details: [],
     actions: [
       running ? { id: "pause", label: "Pause", icon: "\u{f03e4}" } : { id: "resume", label: "Resume", icon: "\u{f040a}" },
@@ -450,6 +507,7 @@ function parseReminders(text) {
     if (at <= 0) continue
     out.push({
       unit: clean(r.unit, 80),
+      message: clean(r.message),
       label: clean(r.label || r.message || "Reminder"),
       at: at * 1000,
       minutes: Math.max(0, Math.floor(num(r.minutes, 0)))
@@ -480,8 +538,56 @@ function remindersActivity(reminders, now) {
     pillText: formatCountdown(left),
     progress: total > 0 ? Math.max(0, Math.min(1, 1 - left / total)) : -1,
     details: details,
-    actions: [{ id: "clear", label: pending.length > 1 ? "Clear all" : "Clear", icon: "\u{f0156}" }],
+    actions: [
+      { id: "postpone", label: "+5 min", icon: "\u{f0415}" },
+      { id: "clear", label: pending.length > 1 ? "Clear all" : "Clear", icon: "\u{f0156}" }
+    ],
     signature: next.unit + ":" + pending.length
+  }
+}
+
+// A systemd unit omarchy-reminder made: the only kind the Now Bar stops.
+function validReminderUnit(unit) {
+  return /^omarchy-reminder-\d{1,6}m-\d{1,12}$/.test(String(unit || ""))
+}
+
+// Minutes from now for a reminder `extraMin` later than it was due.
+function postponeMinutes(at, now, extraMin) {
+  return Math.max(1, Math.ceil(Math.max(0, at - now) / 60000) + extraMin)
+}
+
+// Reminders that went off since the last read: in `before`, gone from
+// `after`, and due by now.
+function firedReminders(before, after, now) {
+  var left = {}
+  for (var i = 0; i < (after || []).length; i++) left[after[i].unit] = true
+  return (before || []).filter(function(r) { return !left[r.unit] && r.at <= now + 3000 })
+}
+
+// A reminder that just went off, for a minute: snooze it or let it go.
+// f = { label, message, at, until }
+var REMINDER_DONE_MS = 60000
+
+function firedReminderActivity(f) {
+  if (!f) return null
+  return {
+    id: "reminderDone",
+    module: "reminders",
+    priority: PRIORITY.reminderDone,
+    icon: "\u{f009a}",
+    urgent: false,
+    done: true,
+    title: f.label,
+    subtitle: "Reminder \u00b7 now",
+    pillText: f.label,
+    progress: -1,
+    details: [],
+    actions: [
+      { id: "snooze5", label: "In 5 min", icon: "\u{f04b2}" },
+      { id: "snooze15", label: "In 15 min", icon: "\u{f04b2}" },
+      { id: "ok", label: "OK", icon: "\u{f012c}" }
+    ],
+    signature: String(f.at)
   }
 }
 
@@ -1131,7 +1237,7 @@ function pushActivity(item, now) {
 }
 
 // --- Bluetooth device just connected (shown for a few seconds) ---------------------
-// d = { address, name, battery (0..1, or -1 when unknown) }
+// d = { address, name, battery (0..1, or -1 when unknown), audio (headphones, speaker) }
 
 var BLUETOOTH_SHOW_MS = 10000
 
@@ -1151,8 +1257,36 @@ function bluetoothActivity(d) {
     pillText: hasBattery ? name + " \u00b7 " + pct + "%" : name,
     progress: hasBattery ? pct / 100 : -1,
     details: [],
-    actions: [],
+    actions: d.audio ? [{ id: "audio", label: "Use for audio", icon: "\u{f02cb}" }] : [],
     signature: "connected"
+  }
+}
+
+function btAddress(a) {
+  return String(a || "").replace(/[^A-Fa-f0-9:]/g, "").slice(0, 17)
+}
+
+// A connected device (mouse, headphones...) running low: stays until charged
+// or hidden; hidden, it comes back 5% lower.
+var BT_LOW = 0.15
+
+function btLowActivity(d) {
+  if (!d || !(num(d.battery, -1) >= 0) || d.battery > BT_LOW) return null
+  var name = clean(d.name, 60) || "Bluetooth device"
+  var pct = Math.round(Math.max(0, d.battery) * 100)
+  return {
+    id: "btlow:" + btAddress(d.address),
+    module: "bluetooth",
+    priority: PRIORITY.btLow,
+    icon: "\u{f0083}",
+    urgent: false,
+    title: name + " battery low",
+    subtitle: pct + "% \u00b7 charge it soon",
+    pillText: name + " \u00b7 " + pct + "%",
+    progress: pct / 100,
+    details: [],
+    actions: [],
+    signature: "low:" + Math.ceil(pct / 5)
   }
 }
 
@@ -1189,6 +1323,42 @@ function screenshotActivity(s) {
       { id: "open", label: "Open", icon: "\u{f03cc}", opensApp: true }
     ],
     signature: clean(s.name, 80)
+  }
+}
+
+// --- screen recording just saved (shown for a few seconds) ---------------------------
+// The file omarchy-capture-screenrecording wrote; r = { path, name, thumb, dir }.
+
+var RECORDED_SHOW_MS = 20000
+
+// Only a recording as Omarchy names it, straight in the recordings folder.
+function validRecordingPath(path, dir) {
+  var p = String(path || ""), d = String(dir || "").replace(/\/+$/, "")
+  if (!d || p.indexOf(d + "/") !== 0) return false
+  var name = p.slice(d.length + 1)
+  return /^screenrecording-[0-9_-]{1,40}\.mp4$/.test(name)
+}
+
+function recordedActivity(r) {
+  if (!r || !r.path) return null
+  return {
+    id: "recorded",
+    module: "recording",
+    priority: PRIORITY.screenshot,
+    icon: "\u{f0fce}",
+    urgent: false,
+    image: r.thumb || "",
+    title: "Recording saved",
+    subtitle: clean(r.name, 80),
+    pillText: "Recording saved",
+    progress: -1,
+    details: [],
+    actions: [
+      { id: "open", label: "Play", icon: "\u{f040a}", opensApp: true },
+      { id: "copy", label: "Copy", icon: "\u{f018f}" },
+      { id: "folder", label: "Folder", icon: "\u{f0770}", opensApp: true }
+    ],
+    signature: clean(r.name, 80)
   }
 }
 
@@ -1441,6 +1611,43 @@ var DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 // wttr.in's ?format=j1 answer -> what the card shows, or null when it can't be
 // read. `now` is epoch ms (local time decides "now", night and day names);
 // `opts` = { unit: "auto"|"metric"|"imperial", locale }.
+// Weather codes with rain, drizzle or a storm.
+var RAIN_CODES = [176, 200, 263, 266, 293, 296, 299, 302, 305, 308, 353, 356, 359, 386, 389]
+
+function isRainCode(code) {
+  return RAIN_CODES.indexOf(parseInt(String(code || "0"), 10)) !== -1
+}
+
+// Rain on the way: not raining now, and likely (60%+) in this 3-hour slot or
+// the next. A real activity (it takes the pill like any new one), once per
+// slot; hidden, it stays hidden for that slot.
+var RAIN_LIKELY = 60
+
+function rainActivity(w) {
+  if (!w || w.raining || !Array.isArray(w.hours) || w.hours.length === 0) return null
+  for (var i = 0; i < Math.min(2, w.hours.length); i++) {
+    var h = w.hours[i]
+    if (h.rain < RAIN_LIKELY) continue
+    var when = i === 0 ? "soon" : "around " + pad2(h.hour) + ":00"
+    return {
+      id: "rain",
+      module: "weather",
+      priority: PRIORITY.rain,
+      icon: "\u{e318}",
+      color: "#3d8fe0",
+      urgent: false,
+      title: "Rain likely " + when,
+      subtitle: h.rain + "% chance" + (w.location ? " \u00b7 " + w.location : ""),
+      pillText: "Rain " + when + " \u00b7 " + h.rain + "%",
+      progress: -1,
+      details: [],
+      actions: [],
+      signature: "rain:" + (i === 0 ? "now" : h.hour)
+    }
+  }
+  return null
+}
+
 function parseWttr(text, now, opts) {
   var data
   try { data = JSON.parse(String(text || "")) } catch (e) { return null }
@@ -1484,6 +1691,7 @@ function parseWttr(text, now, opts) {
       if (ht === null) continue
       hours.push({
         label: hours.length === 0 ? "Now" : pad2(slot) + "h",
+        hour: slot,
         icon: weatherIcon(h.weatherCode, slotNight),
         temp: ht,
         rain: Math.max(0, Math.min(100, Math.round(num(h.chanceofrain, 0))))
@@ -1532,6 +1740,7 @@ function parseWttr(text, now, opts) {
     sunrise: clockLabel(sunrise),
     sunset: clockLabel(sunset),
     hours: hours,
+    raining: isRainCode(cur.weatherCode),
     days: forecast
   }
 }
@@ -1700,7 +1909,8 @@ function defaultPrefs() {
     timerPresets: DEFAULT_PRESETS, // quick start timers, minutes
     pomodoroFocus: 25,
     pomodoroBreak: 5,
-    pomodoroLongBreak: 15
+    pomodoroLongBreak: 15,
+    pomodoroDnd: false      // Do Not Disturb during focus blocks
   }
 }
 
@@ -1797,6 +2007,19 @@ if (typeof module !== "undefined") {
     parseWttr: parseWttr,
     weatherActivity: weatherActivity,
     nextLoop: nextLoop,
+    doneTimer: doneTimer,
+    doneExpired: doneExpired,
+    TIMER_DONE_MS: TIMER_DONE_MS,
+    normalizePomodoroStats: normalizePomodoroStats,
+    countFocusDone: countFocusDone,
+    validReminderUnit: validReminderUnit,
+    postponeMinutes: postponeMinutes,
+    firedReminders: firedReminders,
+    firedReminderActivity: firedReminderActivity,
+    validRecordingPath: validRecordingPath,
+    recordedActivity: recordedActivity,
+    btLowActivity: btLowActivity,
+    rainActivity: rainActivity,
     mixOklab: mixOklab,
     parseIgnoredPlayers: parseIgnoredPlayers,
     isIgnoredPlayer: isIgnoredPlayer,
