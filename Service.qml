@@ -1430,7 +1430,7 @@ Item {
 
   onActivitiesChanged: {
     var ids = {}
-    for (var i = 0; i < activities.length; i++) ids[activities[i].id] = true
+    for (var i = 0; i < activities.length; i++) ids[activities[i].id] = activities[i].priority
     var next = Model.resolveFocus({
       list: activities,
       focusId: focusId,

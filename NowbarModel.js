@@ -1326,11 +1326,13 @@ function nextIndex(length, index, delta) {
 }
 
 // Which activity has the focus after the list changed.
-//   s = { list, focusId, knownIds: {id: true}, autoFocus, manualUntil, now }
-// A newcomer (an id not in knownIds) takes the focus when autoFocus is on and
-// the user hasn't switched by hand in the last few seconds, as long as it is
-// at least as important as the current one. Otherwise the focus stays on the
-// same id; if that one is gone, it goes to the most important activity.
+//   s = { list, focusId, knownIds: {id: priority}, autoFocus, manualUntil, now }
+// A newcomer takes the focus when autoFocus is on and the user hasn't switched
+// by hand in the last few seconds, as long as it is at least as important as
+// the current one. A newcomer is an id not in knownIds, or one that got more
+// important since (paused media that starts playing, a reminder coming up).
+// Otherwise the focus stays on the same id; if that one is gone, it goes to
+// the most important activity.
 function resolveFocus(s) {
   var list = s.list || []
   if (list.length === 0) return ""
@@ -1338,7 +1340,8 @@ function resolveFocus(s) {
   if (s.autoFocus && !(s.now < s.manualUntil)) {
     for (var i = 0; i < list.length; i++) {
       var a = list[i]
-      if (s.knownIds && s.knownIds[a.id]) continue
+      var known = s.knownIds ? s.knownIds[a.id] : undefined
+      if (known !== undefined && !(a.priority < known)) continue
       if (current === -1 || a.priority <= list[current].priority) return a.id
     }
   }

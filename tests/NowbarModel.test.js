@@ -229,13 +229,24 @@ test("nextIndex wraps both ways", () => {
 
 test("resolveFocus: newcomers take focus unless less important or manual hold", () => {
   const list = [{ id: "privacy", priority: 10 }, { id: "timer", priority: 40 }, { id: "media", priority: 60 }]
-  const base = { list, focusId: "timer", knownIds: { timer: true, media: true }, autoFocus: true, manualUntil: 0, now: 100 }
+  const base = { list, focusId: "timer", knownIds: { timer: 40, media: 60 }, autoFocus: true, manualUntil: 0, now: 100 }
   assert.equal(M.resolveFocus(base), "privacy")
   assert.equal(M.resolveFocus({ ...base, autoFocus: false }), "timer")
   assert.equal(M.resolveFocus({ ...base, manualUntil: 200 }), "timer")
-  assert.equal(M.resolveFocus({ ...base, focusId: "privacy", knownIds: { privacy: true, timer: true } }), "privacy")
-  assert.equal(M.resolveFocus({ ...base, focusId: "gone", knownIds: { privacy: true, timer: true, media: true } }), "privacy")
+  assert.equal(M.resolveFocus({ ...base, focusId: "privacy", knownIds: { privacy: 10, timer: 40 } }), "privacy")
+  assert.equal(M.resolveFocus({ ...base, focusId: "gone", knownIds: { privacy: 10, timer: 40, media: 60 } }), "privacy")
   assert.equal(M.resolveFocus({ ...base, list: [] }), "")
+})
+
+test("resolveFocus: an activity that got more important counts as new", () => {
+  // Paused media (95) starts playing (60) while charging (80) has the pill.
+  const list = [{ id: "media", priority: 60 }, { id: "charging", priority: 80 }]
+  const base = { list, focusId: "charging", knownIds: { media: 95, charging: 80 }, autoFocus: true, manualUntil: 0, now: 100 }
+  assert.equal(M.resolveFocus(base), "media")
+  assert.equal(M.resolveFocus({ ...base, manualUntil: 200 }), "charging")
+  // Same importance as before, or less: no change.
+  assert.equal(M.resolveFocus({ ...base, knownIds: { media: 60, charging: 80 } }), "charging")
+  assert.equal(M.resolveFocus({ ...base, list: [{ id: "media", priority: 95 }, { id: "charging", priority: 80 }], knownIds: { media: 60, charging: 80 } }), "charging")
 })
 
 test("prefs normalize and store only non-defaults", () => {
@@ -483,7 +494,7 @@ test("weather card is ambient and lowest priority", () => {
   assert.equal(M.weatherActivity(null, true).title, "Update available")
   // A live activity always takes the focus from it.
   const list = M.sortActivities([a, { id: "timer", priority: 40 }])
-  assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: true }, autoFocus: true, manualUntil: 0, now: 1 }), "timer")
+  assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: 99 }, autoFocus: true, manualUntil: 0, now: 1 }), "timer")
 })
 
 test("cover base color and popup surface tint", () => {
