@@ -203,19 +203,31 @@ Panel {
   // script) turn the popup red like the pill: always, like the pill, not only
   // with "Dynamic colors".
   readonly property bool urgentThemed: !settingsOpen && focused !== null && focused.urgent === true
-  readonly property bool popupThemed: urgentThemed || mediaThemed || weatherThemed
+  // Charging is good news: blue to green, whatever the percentage. Always on,
+  // like the urgent red.
+  readonly property color chargeBlue: darkTheme ? "#38bdf8" : "#0284c7"
+  readonly property color chargeGreen: darkTheme ? "#4ade80" : "#16a34a"
+  function isCharging(activity) { return !!activity && activity.id === "charging" }
+  readonly property bool pillCharging: isCharging(pillItem)
+  readonly property bool chargeThemed: !settingsOpen && isCharging(focused)
+  readonly property bool popupThemed: urgentThemed || chargeThemed || mediaThemed || weatherThemed
   readonly property string popupTint: urgentThemed ? Model.surfaceTint(Color.urgent.toString().slice(0, 7), darkTheme)
+    : chargeThemed ? Model.surfaceTint("#14b8a6", darkTheme)
     : (mediaThemed ? Model.surfaceTint(service.artBase, darkTheme)
     : (weatherThemed ? Model.surfaceTint(focused.color, darkTheme) : ""))
   readonly property color popupAccent: urgentThemed ? Color.urgent
+    : chargeThemed ? chargeGreen
     : (mediaThemed ? coverAccent : (weatherThemed ? Qt.lighter(focused.color, 1.0) : Color.accent))
   readonly property var themeBorderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
-  readonly property var popupBorderSpec: popupThemed
+  readonly property var popupBorderSpec: chargeThemed
+    ? { color: chargeGreen, widths: themeBorderSpec.widths, gradient: { colors: [chargeBlue.toString(), chargeGreen.toString()], angle: 0, enabled: true } }
+    : popupThemed
     ? { color: popupAccent, widths: themeBorderSpec.widths, gradient: { colors: [], angle: 0, enabled: false } }
     : themeBorderSpec
 
   function accentFor(activity) {
     if (activity && activity.urgent) return Color.urgent
+    if (isCharging(activity)) return chargeGreen
     if (activity && activity.module === "media" && hasCoverAccent) return coverAccent
     if (activity && activity.module === "weather" && activity.color && prefs.coverAccent) return Qt.lighter(activity.color, 1.0)
     return Color.accent
@@ -272,6 +284,62 @@ Panel {
     NumberAnimation { target: root; property: "pulse"; to: 0; duration: 520; easing.type: Easing.InOutSine }
   }
 
+  // Charge level, blue to green, with a wave of light running through it.
+  component ChargeWave: Item {
+    id: wave
+    property real level: 0
+    property real fillOpacity: 1
+    property real shineOpacity: 0.5
+    property bool running: false
+
+    Rectangle {
+      id: chargeFill
+      width: wave.width * Math.max(0, Math.min(1, wave.level))
+      height: wave.height
+      radius: height / 2
+      opacity: wave.fillOpacity
+      gradient: Gradient {
+        orientation: Gradient.Horizontal
+        GradientStop { position: 0.0; color: root.chargeBlue }
+        GradientStop { position: 1.0; color: root.chargeGreen }
+      }
+      Behavior on width {
+        enabled: root.motion
+        NumberAnimation { duration: 600; easing.type: Easing.OutCubic }
+      }
+    }
+
+    // Only over the charged part.
+    Item {
+      width: chargeFill.width
+      height: wave.height
+      clip: true
+
+      Rectangle {
+        id: shine
+        width: Math.max(wave.height * 3, wave.width * 0.3)
+        height: wave.height
+        radius: height / 2
+        x: -width
+        opacity: wave.shineOpacity
+        gradient: Gradient {
+          orientation: Gradient.Horizontal
+          GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0) }
+          GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.9) }
+          GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0) }
+        }
+      }
+    }
+
+    SequentialAnimation {
+      running: wave.running && wave.visible && root.motion
+      loops: Animation.Infinite
+      onRunningChanged: if (!running) shine.x = -shine.width
+      NumberAnimation { target: shine; property: "x"; from: -shine.width; to: chargeFill.width; duration: 1700; easing.type: Easing.InOutSine }
+      PauseAnimation { duration: 1000 }
+    }
+  }
+
   // --- the pill ---------------------------------------------------------------
 
   Rectangle {
@@ -285,7 +353,9 @@ Panel {
     height: root.vertical ? pillContent.implicitHeight + Style.space(12) : Math.max(Style.space(18), root.barSize - Style.space(10))
     width: root.vertical ? Math.max(Style.space(18), root.barSize - Style.space(10)) : pillContent.implicitWidth + Style.space(16)
     radius: Math.min(width, height) / 2
-    color: hasActivity
+    color: root.pillCharging
+      ? Util.alpha(root.chargeBlue, pillArea.containsMouse || root.opened ? 0.2 : 0.12)
+      : hasActivity
       ? Util.alpha(root.accentFor(root.pillItem), pillArea.containsMouse || root.opened ? 0.28 : 0.18)
       : Util.alpha(root.fg, pillArea.containsMouse || root.opened ? 0.14 : 0.07)
     border.width: hasActivity && root.pillItem.urgent ? Math.max(1, Style.space(1)) : 0
@@ -323,6 +393,16 @@ Panel {
       }
     }
 
+    // Charging: the pill itself fills up to the charge.
+    ChargeWave {
+      anchors.fill: parent
+      visible: root.pillCharging
+      level: root.pillCharging ? root.pillItem.progress : 0
+      fillOpacity: 0.32
+      shineOpacity: 0.28
+      running: root.pillCharging
+    }
+
     // Red wash for the urgent pulse, under the text.
     Rectangle {
       anchors.fill: parent
@@ -346,7 +426,7 @@ Panel {
         horizontalAlignment: Text.AlignHCenter
         textFormat: Text.PlainText
         text: pill.hasActivity ? root.pillItem.icon : "\u{f0996}"
-        color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : root.fg
+        color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : (root.pillCharging ? root.chargeGreen : root.fg)
         opacity: pill.hasActivity ? 1 : 0.6
         font.family: root.family
         font.pixelSize: Style.font.body
@@ -462,9 +542,10 @@ Panel {
       }
     }
 
-    // Thin progress line along the bottom of the pill.
+    // Thin progress line along the bottom of the pill (charging fills the
+    // whole pill instead).
     Rectangle {
-      visible: pill.progress >= 0 && !root.vertical
+      visible: pill.progress >= 0 && !root.vertical && !root.pillCharging
       anchors.left: parent.left
       anchors.bottom: parent.bottom
       anchors.leftMargin: pill.radius / 2
@@ -788,7 +869,7 @@ Panel {
                     anchors.centerIn: parent
                     textFormat: Text.PlainText
                     text: root.focused ? root.focused.icon : ""
-                    color: root.focused && root.focused.urgent ? Color.urgent : root.popupFg
+                    color: root.focused && root.focused.urgent ? Color.urgent : (root.chargeThemed ? root.chargeGreen : root.popupFg)
                     font.family: root.family
                     font.pixelSize: Style.font.display
                   }
@@ -828,7 +909,8 @@ Panel {
                 id: progressBar
                 width: parent.width
                 visible: root.focused !== null && root.focused.progress >= 0
-                height: seekable ? Style.space(16) : Style.space(4)
+                readonly property real trackHeight: Style.space(root.isCharging(root.focused) ? 8 : 4)
+                height: seekable ? Style.space(16) : trackHeight
 
                 readonly property bool seekable: root.focused !== null && root.focused.seekable === true
                 property bool dragging: false
@@ -839,11 +921,19 @@ Panel {
                 Rectangle {
                   anchors.verticalCenter: parent.verticalCenter
                   width: parent.width
-                  height: Style.space(4)
+                  height: progressBar.trackHeight
                   radius: height / 2
                   color: Util.alpha(root.popupFg, 0.15)
 
+                  ChargeWave {
+                    anchors.fill: parent
+                    visible: root.isCharging(root.focused)
+                    level: progressBar.shownValue
+                    running: root.opened
+                  }
+
                   Rectangle {
+                    visible: !root.isCharging(root.focused)
                     height: parent.height
                     radius: parent.radius
                     width: parent.width * progressBar.shownValue

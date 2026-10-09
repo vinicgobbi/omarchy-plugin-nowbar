@@ -20,6 +20,9 @@ activities, and click it for the details and controls.
   popup red.
 - **Dynamic colors:** media cards take their colors from the album cover, the
   weather card from the sky.
+- **Charging glows blue to green:** while plugged in, the pill fills up to
+  the charge with a blue-to-green gradient and a wave of light running
+  through it, and the popup takes the same colors, at any percentage.
 - **Motion:** the popup unfolds from the pill, its sections come in one
   after the other, cards slide in from the side you switched to, and the
   pill pulses red a few times when something urgent comes up. One switch
