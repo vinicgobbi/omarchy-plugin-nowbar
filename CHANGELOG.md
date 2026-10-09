@@ -1,3 +1,19 @@
+## v0.5.0 (2026-10-09)
+
+### Feat
+
+- timers com anel de progresso, pílula pulsando nos últimos 10 s e card "Time's up" (Repetir / +1 min / OK); Pomodoro conta os blocos do dia e pode ligar o Não perturbe no foco; campo de timer livre no Quick start; lembretes com +5 min e card para adiar quando tocam; card da gravação salva com miniatura (Play / Copy / Folder) e ponto vermelho durante a gravação; fones Bluetooth com "Use for audio" e aviso de bateria baixa de periféricos; alerta de chuva como atividade
+- troca de faixa animada de verdade: título antigo sai antes do novo entrar (no sentido da troca), capa e fundo desfocado em crossfade sem piscar nem afundar, cor da capa misturada em OKLab (sem cinza nem arco-íris), barra de progresso deslizando contínua entre os segundos (no card e na pílula) e texto da pílula deslizando na troca
+- card de mídia como player de verdade: controles redondos centralizados (shuffle, −10 s, anterior, play/pause em destaque, próxima, +10 s, repeat, só o que o player suporta), capa desfocada ao fundo, tempo decorrido e restante dos lados da barra, álbum no cabeçalho, capa que abre o player, troca de faixa animada e mini equalizador na pílula; player pausado cede a pílula após um tempo (5 min, 15 min, 1 h ou nunca) e players podem ser escondidos do Now Bar sem perder as teclas de mídia
+- módulo Updates: checa de tempos em tempos (intervalos prontos ou qualquer valor de 5 min a 7 dias, e uma vez após ligar o PC) as atualizações do Omarchy, pacotes oficiais, AUR e Flatpak (só as fontes que a máquina tem: Flatpak apenas se instalado), num card de prioridade normal que assume a pílula quando acha novidade, com botão Update (omarchy-update e flatpak update num terminal, que pedem a senha lá) e nova checagem sozinha após atualizar
+- carregamento em azul e verde: a pílula se enche até a carga com gradiente azul→verde e uma onda de luz passando, e o popup ganha borda em gradiente, fundo azul-esverdeado e barra com a mesma onda, em qualquer porcentagem
+- animações no Now Bar: o popup se desdobra a partir da pílula com as seções entrando em cascata, cards deslizam do lado da troca com a altura acompanhando, opções entram deslizando, e a pílula afunda ao clicar, dá um salto quando uma atividade assume sozinha e pulsa em vermelho no que é urgente; opção Animations (Look → Motion) desliga tudo
+
+### Fix
+
+- ações que abrem um app (Update, Edit e Open do screenshot) fecham o popup antes, para o terminal/editor receber o teclado; antes o popup ficava aberto por cima e podia travar aberto enquanto o diálogo de senha do Flatpak estava na tela
+- atividade que fica mais importante (mídia pausada que volta a tocar, lembrete chegando) pega o foco como uma nova; antes só um id inédito pegava
+
 ## v0.4.1 (2026-10-06)
 
 ### Fix
