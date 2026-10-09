@@ -468,6 +468,14 @@ Column {
       label: "Dynamic colors"
       hint: "Media takes its colors from the album cover, weather from the sky: highlight, popup border and background."
     }
+
+    Section { text: "MOTION" }
+
+    SwitchOption {
+      key: "animations"
+      label: "Animations"
+      hint: "The popup unfolds from the pill, cards slide in, and the pill pulses when something urgent comes up. Off: everything changes at once."
+    }
   }
 
   // --- Quick -------------------------------------------------------------------------

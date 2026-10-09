@@ -250,6 +250,8 @@ test("prefs normalize and store only non-defaults", () => {
   assert.equal(M.normalizePrefs({ whenEmpty: "icon" }).whenEmpty, "icon")
   assert.equal(p.textMode, "scroll")
   assert.equal(p.coverAccent, true)
+  assert.equal(p.animations, true)
+  assert.equal(M.normalizePrefs({ animations: false }).animations, false)
   assert.equal(M.normalizePrefs({ textMode: "ellipsis" }).textMode, "ellipsis")
   assert.equal(p.maxWidth, 600)
   assert.equal(p.autoFocus, true)

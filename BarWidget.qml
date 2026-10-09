@@ -89,9 +89,83 @@ Panel {
     }
   }
   onOpenedChanged: {
+    unfold(opened)
     if (!opened) { settingsOpen = false; return }
     if (Date.now() - settingsRequestedAt < 2000) settingsOpen = true
     if (service) service.refreshWeatherIfStale()
+  }
+
+  // --- motion -------------------------------------------------------------------
+
+  // Off with the "Animations" option, and while the bar repaints for a theme
+  // change (like the shell's own widgets).
+  readonly property bool motion: prefs.animations && (!bar || bar.foregroundAnimationEnabled)
+
+  // The popup unfolds from the pill: 0 is the pill's size, 1 the full card.
+  // Closing folds it back while the shell fades the card out (140 ms), so it
+  // has to fit in that time.
+  property real reveal: 0
+  // Drives the sections coming in one after the other (see stage()).
+  property real entrance: 1
+
+  function unfold(open) {
+    revealAnim.stop()
+    entranceAnim.stop()
+    if (!motion) { reveal = open ? 1 : 0; entrance = 1; return }
+    revealAnim.to = open ? 1 : 0
+    revealAnim.duration = open ? 380 : 140
+    revealAnim.easing.type = open ? Easing.OutQuint : Easing.InCubic
+    revealAnim.start()
+    if (open) { entrance = 0; entranceAnim.start() }
+  }
+
+  NumberAnimation { id: revealAnim; target: root; property: "reveal" }
+  NumberAnimation { id: entranceAnim; target: root; property: "entrance"; from: 0; to: 1; duration: 520 }
+
+  // How far section `i` of the popup has come in, eased: each one starts
+  // 55 ms after the one above it and takes 320 ms.
+  function stage(i) {
+    var t = Math.max(0, Math.min(1, (entrance * 520 - i * 55) / 320))
+    return 1 - Math.pow(1 - t, 3)
+  }
+
+  function enterShiftX(i) { return (1 - stage(i)) * enterDX }
+  function enterShiftY(i) { return (1 - stage(i)) * enterDY }
+
+  // Sections come in from the bar's side.
+  readonly property string barPos: bar ? bar.position : "top"
+  readonly property real enterDX: barPos === "left" ? -Style.space(10) : (barPos === "right" ? Style.space(10) : 0)
+  readonly property real enterDY: barPos === "top" ? -Style.space(10) : (barPos === "bottom" ? Style.space(10) : 0)
+
+  // Full size of the popup; the height follows the content (another card,
+  // the options) smoothly once the popup is open.
+  readonly property real popupFullWidth: popup.fittedContentWidth(Style.space(360))
+  property real popupFullHeight: popup.fittedContentHeight(settingsOpen ? settingsView.implicitHeight : column.implicitHeight)
+  Behavior on popupFullHeight {
+    // Not while the card's own height animates: then it already follows it.
+    enabled: root.motion && root.opened && root.reveal === 1 && !cardHeightAnim.running
+    NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+  }
+  readonly property real popupInsetW: popup.padding * 2 + Border.left(popupBorderSpec) + Border.right(popupBorderSpec)
+
+  // Options <-> carousel: the one coming in slides from its side.
+  onSettingsOpenChanged: {
+    viewIn.stop()
+    columnShift.x = 0
+    settingsShift.x = 0
+    column.opacity = 1
+    settingsFlick.opacity = 1
+    if (!motion || !opened) return
+    viewSwap.from = (settingsOpen ? 1 : -1) * Style.space(28)
+    viewSwap.target = settingsOpen ? settingsShift : columnShift
+    viewFade.target = settingsOpen ? settingsFlick : column
+    viewIn.start()
+  }
+
+  ParallelAnimation {
+    id: viewIn
+    NumberAnimation { id: viewSwap; property: "x"; to: 0; duration: 280; easing.type: Easing.OutQuint }
+    NumberAnimation { id: viewFade; property: "opacity"; from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
   }
 
   readonly property bool shown: realCount > 0 || prefs.whenEmpty !== "hide"
@@ -156,7 +230,10 @@ Panel {
     if (Math.abs(wheelAccum) < 120) return
     service.step(wheelAccum > 0 ? -1 : 1)
     wheelAccum = 0
+    lastWheelAt = Date.now()
   }
+  // A switch made by scrolling doesn't get the "something new" bump.
+  property double lastWheelAt: 0
 
   // Direction of the last switch, for the slide animation.
   property int slideFrom: 1
@@ -171,8 +248,28 @@ Panel {
     var id = focused ? focused.id : ""
     if (id === lastFocusId) return
     lastFocusId = id
+    if (!motion) { pillSwap.complete(); cardSwap.complete(); return }
     pillSwap.restart()
     cardSwap.restart()
+    // An activity that took the pill on its own (closed popup, no scrolling).
+    if (id !== "" && !opened && Date.now() - lastWheelAt > 800) pillBump.restart()
+  }
+
+  // Something urgent came up (camera on, recording, low battery...): the pill
+  // pulses red a few times, then stays red without moving.
+  readonly property string urgentKey: pillItem !== null && pillItem.urgent ? pillItem.id : ""
+  onUrgentKeyChanged: {
+    urgentPulse.stop()
+    pulse = 0
+    if (urgentKey !== "" && motion) urgentPulse.start()
+  }
+  property real pulse: 0
+
+  SequentialAnimation {
+    id: urgentPulse
+    loops: 3
+    NumberAnimation { target: root; property: "pulse"; to: 1; duration: 380; easing.type: Easing.InOutSine }
+    NumberAnimation { target: root; property: "pulse"; to: 0; duration: 520; easing.type: Easing.InOutSine }
   }
 
   // --- the pill ---------------------------------------------------------------
@@ -195,9 +292,44 @@ Panel {
     border.color: Util.alpha(Color.urgent, 0.8)
     clip: true
 
+    // Pressed in a little while held.
+    scale: root.motion && pillArea.pressed ? 0.94 : 1
+    Behavior on scale {
+      enabled: root.motion
+      NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+    }
+
+    transform: Scale {
+      id: bumpScale
+      origin.x: pill.width / 2
+      origin.y: pill.height / 2
+    }
+
     Behavior on color {
       enabled: !root.bar || root.bar.foregroundAnimationEnabled
-      ColorAnimation { duration: 180 }
+      ColorAnimation { duration: 220; easing.type: Easing.OutCubic }
+    }
+
+    // Grows a touch and settles back, springy.
+    SequentialAnimation {
+      id: pillBump
+      ParallelAnimation {
+        NumberAnimation { target: bumpScale; property: "xScale"; to: 1.07; duration: 140; easing.type: Easing.OutCubic }
+        NumberAnimation { target: bumpScale; property: "yScale"; to: 1.07; duration: 140; easing.type: Easing.OutCubic }
+      }
+      ParallelAnimation {
+        NumberAnimation { target: bumpScale; property: "xScale"; to: 1; duration: 420; easing.type: Easing.OutBack; easing.overshoot: 2.2 }
+        NumberAnimation { target: bumpScale; property: "yScale"; to: 1; duration: 420; easing.type: Easing.OutBack; easing.overshoot: 2.2 }
+      }
+    }
+
+    // Red wash for the urgent pulse, under the text.
+    Rectangle {
+      anchors.fill: parent
+      radius: pill.radius
+      color: Color.urgent
+      opacity: 0.35 * root.pulse
+      visible: opacity > 0
     }
 
     // Horizontal: icon, text, "2/4", each in a fixed slot so the pill keeps
@@ -351,8 +483,8 @@ Panel {
     // Slide the content in from the side it came from.
     ParallelAnimation {
       id: pillSwap
-      NumberAnimation { target: pillContent; property: "anchors.horizontalCenterOffset"; from: root.slideFrom * Style.space(14); to: 0; duration: 200; easing.type: Easing.OutCubic }
-      NumberAnimation { target: pillContent; property: "opacity"; from: 0; to: 1; duration: 200 }
+      NumberAnimation { target: pillContent; property: "anchors.horizontalCenterOffset"; from: root.slideFrom * Style.space(18); to: 0; duration: 300; easing.type: Easing.OutQuint }
+      NumberAnimation { target: pillContent; property: "opacity"; from: 0; to: 1; duration: 220; easing.type: Easing.OutCubic }
     }
   }
 
@@ -392,8 +524,9 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     borderSpec: root.popupBorderSpec
-    contentWidth: popup.fittedContentWidth(Style.space(360))
-    contentHeight: popup.fittedContentHeight(root.settingsOpen ? settingsView.implicitHeight : column.implicitHeight)
+    // From the pill's size to the full card (see `reveal`).
+    contentWidth: Math.round(pill.width + (root.popupFullWidth - pill.width) * root.reveal)
+    contentHeight: Math.round(pill.height + (root.popupFullHeight - pill.height) * root.reveal)
 
     // Cover-tinted background: fills the card inside its border (the content
     // area plus the padding around it), fading from the tint at the top to
@@ -421,329 +554,287 @@ Panel {
       }
     }
 
-    PanelKeyCatcher {
-      id: keyCatcher
+    // The content shows only as far as the card has unfolded.
+    Item {
       anchors.fill: parent
-      blocked: root.settingsOpen && settingsView.editing
+      clip: true
 
-      onMoveRequested: function(dx, dy) {
-        if (!root.settingsOpen && dx !== 0 && root.service) root.service.step(dx)
-      }
-      onTabRequested: function(direction) {
-        if (root.settingsOpen) settingsView.cycleTab(direction)
-        else if (root.service) root.service.step(direction)
-      }
-      onActivateRequested: {
-        if (!root.settingsOpen && root.focused && root.service) root.service.primary(root.focused.id)
-      }
-      onDeleteRequested: {
-        if (!root.settingsOpen && root.focused && root.service) root.service.dismiss(root.focused.id)
-      }
-      onCloseRequested: { if (root.settingsOpen) root.settingsOpen = false; else root.close() }
-      onTextKey: function(t) {
-        if (t === "q" || t === "Q") { if (root.settingsOpen) root.settingsOpen = false; else root.close(); return }
-        if (t === "c" || t === "C") { root.settingsOpen = !root.settingsOpen; return }
-        if (root.settingsOpen || !root.service || !root.quickStartShown) return
-        var n = parseInt(t, 10)
-        if (n >= 1 && n <= root.presets.length) root.service.startTimer(root.presets[n - 1])
-        else if ((t === "s" || t === "S") && root.prefs.quickStartExtras.indexOf("stopwatch") !== -1) root.service.startStopwatch()
-        else if ((t === "p" || t === "P") && root.prefs.quickStartExtras.indexOf("pomodoro") !== -1) root.service.startPomodoro()
-      }
+      PanelKeyCatcher {
+        id: keyCatcher
+        // Laid out at the full size from the start, so nothing reflows while
+        // the card unfolds; centered, and against the bar's side.
+        width: root.popupFullWidth - root.popupInsetW
+        height: root.popupFullHeight - popup.verticalContentInset
+        x: Math.round((parent.width - width) / 2)
+        y: root.barPos === "bottom" ? parent.height - height
+          : (root.barPos === "left" || root.barPos === "right" ? Math.round((parent.height - height) / 2) : 0)
+        blocked: root.settingsOpen && settingsView.editing
 
-      Flickable {
-        id: settingsFlick
-        anchors.fill: parent
-        visible: root.settingsOpen
-        contentWidth: width
-        contentHeight: settingsView.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-
-        AdvancedSettings {
-          id: settingsView
-          width: settingsFlick.width
-          prefs: root.prefs
-          foreground: root.popupFg
-          fontFamily: root.family
-          onChanged: function(name, value) { root.setPref(name, value) }
-          onResetRequested: root.resetPrefs()
-          // Each tab starts at its top.
-          onTabChanged: settingsFlick.contentY = 0
-          weatherWidgetState: root.service ? root.service.weatherWidgetState : ""
-          indicatorsState: root.service ? root.service.indicatorsState : ""
-          onIndicatorsRequested: function(replace) { if (root.service) root.service.setIndicators(replace) }
-          onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
-          onBackRequested: root.settingsOpen = false
+        onMoveRequested: function(dx, dy) {
+          if (!root.settingsOpen && dx !== 0 && root.service) root.service.step(dx)
         }
-      }
-
-      Column {
-        id: column
-        visible: !root.settingsOpen
-        anchors.fill: parent
-        spacing: Style.space(10)
-
-        // ‹  • • ●  ›                         ⚙
-        Item {
-          width: parent.width
-          height: Math.max(prevButton.implicitHeight, gearButton.implicitHeight)
-
-          Button {
-            id: prevButton
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            iconText: "\u{f0141}"
-            foreground: root.popupFg
-            enabled: root.count > 1
-            opacity: enabled ? 1 : 0.35
-            tooltipText: "Previous (←)"
-            onClicked: if (root.service) root.service.step(-1)
-          }
-
-          Item {
-            anchors.left: prevButton.right
-            anchors.right: nextButton.left
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-
-            Row {
-              id: dots
-              anchors.centerIn: parent
-              spacing: Style.space(6)
-
-              Repeater {
-                model: root.activities
-
-                Rectangle {
-                  required property var modelData
-                  required property int index
-                  readonly property bool current: index === root.focusIndex
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: current ? Style.space(18) : Style.space(7)
-                  height: Style.space(7)
-                  radius: height / 2
-                  color: current ? root.accentFor(modelData) : Util.alpha(root.popupFg, 0.3)
-
-                  Behavior on width { NumberAnimation { duration: 160 } }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -Style.space(4)
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: if (root.service) root.service.focusOn(parent.modelData.id)
-                  }
-                }
-              }
-            }
-          }
-
-          Button {
-            id: nextButton
-            anchors.right: gearButton.left
-            anchors.verticalCenter: parent.verticalCenter
-            iconText: "\u{f0142}"
-            foreground: root.popupFg
-            enabled: root.count > 1
-            opacity: enabled ? 1 : 0.35
-            tooltipText: "Next (→)"
-            onClicked: if (root.service) root.service.step(1)
-          }
-
-          Button {
-            id: gearButton
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            iconText: "\u{f0493}"
-            foreground: root.popupFg
-            tooltipText: "Options (c)"
-            onClicked: root.settingsOpen = true
-          }
+        onTabRequested: function(direction) {
+          if (root.settingsOpen) settingsView.cycleTab(direction)
+          else if (root.service) root.service.step(direction)
+        }
+        onActivateRequested: {
+          if (!root.settingsOpen && root.focused && root.service) root.service.primary(root.focused.id)
+        }
+        onDeleteRequested: {
+          if (!root.settingsOpen && root.focused && root.service) root.service.dismiss(root.focused.id)
+        }
+        onCloseRequested: { if (root.settingsOpen) root.settingsOpen = false; else root.close() }
+        onTextKey: function(t) {
+          if (t === "q" || t === "Q") { if (root.settingsOpen) root.settingsOpen = false; else root.close(); return }
+          if (t === "c" || t === "C") { root.settingsOpen = !root.settingsOpen; return }
+          if (root.settingsOpen || !root.service || !root.quickStartShown) return
+          var n = parseInt(t, 10)
+          if (n >= 1 && n <= root.presets.length) root.service.startTimer(root.presets[n - 1])
+          else if ((t === "s" || t === "S") && root.prefs.quickStartExtras.indexOf("stopwatch") !== -1) root.service.startStopwatch()
+          else if ((t === "p" || t === "P") && root.prefs.quickStartExtras.indexOf("pomodoro") !== -1) root.service.startPomodoro()
         }
 
-        // --- the focused activity's card ---
-        Item {
-          id: cardHolder
-          width: parent.width
-          height: root.focused ? card.implicitHeight : emptyCard.implicitHeight
+        Flickable {
+          id: settingsFlick
+          anchors.fill: parent
+          transform: Translate { id: settingsShift }
+          visible: root.settingsOpen
+          contentWidth: width
+          contentHeight: settingsView.implicitHeight
           clip: true
+          boundsBehavior: Flickable.StopAtBounds
 
-          Column {
-            id: card
+          AdvancedSettings {
+            id: settingsView
+            width: settingsFlick.width
+            prefs: root.prefs
+            foreground: root.popupFg
+            fontFamily: root.family
+            onChanged: function(name, value) { root.setPref(name, value) }
+            onResetRequested: root.resetPrefs()
+            // Each tab starts at its top.
+            onTabChanged: settingsFlick.contentY = 0
+            weatherWidgetState: root.service ? root.service.weatherWidgetState : ""
+            indicatorsState: root.service ? root.service.indicatorsState : ""
+            onIndicatorsRequested: function(replace) { if (root.service) root.service.setIndicators(replace) }
+            onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
+            onBackRequested: root.settingsOpen = false
+          }
+        }
+
+        Column {
+          id: column
+          visible: !root.settingsOpen
+          anchors.fill: parent
+          transform: Translate { id: columnShift }
+          spacing: Style.space(10)
+
+          // ‹  • • ●  ›                         ⚙
+          Item {
             width: parent.width
-            visible: root.focused !== null
-            spacing: Style.space(10)
+            opacity: root.stage(0)
+            transform: Translate { x: root.enterShiftX(0); y: root.enterShiftY(0) }
+            height: Math.max(prevButton.implicitHeight, gearButton.implicitHeight)
 
-            WeatherCard {
-              width: parent.width
-              visible: root.isWeather && !!root.focused.weather
-              weather: root.isWeather ? root.focused.weather : null
-              extraLines: root.isWeather ? root.focused.details : []
-              foreground: root.popupFg
-              accent: root.accentFor(root.focused)
-              fontFamily: root.family
-            }
-
-            // One click to take over from Omarchy's weather widget (opt-in).
             Button {
-              visible: root.isWeather && !!root.service && root.service.weatherWidgetState === "native"
-              iconText: "\u{f0599}"
-              text: "Use instead of the weather widget"
+              id: prevButton
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "\u{f0141}"
               foreground: root.popupFg
-              accent: root.accentFor(root.focused)
-              tooltipText: "Turns Omarchy's weather widget off and points SUPER+CTRL+ALT+W here (undo in the options)"
-              onClicked: root.service.setWeatherWidget(true)
+              enabled: root.count > 1
+              opacity: enabled ? 1 : 0.35
+              tooltipText: "Previous (←)"
+              onClicked: if (root.service) root.service.step(-1)
             }
 
-            Row {
-              width: parent.width
-              spacing: Style.space(12)
-              visible: !(root.isWeather && !!root.focused.weather)
-
-              Rectangle {
-                id: cardIcon
-                // Media with cover art gets the cover, like omarchy-plugin-media;
-                // a screenshot gets its thumbnail.
-                readonly property bool hasCover: root.cardImage !== ""
-                width: Style.space(root.shotUrl !== "" ? 96 : (hasCover ? 64 : 48))
-                height: width
-                radius: hasCover ? Style.spacing.labelGap : width / 2
-                color: Util.alpha(root.accentFor(root.focused), 0.2)
-
-                Image {
-                  anchors.fill: parent
-                  anchors.margins: Style.space(2)
-                  fillMode: Image.PreserveAspectCrop
-                  asynchronous: true
-                  sourceSize.width: 256
-                  sourceSize.height: 256
-                  source: root.cardImage
-                  visible: cardIcon.hasCover && status === Image.Ready
-                }
-
-                Text {
-                  visible: !cardIcon.hasCover
-                  anchors.centerIn: parent
-                  textFormat: Text.PlainText
-                  text: root.focused ? root.focused.icon : ""
-                  color: root.focused && root.focused.urgent ? Color.urgent : root.popupFg
-                  font.family: root.family
-                  font.pixelSize: Style.font.display
-                }
-              }
-
-              Column {
-                width: parent.width - cardIcon.width - parent.spacing
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(3)
-
-                Text {
-                  width: parent.width
-                  textFormat: Text.PlainText
-                  text: root.focused ? root.focused.title : ""
-                  color: root.popupFg
-                  font.family: root.family
-                  font.pixelSize: Style.font.subtitle
-                  font.bold: true
-                  elide: Text.ElideRight
-                }
-
-                Text {
-                  width: parent.width
-                  visible: text !== ""
-                  textFormat: Text.PlainText
-                  text: root.focused ? root.focused.subtitle : ""
-                  color: Qt.darker(root.popupFg, 1.35)
-                  font.family: root.family
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideRight
-                }
-              }
-            }
-
-            // Media you can seek: click or drag along the bar.
             Item {
-              id: progressBar
+              anchors.left: prevButton.right
+              anchors.right: nextButton.left
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+
+              Row {
+                id: dots
+                anchors.centerIn: parent
+                spacing: Style.space(6)
+
+                Repeater {
+                  model: root.activities
+
+                  Rectangle {
+                    required property var modelData
+                    required property int index
+                    readonly property bool current: index === root.focusIndex
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: current ? Style.space(18) : Style.space(7)
+                    height: Style.space(7)
+                    radius: height / 2
+                    color: current ? root.accentFor(modelData) : Util.alpha(root.popupFg, 0.3)
+
+                    Behavior on width {
+                      enabled: root.motion
+                      NumberAnimation { duration: 260; easing.type: Easing.OutQuint }
+                    }
+                    Behavior on color {
+                      enabled: root.motion
+                      ColorAnimation { duration: 200 }
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      anchors.margins: -Style.space(4)
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: if (root.service) root.service.focusOn(parent.modelData.id)
+                    }
+                  }
+                }
+              }
+            }
+
+            Button {
+              id: nextButton
+              anchors.right: gearButton.left
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "\u{f0142}"
+              foreground: root.popupFg
+              enabled: root.count > 1
+              opacity: enabled ? 1 : 0.35
+              tooltipText: "Next (→)"
+              onClicked: if (root.service) root.service.step(1)
+            }
+
+            Button {
+              id: gearButton
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "\u{f0493}"
+              foreground: root.popupFg
+              tooltipText: "Options (c)"
+              onClicked: root.settingsOpen = true
+            }
+          }
+
+          // --- the focused activity's card ---
+          Item {
+            id: cardHolder
+            width: parent.width
+            height: root.focused ? card.implicitHeight : emptyCard.implicitHeight
+            clip: true
+            opacity: root.stage(1)
+            transform: Translate { x: root.enterShiftX(1); y: root.enterShiftY(1) }
+
+            // Another card, another height: the rest of the popup follows.
+            Behavior on height {
+              enabled: root.motion && root.opened && root.reveal === 1
+              NumberAnimation { id: cardHeightAnim; duration: 300; easing.type: Easing.OutQuint }
+            }
+
+            Column {
+              id: card
               width: parent.width
-              visible: root.focused !== null && root.focused.progress >= 0
-              height: seekable ? Style.space(16) : Style.space(4)
+              visible: root.focused !== null
+              spacing: Style.space(10)
 
-              readonly property bool seekable: root.focused !== null && root.focused.seekable === true
-              property bool dragging: false
-              property real dragValue: 0
-              readonly property real shownValue: dragging ? dragValue
-                : (root.focused ? Math.max(0, Math.min(1, root.focused.progress)) : 0)
-
-              Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
+              WeatherCard {
                 width: parent.width
-                height: Style.space(4)
-                radius: height / 2
-                color: Util.alpha(root.popupFg, 0.15)
+                visible: root.isWeather && !!root.focused.weather
+                weather: root.isWeather ? root.focused.weather : null
+                extraLines: root.isWeather ? root.focused.details : []
+                foreground: root.popupFg
+                accent: root.accentFor(root.focused)
+                fontFamily: root.family
+              }
+
+              // One click to take over from Omarchy's weather widget (opt-in).
+              Button {
+                visible: root.isWeather && !!root.service && root.service.weatherWidgetState === "native"
+                iconText: "\u{f0599}"
+                text: "Use instead of the weather widget"
+                foreground: root.popupFg
+                accent: root.accentFor(root.focused)
+                tooltipText: "Turns Omarchy's weather widget off and points SUPER+CTRL+ALT+W here (undo in the options)"
+                onClicked: root.service.setWeatherWidget(true)
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.space(12)
+                visible: !(root.isWeather && !!root.focused.weather)
 
                 Rectangle {
-                  height: parent.height
-                  radius: parent.radius
-                  width: parent.width * progressBar.shownValue
-                  color: root.accentFor(root.focused)
-                  Behavior on width {
-                    enabled: !progressBar.dragging
-                    NumberAnimation { duration: 300 }
+                  id: cardIcon
+                  // Media with cover art gets the cover, like omarchy-plugin-media;
+                  // a screenshot gets its thumbnail.
+                  readonly property bool hasCover: root.cardImage !== ""
+                  width: Style.space(root.shotUrl !== "" ? 96 : (hasCover ? 64 : 48))
+                  height: width
+                  radius: hasCover ? Style.spacing.labelGap : width / 2
+                  color: Util.alpha(root.accentFor(root.focused), 0.2)
+
+                  Image {
+                    anchors.fill: parent
+                    anchors.margins: Style.space(2)
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    sourceSize.width: 256
+                    sourceSize.height: 256
+                    source: root.cardImage
+                    visible: cardIcon.hasCover && status === Image.Ready
+                  }
+
+                  Text {
+                    visible: !cardIcon.hasCover
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: root.focused ? root.focused.icon : ""
+                    color: root.focused && root.focused.urgent ? Color.urgent : root.popupFg
+                    font.family: root.family
+                    font.pixelSize: Style.font.display
+                  }
+                }
+
+                Column {
+                  width: parent.width - cardIcon.width - parent.spacing
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(3)
+
+                  Text {
+                    width: parent.width
+                    textFormat: Text.PlainText
+                    text: root.focused ? root.focused.title : ""
+                    color: root.popupFg
+                    font.family: root.family
+                    font.pixelSize: Style.font.subtitle
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+
+                  Text {
+                    width: parent.width
+                    visible: text !== ""
+                    textFormat: Text.PlainText
+                    text: root.focused ? root.focused.subtitle : ""
+                    color: Qt.darker(root.popupFg, 1.35)
+                    font.family: root.family
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
                   }
                 }
               }
 
-              Rectangle {
-                visible: progressBar.seekable
-                readonly property real size: Style.space(progressBar.dragging ? 14 : 10)
-                width: size
-                height: size
-                radius: size / 2
-                anchors.verticalCenter: parent.verticalCenter
-                x: Math.max(0, Math.min(progressBar.width - size, progressBar.width * progressBar.shownValue - size / 2))
-                color: root.accentFor(root.focused)
-              }
-
-              MouseArea {
-                anchors.fill: parent
-                enabled: progressBar.seekable
-                cursorShape: Qt.PointingHandCursor
-                function valueAt(x) { return Math.max(0, Math.min(1, x / progressBar.width)) }
-                onPressed: function(mouse) { progressBar.dragging = true; progressBar.dragValue = valueAt(mouse.x) }
-                onPositionChanged: function(mouse) { if (progressBar.dragging) progressBar.dragValue = valueAt(mouse.x) }
-                onReleased: {
-                  if (progressBar.dragging && root.service && root.focused) root.service.seek(root.focused.id, progressBar.dragValue)
-                  progressBar.dragging = false
-                }
-                onCanceled: progressBar.dragging = false
-              }
-            }
-
-            // Player volume (media cards whose player reports one).
-            Row {
-              id: volumeRow
-              width: parent.width
-              spacing: Style.space(8)
-              visible: root.focused !== null && root.focused.module === "media" && root.focused.volume >= 0
-
-              property bool dragging: false
-              property real dragValue: 0
-              readonly property real level: dragging ? dragValue : (root.focused && root.focused.volume >= 0 ? root.focused.volume : 0)
-
-              Text {
-                id: volumeIcon
-                anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.PlainText
-                text: volumeRow.level <= 0 ? "\u{f0581}" : (volumeRow.level < 0.5 ? "\u{f0580}" : "\u{f057e}")
-                color: root.popupFg
-                font.family: root.family
-                font.pixelSize: Style.font.body
-              }
-
+              // Media you can seek: click or drag along the bar.
               Item {
-                id: volumeTrack
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - volumeIcon.width - volumePct.width - parent.spacing * 2
-                height: Style.space(14)
+                id: progressBar
+                width: parent.width
+                visible: root.focused !== null && root.focused.progress >= 0
+                height: seekable ? Style.space(16) : Style.space(4)
+
+                readonly property bool seekable: root.focused !== null && root.focused.seekable === true
+                property bool dragging: false
+                property real dragValue: 0
+                readonly property real shownValue: dragging ? dragValue
+                  : (root.focused ? Math.max(0, Math.min(1, root.focused.progress)) : 0)
 
                 Rectangle {
                   anchors.verticalCenter: parent.verticalCenter
@@ -755,239 +846,329 @@ Panel {
                   Rectangle {
                     height: parent.height
                     radius: parent.radius
-                    width: parent.width * volumeRow.level
+                    width: parent.width * progressBar.shownValue
                     color: root.accentFor(root.focused)
+                    Behavior on width {
+                      enabled: !progressBar.dragging
+                      NumberAnimation { duration: 300 }
+                    }
                   }
+                }
+
+                Rectangle {
+                  visible: progressBar.seekable
+                  readonly property real size: Style.space(progressBar.dragging ? 14 : 10)
+                  width: size
+                  height: size
+                  radius: size / 2
+                  anchors.verticalCenter: parent.verticalCenter
+                  x: Math.max(0, Math.min(progressBar.width - size, progressBar.width * progressBar.shownValue - size / 2))
+                  color: root.accentFor(root.focused)
                 }
 
                 MouseArea {
                   anchors.fill: parent
+                  enabled: progressBar.seekable
                   cursorShape: Qt.PointingHandCursor
-                  function set(x) {
-                    volumeRow.dragValue = Math.max(0, Math.min(1, x / volumeTrack.width))
-                    if (root.service && root.focused) root.service.setVolume(root.focused.id, volumeRow.dragValue)
+                  function valueAt(x) { return Math.max(0, Math.min(1, x / progressBar.width)) }
+                  onPressed: function(mouse) { progressBar.dragging = true; progressBar.dragValue = valueAt(mouse.x) }
+                  onPositionChanged: function(mouse) { if (progressBar.dragging) progressBar.dragValue = valueAt(mouse.x) }
+                  onReleased: {
+                    if (progressBar.dragging && root.service && root.focused) root.service.seek(root.focused.id, progressBar.dragValue)
+                    progressBar.dragging = false
                   }
-                  onPressed: function(mouse) { volumeRow.dragging = true; set(mouse.x) }
-                  onPositionChanged: function(mouse) { if (volumeRow.dragging) set(mouse.x) }
-                  onReleased: volumeRow.dragging = false
-                  onCanceled: volumeRow.dragging = false
-                  onWheel: function(wheel) {
-                    if (!root.service || !root.focused) return
-                    root.service.setVolume(root.focused.id, volumeRow.level + (wheel.angleDelta.y > 0 ? 0.05 : -0.05))
+                  onCanceled: progressBar.dragging = false
+                }
+              }
+
+              // Player volume (media cards whose player reports one).
+              Row {
+                id: volumeRow
+                width: parent.width
+                spacing: Style.space(8)
+                visible: root.focused !== null && root.focused.module === "media" && root.focused.volume >= 0
+
+                property bool dragging: false
+                property real dragValue: 0
+                readonly property real level: dragging ? dragValue : (root.focused && root.focused.volume >= 0 ? root.focused.volume : 0)
+
+                Text {
+                  id: volumeIcon
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  text: volumeRow.level <= 0 ? "\u{f0581}" : (volumeRow.level < 0.5 ? "\u{f0580}" : "\u{f057e}")
+                  color: root.popupFg
+                  font.family: root.family
+                  font.pixelSize: Style.font.body
+                }
+
+                Item {
+                  id: volumeTrack
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: parent.width - volumeIcon.width - volumePct.width - parent.spacing * 2
+                  height: Style.space(14)
+
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    height: Style.space(4)
+                    radius: height / 2
+                    color: Util.alpha(root.popupFg, 0.15)
+
+                    Rectangle {
+                      height: parent.height
+                      radius: parent.radius
+                      width: parent.width * volumeRow.level
+                      color: root.accentFor(root.focused)
+                    }
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    function set(x) {
+                      volumeRow.dragValue = Math.max(0, Math.min(1, x / volumeTrack.width))
+                      if (root.service && root.focused) root.service.setVolume(root.focused.id, volumeRow.dragValue)
+                    }
+                    onPressed: function(mouse) { volumeRow.dragging = true; set(mouse.x) }
+                    onPositionChanged: function(mouse) { if (volumeRow.dragging) set(mouse.x) }
+                    onReleased: volumeRow.dragging = false
+                    onCanceled: volumeRow.dragging = false
+                    onWheel: function(wheel) {
+                      if (!root.service || !root.focused) return
+                      root.service.setVolume(root.focused.id, volumeRow.level + (wheel.angleDelta.y > 0 ? 0.05 : -0.05))
+                    }
+                  }
+                }
+
+                Text {
+                  id: volumePct
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(34)
+                  horizontalAlignment: Text.AlignRight
+                  textFormat: Text.PlainText
+                  text: Math.round(volumeRow.level * 100) + "%"
+                  color: Qt.darker(root.popupFg, 1.3)
+                  font.family: root.family
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(2)
+                visible: root.focused !== null && root.focused.details.length > 0 && !root.isWeather
+
+                Repeater {
+                  model: root.focused ? root.focused.details : []
+
+                  Text {
+                    required property var modelData
+                    width: parent.width
+                    textFormat: Text.PlainText
+                    text: modelData
+                    color: Qt.darker(root.popupFg, 1.2)
+                    font.family: root.family
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
                   }
                 }
               }
 
-              Text {
-                id: volumePct
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(34)
-                horizontalAlignment: Text.AlignRight
-                textFormat: Text.PlainText
-                text: Math.round(volumeRow.level * 100) + "%"
-                color: Qt.darker(root.popupFg, 1.3)
-                font.family: root.family
-                font.pixelSize: Style.font.caption
+              Flow {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Repeater {
+                  model: root.focused ? root.focused.actions : []
+
+                  Button {
+                    required property var modelData
+                    required property int index
+                    iconText: modelData.icon
+                    text: modelData.label
+                    foreground: root.popupFg
+                    accent: root.accentFor(root.focused)
+                    selected: index === 0
+                    tooltipText: index === 0 ? "Enter / middle click" : ""
+                    onClicked: if (root.service && root.focused) root.service.act(root.focused.id, modelData.id)
+                  }
+                }
+
+                // Pushed activities already have Dismiss as their action.
+                Button {
+                  visible: root.focused !== null && root.focused.module !== "push" && !root.focused.ambient
+                  iconText: "\u{f0209}"
+                  foreground: root.popupFg
+                  tooltipText: "Hide until it changes (x / right click)"
+                  onClicked: if (root.service && root.focused) root.service.dismiss(root.focused.id)
+                }
+              }
+
+              ParallelAnimation {
+                id: cardSwap
+                NumberAnimation { target: card; property: "x"; from: root.slideFrom * Style.space(36); to: 0; duration: 340; easing.type: Easing.OutQuint }
+                NumberAnimation { target: card; property: "opacity"; from: 0; to: 1; duration: 220; easing.type: Easing.OutCubic }
+                NumberAnimation { target: card; property: "scale"; from: 0.96; to: 1; duration: 340; easing.type: Easing.OutQuint }
               }
             }
 
             Column {
+              id: emptyCard
               width: parent.width
-              spacing: Style.space(2)
-              visible: root.focused !== null && root.focused.details.length > 0 && !root.isWeather
+              visible: root.focused === null
+              spacing: Style.space(4)
 
-              Repeater {
-                model: root.focused ? root.focused.details : []
-
-                Text {
-                  required property var modelData
-                  width: parent.width
-                  textFormat: Text.PlainText
-                  text: modelData
-                  color: Qt.darker(root.popupFg, 1.2)
-                  font.family: root.family
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                }
-              }
-            }
-
-            Flow {
-              width: parent.width
-              spacing: Style.space(6)
-
-              Repeater {
-                model: root.focused ? root.focused.actions : []
-
-                Button {
-                  required property var modelData
-                  required property int index
-                  iconText: modelData.icon
-                  text: modelData.label
-                  foreground: root.popupFg
-                  accent: root.accentFor(root.focused)
-                  selected: index === 0
-                  tooltipText: index === 0 ? "Enter / middle click" : ""
-                  onClicked: if (root.service && root.focused) root.service.act(root.focused.id, modelData.id)
-                }
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: "Nothing going on"
+                color: root.popupFg
+                font.family: root.family
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
               }
 
-              // Pushed activities already have Dismiss as their action.
-              Button {
-                visible: root.focused !== null && root.focused.module !== "push" && !root.focused.ambient
-                iconText: "\u{f0209}"
-                foreground: root.popupFg
-                tooltipText: "Hide until it changes (x / right click)"
-                onClicked: if (root.service && root.focused) root.service.dismiss(root.focused.id)
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                wrapMode: Text.WordWrap
+                text: "Media, timers, reminders, screen recording, camera/mic use and more show up here while they are active."
+                color: Qt.darker(root.popupFg, 1.4)
+                font.family: root.family
+                font.pixelSize: Style.font.caption
               }
-            }
-
-            ParallelAnimation {
-              id: cardSwap
-              NumberAnimation { target: card; property: "x"; from: root.slideFrom * Style.space(28); to: 0; duration: 220; easing.type: Easing.OutCubic }
-              NumberAnimation { target: card; property: "opacity"; from: 0; to: 1; duration: 220 }
             }
           }
 
-          Column {
-            id: emptyCard
+          PanelSeparator {
+            foreground: root.popupFg
+            opacity: root.stage(2)
+            transform: Translate { x: root.enterShiftX(2); y: root.enterShiftY(2) }
+          }
+
+          // Everything Omarchy's indicators widget does, both ways: lit when on.
+          PanelSectionHeader {
+            text: "QUICK TOGGLES"
+            foreground: root.popupFg
+            fontFamily: root.family
+            visible: root.quickTogglesShown
+            opacity: root.stage(2)
+            transform: Translate { x: root.enterShiftX(2); y: root.enterShiftY(2) }
+          }
+
+          Flow {
             width: parent.width
-            visible: root.focused === null
-            spacing: Style.space(4)
+            spacing: Style.space(6)
+            visible: root.quickTogglesShown
+            opacity: root.stage(2)
+            transform: Translate { x: root.enterShiftX(2); y: root.enterShiftY(2) }
 
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: "Nothing going on"
-              color: root.popupFg
-              font.family: root.family
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-            }
+            Repeater {
+              model: [
+                { id: "dnd", icon: "\u{f009b}", label: "DND", tip: "Do Not Disturb" },
+                { id: "nightlight", icon: "\u{f050e}", label: "Night", tip: "Night light" },
+                { id: "stayAwake", icon: "\u{f0176}", label: "Awake", tip: "Stay awake (no idle lock or screensaver)" },
+                { id: "record", icon: "\u{f0ec2}", label: "Record", tip: "Screen recording: start (opens the menu) or stop" },
+                { id: "reminder", icon: "\u{f088c}", label: "Remind", tip: "Set a reminder" },
+                { id: "dictation", icon: "\u{f036c}", label: "Dictate", tip: "Dictation (voxtype) settings" }
+              ]
 
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              wrapMode: Text.WordWrap
-              text: "Media, timers, reminders, screen recording, camera/mic use and more show up here while they are active."
-              color: Qt.darker(root.popupFg, 1.4)
-              font.family: root.family
-              font.pixelSize: Style.font.caption
-            }
-          }
-        }
-
-        PanelSeparator { foreground: root.popupFg }
-
-        // Everything Omarchy's indicators widget does, both ways: lit when on.
-        PanelSectionHeader {
-          text: "QUICK TOGGLES"
-          foreground: root.popupFg
-          fontFamily: root.family
-          visible: root.quickTogglesShown
-        }
-
-        Flow {
-          width: parent.width
-          spacing: Style.space(6)
-          visible: root.quickTogglesShown
-
-          Repeater {
-            model: [
-              { id: "dnd", icon: "\u{f009b}", label: "DND", tip: "Do Not Disturb" },
-              { id: "nightlight", icon: "\u{f050e}", label: "Night", tip: "Night light" },
-              { id: "stayAwake", icon: "\u{f0176}", label: "Awake", tip: "Stay awake (no idle lock or screensaver)" },
-              { id: "record", icon: "\u{f0ec2}", label: "Record", tip: "Screen recording: start (opens the menu) or stop" },
-              { id: "reminder", icon: "\u{f088c}", label: "Remind", tip: "Set a reminder" },
-              { id: "dictation", icon: "\u{f036c}", label: "Dictate", tip: "Dictation (voxtype) settings" }
-            ]
-
-            Button {
-              required property var modelData
-              readonly property bool on: root.service !== null && root.service.quickStates[modelData.id] === true
-              visible: root.prefs.quickToggles.indexOf(modelData.id) !== -1
-                && (modelData.id !== "dictation" || (root.service !== null && root.service.hasVoxtype))
-              iconText: modelData.icon
-              text: modelData.label
-              foreground: root.popupFg
-              accent: modelData.id === "record" && on ? Color.urgent : Color.accent
-              selected: on
-              tooltipText: modelData.tip + (on ? " (on)" : "")
-              onClicked: {
-                if (!root.service) return
-                // Recording, reminders and dictation open their own UI.
-                if (root.service.quickToggle(modelData.id)) root.close()
+              Button {
+                required property var modelData
+                readonly property bool on: root.service !== null && root.service.quickStates[modelData.id] === true
+                visible: root.prefs.quickToggles.indexOf(modelData.id) !== -1
+                  && (modelData.id !== "dictation" || (root.service !== null && root.service.hasVoxtype))
+                iconText: modelData.icon
+                text: modelData.label
+                foreground: root.popupFg
+                accent: modelData.id === "record" && on ? Color.urgent : Color.accent
+                selected: on
+                tooltipText: modelData.tip + (on ? " (on)" : "")
+                onClicked: {
+                  if (!root.service) return
+                  // Recording, reminders and dictation open their own UI.
+                  if (root.service.quickToggle(modelData.id)) root.close()
+                }
               }
             }
           }
-        }
 
-        // One click to take over from Omarchy's indicators widget (opt-in).
-        Button {
-          visible: root.quickTogglesShown && root.service !== null && root.service.indicatorsState === "native"
-          iconText: "\u{f009b}"
-          text: "Use instead of Omarchy's indicators"
-          foreground: Qt.darker(root.popupFg, 1.2)
-          tooltipText: "Turns Omarchy's indicators widget off; these toggles do the same (undo in the options)"
-          onClicked: root.service.setIndicators(true)
-        }
+          // One click to take over from Omarchy's indicators widget (opt-in).
+          Button {
+            visible: root.quickTogglesShown && root.service !== null && root.service.indicatorsState === "native"
+            iconText: "\u{f009b}"
+            text: "Use instead of Omarchy's indicators"
+            foreground: Qt.darker(root.popupFg, 1.2)
+            tooltipText: "Turns Omarchy's indicators widget off; these toggles do the same (undo in the options)"
+            onClicked: root.service.setIndicators(true)
+            opacity: root.stage(2)
+            transform: Translate { x: root.enterShiftX(2); y: root.enterShiftY(2) }
+          }
 
-        PanelSeparator {
-          foreground: root.popupFg
-          visible: root.quickTogglesShown && root.quickStartShown
-        }
+          PanelSeparator {
+            foreground: root.popupFg
+            visible: root.quickTogglesShown && root.quickStartShown
+            opacity: root.stage(3)
+            transform: Translate { x: root.enterShiftX(3); y: root.enterShiftY(3) }
+          }
 
-        PanelSectionHeader {
-          text: "QUICK START"
-          foreground: root.popupFg
-          fontFamily: root.family
-          visible: root.quickStartShown
-        }
+          PanelSectionHeader {
+            text: "QUICK START"
+            foreground: root.popupFg
+            fontFamily: root.family
+            visible: root.quickStartShown
+            opacity: root.stage(3)
+            transform: Translate { x: root.enterShiftX(3); y: root.enterShiftY(3) }
+          }
 
-        Flow {
-          width: parent.width
-          spacing: Style.space(6)
-          visible: root.quickStartShown
+          Flow {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.quickStartShown
+            opacity: root.stage(3)
+            transform: Translate { x: root.enterShiftX(3); y: root.enterShiftY(3) }
 
-          Repeater {
-            model: root.presets
+            Repeater {
+              model: root.presets
+
+              Button {
+                required property var modelData
+                required property int index
+                iconText: "\u{f13ab}"
+                text: Model.presetLabel(modelData)
+                foreground: root.popupFg
+                tooltipText: "Start a " + Model.presetLabel(modelData) + " timer (" + (index + 1) + ")"
+                onClicked: if (root.service) root.service.startTimer(modelData)
+              }
+            }
 
             Button {
-              required property var modelData
-              required property int index
-              iconText: "\u{f13ab}"
-              text: Model.presetLabel(modelData)
+              visible: root.prefs.quickStartExtras.indexOf("stopwatch") !== -1
+              iconText: "\u{f520}"
+              text: "Stopwatch"
               foreground: root.popupFg
-              tooltipText: "Start a " + Model.presetLabel(modelData) + " timer (" + (index + 1) + ")"
-              onClicked: if (root.service) root.service.startTimer(modelData)
+              tooltipText: "Start the stopwatch (s)"
+              onClicked: if (root.service) root.service.startStopwatch()
             }
-          }
 
-          Button {
-            visible: root.prefs.quickStartExtras.indexOf("stopwatch") !== -1
-            iconText: "\u{f520}"
-            text: "Stopwatch"
-            foreground: root.popupFg
-            tooltipText: "Start the stopwatch (s)"
-            onClicked: if (root.service) root.service.startStopwatch()
-          }
+            Button {
+              visible: root.prefs.quickStartExtras.indexOf("pomodoro") !== -1
+              iconText: "\u{f04fe}"
+              text: "Pomodoro"
+              foreground: root.popupFg
+              tooltipText: "Focus " + root.prefs.pomodoroFocus + " min, break " + root.prefs.pomodoroBreak + " min (p)"
+              onClicked: if (root.service) root.service.startPomodoro()
+            }
 
-          Button {
-            visible: root.prefs.quickStartExtras.indexOf("pomodoro") !== -1
-            iconText: "\u{f04fe}"
-            text: "Pomodoro"
-            foreground: root.popupFg
-            tooltipText: "Focus " + root.prefs.pomodoroFocus + " min, break " + root.prefs.pomodoroBreak + " min (p)"
-            onClicked: if (root.service) root.service.startPomodoro()
-          }
-
-          Button {
-            visible: root.prefs.moduleMedia && root.prefs.quickStartExtras.indexOf("sleep") !== -1
-            iconText: "\u{f04b2}"
-            text: "Sleep 30 min"
-            foreground: root.popupFg
-            tooltipText: "Pause the media in 30 minutes"
-            onClicked: if (root.service) root.service.startSleep(1800)
+            Button {
+              visible: root.prefs.moduleMedia && root.prefs.quickStartExtras.indexOf("sleep") !== -1
+              iconText: "\u{f04b2}"
+              text: "Sleep 30 min"
+              foreground: root.popupFg
+              tooltipText: "Pause the media in 30 minutes"
+              onClicked: if (root.service) root.service.startSleep(1800)
+            }
           }
         }
       }

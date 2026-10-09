@@ -41,6 +41,7 @@
       "weatherUnit": "auto",
       "autoFocus": true,
       "coverAccent": true,
+      "animations": true,
       "whenEmpty": "brief",
       "showProgress": true,
       "showCount": true,
@@ -159,6 +160,13 @@
         "type": "boolean",
         "label": "Dynamic colors",
         "description": "Media takes its colors from the album cover and weather from the sky: the highlight, the popup's border and a tint of its background.",
+        "defaultValue": true
+      },
+      {
+        "key": "animations",
+        "type": "boolean",
+        "label": "Animations",
+        "description": "The popup unfolds from the pill, its sections and cards slide in, and the pill pulses when something urgent comes up. Off: everything changes at once.",
         "defaultValue": true
       },
       {

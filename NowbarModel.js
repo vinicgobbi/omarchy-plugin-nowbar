@@ -1391,6 +1391,7 @@ function defaultPrefs() {
     showQuickStart: true,   // the popup's Quick start (timers, stopwatch, Pomodoro, sleep)
     quickStartItems: QUICK_START_EXTRAS.join(","),   // which extras, besides the timers
     coverAccent: true,      // media: accent color taken from the cover art
+    animations: true,       // the popup unfolds from the pill, cards and sections slide in
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
     maxWidth: 220,          // width of the text area: the pill always has this size
     timerPresets: DEFAULT_PRESETS, // quick start timers, minutes

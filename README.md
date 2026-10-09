@@ -20,6 +20,10 @@ activities, and click it for the details and controls.
   popup red.
 - **Dynamic colors:** media cards take their colors from the album cover, the
   weather card from the sky.
+- **Motion:** the popup unfolds from the pill, its sections come in one
+  after the other, cards slide in from the side you switched to, and the
+  pill pulses red a few times when something urgent comes up. One switch
+  turns it all off.
 - **Quick toggles:** Do Not Disturb, night light, stay awake, screen
   recording, reminder and dictation, on and off. They can replace Omarchy's
   indicators widget.
@@ -323,7 +327,7 @@ options, one tab at a time (Tab / Shift+Tab to switch):
   activity takes the pill.
 - **Look:** the pill's text width, scrolling or cutting long text, the
   progress line, the `2/4` marker, what it shows when idle (the weather card,
-  an empty pill, or nothing), and the dynamic colors.
+  an empty pill, or nothing), the dynamic colors, and the animations.
 - **Quick:** the two rows at the bottom of the popup. Quick toggles: show
   them or not, which ones, and replacing (or restoring) Omarchy's indicators
   widget. Quick start: show it or not, the timers (minutes, comma separated;
