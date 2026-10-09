@@ -840,6 +840,46 @@ function staleMedia(activity, pausedAt, now, minutes) {
   return now - pausedAt >= minutes * 60000
 }
 
+// --- color blending ---------------------------------------------------------
+// a -> b at t (0..1), mixed in OKLab (Björn Ottosson's), as CSS color-mix
+// does: the halfway point between opposite colors stays clean, neither the
+// muddy gray of straight RGB nor a rainbow through the hues between. a and b
+// are { r, g, b, a } in 0..1 (a QML color works); returns a Qt.rgba-like object.
+
+function srgbToLinear(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
+function linearToSrgb(c) { return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055 }
+
+function toOklab(c) {
+  var r = srgbToLinear(c.r), g = srgbToLinear(c.g), b = srgbToLinear(c.b)
+  var l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  var m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  var s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return {
+    L: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    a: 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    b: 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+  }
+}
+
+function fromOklab(o) {
+  var l = Math.pow(o.L + 0.3963377774 * o.a + 0.2158037573 * o.b, 3)
+  var m = Math.pow(o.L - 0.1055613458 * o.a - 0.0638541728 * o.b, 3)
+  var s = Math.pow(o.L - 0.0894841775 * o.a - 1.2914855480 * o.b, 3)
+  var clamp = function(x) { return Math.max(0, Math.min(1, linearToSrgb(x))) }
+  return {
+    r: clamp(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    g: clamp(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    b: clamp(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
+  }
+}
+
+function mixOklab(a, b, t) {
+  var x = toOklab(a), y = toOklab(b)
+  var c = fromOklab({ L: x.L + (y.L - x.L) * t, a: x.a + (y.a - x.a) * t, b: x.b + (y.b - x.b) * t })
+  var alpha = (a.a === undefined ? 1 : a.a) + ((b.a === undefined ? 1 : b.a) - (a.a === undefined ? 1 : a.a)) * t
+  return typeof Qt !== "undefined" ? Qt.rgba(c.r, c.g, c.b, alpha) : { r: c.r, g: c.g, b: c.b, a: alpha }
+}
+
 // --- cover art ---------------------------------------------------------------
 // Same rules as omarchy-plugin-media: the URL comes from whatever is playing.
 
@@ -1757,6 +1797,7 @@ if (typeof module !== "undefined") {
     parseWttr: parseWttr,
     weatherActivity: weatherActivity,
     nextLoop: nextLoop,
+    mixOklab: mixOklab,
     parseIgnoredPlayers: parseIgnoredPlayers,
     isIgnoredPlayer: isIgnoredPlayer,
     toggleIgnoredPlayer: toggleIgnoredPlayer,

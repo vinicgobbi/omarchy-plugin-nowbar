@@ -702,3 +702,19 @@ test("ignored players and paused media leaving the pill", () => {
   assert.equal(p.mediaPausedMinutes, 1440)
   assert.equal(M.normalizePrefs({}).mediaPausedMinutes, 15)
 })
+
+test("mixOklab: ends exact, a clean middle between opposite colors", () => {
+  const blue = { r: 0.22, g: 0.55, b: 0.95, a: 1 }
+  const orange = { r: 0.98, g: 0.45, b: 0.09, a: 1 }
+  const near = (x, y) => Math.abs(x - y) < 1e-3
+  const s = M.mixOklab(blue, orange, 0), e = M.mixOklab(blue, orange, 1)
+  assert.ok(near(s.r, blue.r) && near(s.g, blue.g) && near(s.b, blue.b))
+  assert.ok(near(e.r, orange.r) && near(e.g, orange.g) && near(e.b, orange.b))
+  // Halfway: lighter than the straight RGB average (no muddy dip), and no
+  // green showing up (no rainbow).
+  const m = M.mixOklab(blue, orange, 0.5)
+  const lum = c => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+  const rgbMid = { r: (blue.r + orange.r) / 2, g: (blue.g + orange.g) / 2, b: (blue.b + orange.b) / 2 }
+  assert.ok(lum(m) > lum(rgbMid))
+  assert.ok(m.g <= Math.max(m.r, m.b) + 0.05)
+})

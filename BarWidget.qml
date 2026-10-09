@@ -127,26 +127,101 @@ Panel {
     runAction(a)
   }
 
-  // Another track on the same player: the title slides in from the side of
-  // the change (the cover fades in by itself once loaded).
+  // Another track on the same player. In the popup, the old title slides out
+  // and fades while the new one comes in from the side of the change (the
+  // cover crossfades by itself once loaded); the pill's text slides too.
   readonly property string trackKey: isMedia ? focused.id + "\n" + focused.title + "\n" + focused.subtitle : ""
   property string lastTrackKey: ""
+  property string lastTitle: ""
+  property string lastSubtitle: ""
+  property string lastAlbum: ""
+  property string ghostTitle: ""
+  property string ghostSubtitle: ""
+  property string ghostAlbum: ""
   onTrackKeyChanged: {
     var before = lastTrackKey.split("\n")[0]
     var now = trackKey.split("\n")[0]
+    var sameplayer = now !== "" && now === before
+    ghostTitle = lastTitle
+    ghostSubtitle = lastSubtitle
+    ghostAlbum = lastAlbum
     lastTrackKey = trackKey
-    if (now !== "" && now === before && motion && opened) {
-      trackSwap.stop()
-      trackSlide.from = trackDir * Style.space(24)
-      trackSwap.start()
+    lastTitle = isMedia ? focused.title : ""
+    lastSubtitle = isMedia ? focused.subtitle : ""
+    lastAlbum = isMedia && focused.album !== focused.title ? focused.album : ""
+    if (sameplayer && motion) {
+      if (opened) {
+        trackSwap.stop()
+        ghostSlide.to = -trackDir * Style.space(36)
+        trackSlide.from = trackDir * Style.space(40)
+        trackShift.x = trackSlide.from
+        liveText.opacity = 0
+        trackSwap.start()
+      }
+      if (pillItem !== null && pillItem.id === now) {
+        slideFrom = trackDir
+        pillSwap.restart()
+      }
     }
     trackDir = 1
   }
 
   ParallelAnimation {
     id: trackSwap
-    NumberAnimation { id: trackSlide; target: trackShift; property: "x"; to: 0; duration: 320; easing.type: Easing.OutQuint }
-    NumberAnimation { target: cardText; property: "opacity"; from: 0; to: 1; duration: 240; easing.type: Easing.OutCubic }
+    // The old title leaves quickly; the new one only starts once it is
+    // nearly gone, so the two never sit on top of each other.
+    NumberAnimation { id: ghostSlide; target: ghostShift; property: "x"; from: 0; duration: 200; easing.type: Easing.InCubic }
+    NumberAnimation { target: ghostText; property: "opacity"; from: 1; to: 0; duration: 160; easing.type: Easing.InQuad }
+    SequentialAnimation {
+      PauseAnimation { duration: 150 }
+      ParallelAnimation {
+        NumberAnimation { id: trackSlide; target: trackShift; property: "x"; to: 0; duration: 460; easing.type: Easing.OutQuint }
+        NumberAnimation { target: liveText; property: "opacity"; to: 1; duration: 340; easing.type: Easing.OutCubic }
+      }
+    }
+    // Whatever happens, end with the new text in place.
+    onStopped: { trackShift.x = 0; liveText.opacity = 1; ghostText.opacity = 0 }
+  }
+
+  // Title, subtitle and (media) album, as the card shows them.
+  component CardText: Column {
+    property string title: ""
+    property string subtitle: ""
+    property string album: ""
+    spacing: Style.space(3)
+
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      text: parent.title
+      color: root.popupFg
+      font.family: root.family
+      font.pixelSize: Style.font.subtitle
+      font.bold: true
+      elide: Text.ElideRight
+    }
+
+    Text {
+      width: parent.width
+      visible: text !== ""
+      textFormat: Text.PlainText
+      text: parent.subtitle
+      color: Qt.darker(root.popupFg, 1.35)
+      font.family: root.family
+      font.pixelSize: Style.font.bodySmall
+      elide: Text.ElideRight
+    }
+
+    Text {
+      width: parent.width
+      visible: text !== ""
+      textFormat: Text.PlainText
+      text: parent.album
+      color: Qt.darker(root.popupFg, 1.6)
+      font.family: root.family
+      font.pixelSize: Style.font.caption
+      elide: Text.ElideRight
+    }
   }
 
   // Text on an accent-filled circle: dark on light colors, light on dark.
@@ -182,8 +257,9 @@ Panel {
       anchors.fill: parent
       radius: width / 2
       color: mk.primary ? root.accentFor(root.focused) : Util.alpha(root.popupFg, mkArea.containsMouse ? 0.12 : 0)
+      // Only the hover; the accent animates by itself (coverAccent).
       Behavior on color {
-        enabled: root.motion
+        enabled: root.motion && !mk.primary
         ColorAnimation { duration: 160 }
       }
     }
@@ -338,7 +414,24 @@ Panel {
 
   // Media takes its accent from the cover (Service.qml's artAccent) when that
   // option is on and the cover has a real color; everything else uses the theme.
-  readonly property color coverAccent: service && service.artAccent !== "" ? Qt.lighter(service.artAccent, 1.0) : Color.accent
+  // Blends into the next cover's color instead of switching at once (the
+  // play button, bars, border and pill follow it). Mixed in OKLab, like CSS
+  // color-mix: straight RGB goes through a muddy gray between opposite
+  // colors (blue -> orange), turning the hue goes through a rainbow.
+  readonly property color coverAccentTarget: service && service.artAccent !== "" ? Qt.lighter(service.artAccent, 1.0) : Color.accent
+  property color accentFrom: coverAccentTarget
+  property color accentTo: coverAccentTarget
+  property real accentMix: 1
+  readonly property color coverAccent: accentMix >= 1 ? accentTo : Model.mixOklab(accentFrom, accentTo, accentMix)
+  onCoverAccentTargetChanged: {
+    accentAnim.stop()
+    if (!motion) { accentFrom = coverAccentTarget; accentTo = coverAccentTarget; accentMix = 1; return }
+    accentFrom = coverAccent
+    accentTo = coverAccentTarget
+    accentMix = 0
+    accentAnim.start()
+  }
+  NumberAnimation { id: accentAnim; target: root; property: "accentMix"; from: 0; to: 1; duration: 480; easing.type: Easing.InOutQuad }
   readonly property bool hasCoverAccent: prefs.coverAccent && service !== null && service.artAccent !== ""
 
   // The popup itself also takes the cover's colors on the media card whose
@@ -464,6 +557,115 @@ Panel {
           NumberAnimation { to: 0.25; duration: modelData.period * 1.2; easing.type: Easing.InOutSine }
         }
       }
+    }
+  }
+
+  // One cover image: sharp, or blurred (cut to `mask`) for the backdrop.
+  component CoverLayer: Item {
+    id: cl
+    property url source: ""
+    property bool blurred: false
+    property Item mask: null
+    readonly property bool ready: img.status === Image.Ready && String(img.source) !== ""
+    opacity: 0
+
+    Image {
+      id: img
+      anchors.fill: parent
+      visible: !cl.blurred
+      source: cl.source
+      fillMode: Image.PreserveAspectCrop
+      asynchronous: true
+      // Blurred, a small one does (and is cheaper to blur).
+      sourceSize.width: cl.blurred ? 96 : 256
+      sourceSize.height: cl.blurred ? 96 : 256
+    }
+
+    MultiEffect {
+      anchors.fill: parent
+      visible: cl.blurred
+      source: img
+      autoPaddingEnabled: false
+      blurEnabled: true
+      blur: 1.0
+      blurMax: 48
+      saturation: 0.2
+      maskEnabled: cl.mask !== null
+      maskSource: cl.mask
+    }
+  }
+
+  // A cover that changes by crossfading: the new image loads behind the one
+  // shown and only takes its place once ready (never a blank in between),
+  // coming in with a slight zoom. An empty source fades it all out.
+  component CoverSwap: Item {
+    id: cs
+    property url source: ""
+    property bool blurred: false
+    property Item mask: null
+    property real enterScale: 0.94
+    property int front: 0
+    readonly property bool showing: la.opacity > 0.01 || lb.opacity > 0.01
+
+    function layerAt(i) { return i === 0 ? la : lb }
+
+    function load() {
+      if (String(source) === "") {
+        swap.stop()
+        if (root.motion) { outAll.restart() } else { la.opacity = 0; lb.opacity = 0 }
+        return
+      }
+      var shown = layerAt(front)
+      if (String(shown.source) === String(source) && shown.ready) { landed(shown); return }
+      var back = layerAt(1 - front)
+      back.source = source
+      if (back.ready) Qt.callLater(function() { cs.landed(back) })
+    }
+
+    function landed(layer) {
+      if (!layer.ready || String(layer.source) !== String(source)) return
+      var old = layerAt(front)
+      front = layer === la ? 0 : 1
+      swap.stop()
+      outAll.stop()
+      if (!root.motion) {
+        layer.opacity = 1; layer.scale = 1
+        if (old !== layer) old.opacity = 0
+        return
+      }
+      // The new one on top, fading in over the old one, which stays whole
+      // underneath (no dip to the background halfway) and goes once covered.
+      layer.z = 1
+      if (old !== layer) old.z = 0
+      fadeIn.target = layer
+      zoomIn.target = layer
+      fadeOut.target = old !== layer ? old : nobody
+      swap.start()
+    }
+
+    onSourceChanged: load()
+    Component.onCompleted: load()
+
+    // Stand-in target when there is no old cover to fade out.
+    Item { id: nobody; visible: false }
+
+    CoverLayer { id: la; anchors.fill: parent; blurred: cs.blurred; mask: cs.mask; onReadyChanged: cs.landed(la) }
+    CoverLayer { id: lb; anchors.fill: parent; blurred: cs.blurred; mask: cs.mask; onReadyChanged: cs.landed(lb) }
+
+    ParallelAnimation {
+      id: swap
+      NumberAnimation { id: fadeIn; property: "opacity"; to: 1; duration: 420; easing.type: Easing.OutCubic }
+      NumberAnimation { id: zoomIn; property: "scale"; from: cs.enterScale; to: 1; duration: 520; easing.type: Easing.OutQuint }
+      SequentialAnimation {
+        PauseAnimation { duration: 420 }
+        NumberAnimation { id: fadeOut; property: "opacity"; to: 0; duration: 1 }
+      }
+    }
+
+    ParallelAnimation {
+      id: outAll
+      NumberAnimation { target: la; property: "opacity"; to: 0; duration: 260 }
+      NumberAnimation { target: lb; property: "opacity"; to: 0; duration: 260 }
     }
   }
 
@@ -744,7 +946,10 @@ Panel {
 
     // Thin progress line along the bottom of the pill (charging fills the
     // whole pill instead).
+    // Glides like the popup's bar: straight to each new second while media
+    // plays, quickly on a jump, at once for another activity.
     Rectangle {
+      id: pillLine
       visible: pill.progress >= 0 && !root.vertical && !root.pillCharging
       anchors.left: parent.left
       anchors.bottom: parent.bottom
@@ -752,13 +957,27 @@ Panel {
       anchors.bottomMargin: Math.max(1, Style.space(1))
       height: Math.max(2, Style.space(2))
       radius: height / 2
-      width: Math.max(0, (pill.width - pill.radius) * Math.max(0, Math.min(1, pill.progress)))
+      width: Math.max(0, (pill.width - pill.radius) * value)
       color: root.accentFor(root.pillItem)
 
-      Behavior on width {
-        enabled: !root.bar || root.bar.foregroundAnimationEnabled
-        NumberAnimation { duration: 300 }
+      readonly property real target: Math.max(0, Math.min(1, pill.progress))
+      property real value: 0
+      property string valueOf: ""
+      onTargetChanged: {
+        var a = root.pillItem
+        var id = a ? a.id : ""
+        pillGlide.stop()
+        if (id !== valueOf || !root.motion) { valueOf = id; value = target; return }
+        var media = a.module === "media"
+        var ahead = (target - value) * (media ? a.length : 0)
+        var flowing = media && a.playing && ahead > 0 && ahead < 2.5
+        pillGlide.to = target
+        pillGlide.duration = flowing ? 1050 : 320
+        pillGlide.easing.type = flowing ? Easing.Linear : Easing.OutCubic
+        pillGlide.start()
       }
+
+      NumberAnimation { id: pillGlide; target: pillLine; property: "value" }
     }
 
     // Slide the content in from the side it came from.
@@ -831,7 +1050,7 @@ Panel {
       }
       Behavior on tint {
         enabled: !root.bar || root.bar.foregroundAnimationEnabled
-        ColorAnimation { duration: 260 }
+        ColorAnimation { duration: 450; easing.type: Easing.InOutQuad }
       }
     }
 
@@ -841,24 +1060,12 @@ Panel {
     Item {
       id: coverBackdrop
       anchors.fill: tintLayer
-      opacity: root.mediaThemed && root.coverUrl !== "" && backdropImage.status === Image.Ready ? (root.darkTheme ? 0.5 : 0.35) : 0
+      opacity: root.mediaThemed && backdropCovers.showing ? (root.darkTheme ? 0.5 : 0.35) : 0
       visible: opacity > 0
 
       Behavior on opacity {
         enabled: root.motion
-        NumberAnimation { duration: 320 }
-      }
-
-      Image {
-        id: backdropImage
-        anchors.fill: parent
-        visible: false
-        source: root.mediaThemed ? root.coverUrl : ""
-        fillMode: Image.PreserveAspectCrop
-        asynchronous: true
-        // Small: it is blurred anyway, and cheaper to blur.
-        sourceSize.width: 96
-        sourceSize.height: 96
+        NumberAnimation { duration: 420; easing.type: Easing.InOutQuad }
       }
 
       Rectangle {
@@ -869,16 +1076,15 @@ Panel {
         layer.enabled: true
       }
 
-      MultiEffect {
+      // Crossfades to the next track's cover; no zoom, so nothing pokes out
+      // past the rounded corners.
+      CoverSwap {
+        id: backdropCovers
         anchors.fill: parent
-        source: backdropImage
-        autoPaddingEnabled: false
-        blurEnabled: true
-        blur: 1.0
-        blurMax: 48
-        saturation: 0.2
-        maskEnabled: true
-        maskSource: backdropMask
+        blurred: true
+        mask: backdropMask
+        enterScale: 1
+        source: root.mediaThemed ? root.coverUrl : ""
       }
 
       Rectangle {
@@ -1016,10 +1222,7 @@ Panel {
                       enabled: root.motion
                       NumberAnimation { duration: 260; easing.type: Easing.OutQuint }
                     }
-                    Behavior on color {
-                      enabled: root.motion
-                      ColorAnimation { duration: 200 }
-                    }
+
 
                     MouseArea {
                       anchors.fill: parent
@@ -1110,6 +1313,11 @@ Panel {
                   readonly property bool raisable: root.isMedia && root.focused.canRaise === true
                   width: Style.space(root.shotUrl !== "" ? 96 : (hasCover ? 72 : 48))
                   height: width
+
+                  Behavior on width {
+                    enabled: root.motion && root.opened
+                    NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+                  }
                   radius: hasCover ? Style.spacing.labelGap : width / 2
                   color: Util.alpha(root.accentFor(root.focused), 0.2)
                   scale: coverArea.pressed ? 0.95 : 1
@@ -1119,22 +1327,12 @@ Panel {
                     NumberAnimation { duration: 120 }
                   }
 
-                  // A new cover fades in once it has loaded.
-                  Image {
+                  // The next cover crossfades in once loaded, with a slight zoom.
+                  CoverSwap {
                     anchors.fill: parent
                     anchors.margins: Style.space(2)
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    sourceSize.width: 256
-                    sourceSize.height: 256
+                    visible: cardIcon.hasCover
                     source: root.cardImage
-                    visible: cardIcon.hasCover && opacity > 0
-                    opacity: status === Image.Ready ? 1 : 0
-
-                    Behavior on opacity {
-                      enabled: root.motion
-                      NumberAnimation { duration: 260 }
-                    }
                   }
 
                   // Click the cover: bring the player's window up.
@@ -1174,45 +1372,33 @@ Panel {
                   }
                 }
 
-                Column {
+                // The card's text; on a track change the old one (ghost) slides
+                // out while the new one slides in, both clipped to this box.
+                Item {
                   id: cardText
                   width: parent.width - cardIcon.width - parent.spacing - (mediaHide.visible ? mediaHide.width + parent.spacing : 0)
+                  height: liveText.implicitHeight
                   anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(3)
-                  transform: Translate { id: trackShift }
+                  clip: true
 
-                  Text {
+                  CardText {
+                    id: liveText
                     width: parent.width
-                    textFormat: Text.PlainText
-                    text: root.focused ? root.focused.title : ""
-                    color: root.popupFg
-                    font.family: root.family
-                    font.pixelSize: Style.font.subtitle
-                    font.bold: true
-                    elide: Text.ElideRight
+                    title: root.focused ? root.focused.title : ""
+                    subtitle: root.focused ? root.focused.subtitle : ""
+                    album: root.isMedia && root.focused.album !== root.focused.title ? root.focused.album : ""
+                    transform: Translate { id: trackShift }
                   }
 
-                  Text {
+                  CardText {
+                    id: ghostText
                     width: parent.width
-                    visible: text !== ""
-                    textFormat: Text.PlainText
-                    text: root.focused ? root.focused.subtitle : ""
-                    color: Qt.darker(root.popupFg, 1.35)
-                    font.family: root.family
-                    font.pixelSize: Style.font.bodySmall
-                    elide: Text.ElideRight
-                  }
-
-                  // Media: the album, under the artist.
-                  Text {
-                    width: parent.width
-                    visible: root.isMedia && text !== ""
-                    textFormat: Text.PlainText
-                    text: root.isMedia && root.focused.album !== root.focused.title ? root.focused.album : ""
-                    color: Qt.darker(root.popupFg, 1.6)
-                    font.family: root.family
-                    font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
+                    opacity: 0
+                    visible: opacity > 0
+                    title: root.ghostTitle
+                    subtitle: root.ghostSubtitle
+                    album: root.ghostAlbum
+                    transform: Translate { id: ghostShift }
                   }
                 }
 
@@ -1239,8 +1425,29 @@ Panel {
                 readonly property bool seekable: root.focused !== null && root.focused.seekable === true
                 property bool dragging: false
                 property real dragValue: 0
-                readonly property real shownValue: dragging ? dragValue
-                  : (root.focused ? Math.max(0, Math.min(1, root.focused.progress)) : 0)
+                readonly property real shownValue: dragging ? dragValue : value
+
+                // Where the activity says it is, and what the bar shows. While
+                // media plays, the bar glides to each new second in a straight
+                // line instead of jumping a step each tick; a jump (another
+                // track, a seek) goes there quickly; another card, at once.
+                readonly property real target: root.focused ? Math.max(0, Math.min(1, root.focused.progress)) : 0
+                property real value: 0
+                property string valueOf: ""
+                onTargetChanged: {
+                  var id = root.focused ? root.focused.id : ""
+                  glide.stop()
+                  if (id !== valueOf || !root.motion) { valueOf = id; value = target; return }
+                  var len = root.isMedia ? root.focused.length : 0
+                  var ahead = (target - value) * len
+                  var flowing = root.isMedia && root.focused.playing && ahead > 0 && ahead < 2.5
+                  glide.to = target
+                  glide.duration = flowing ? 1050 : 320
+                  glide.easing.type = flowing ? Easing.Linear : Easing.OutCubic
+                  glide.start()
+                }
+
+                NumberAnimation { id: glide; target: progressBar; property: "value" }
 
                 Rectangle {
                   anchors.verticalCenter: parent.verticalCenter
@@ -1262,10 +1469,6 @@ Panel {
                     radius: parent.radius
                     width: parent.width * progressBar.shownValue
                     color: root.accentFor(root.focused)
-                    Behavior on width {
-                      enabled: !progressBar.dragging
-                      NumberAnimation { duration: 300 }
-                    }
                   }
                 }
 
@@ -1307,7 +1510,9 @@ Panel {
                 width: parent.width
                 height: elapsedText.implicitHeight
                 visible: root.isMedia && root.focused.length > 0
-                readonly property real at: progressBar.shownValue * (root.focused ? root.focused.length : 0)
+                // The real position (or where it is being dragged to): the bar
+                // glides, the numbers don't count backwards on a track change.
+                readonly property real at: (progressBar.dragging ? progressBar.dragValue : progressBar.target) * (root.focused ? root.focused.length : 0)
 
                 Text {
                   id: elapsedText
