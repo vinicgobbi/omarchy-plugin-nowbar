@@ -727,9 +727,21 @@ function batteryActivity(b) {
 }
 
 // --- media (MPRIS) --------------------------------------------------------------
-// m = { key, title, artist, player, playing, canPrevious, canNext, canToggle,
-//       position (s), length (s), canSeek, volumeSupported, volume (0..1) }
+// m = { key, title, artist, album, player, playing, canPrevious, canNext, canToggle,
+//       position (s), length (s), canSeek, volumeSupported, volume (0..1),
+//       shuffleSupported, shuffle, loopSupported, loop ("none" | "track" | "playlist"),
+//       canRaise }
 // One activity per player: "media:<key>".
+
+// Long enough (podcasts, long videos) for the 10 s back / forward buttons.
+var MEDIA_LONG_SECONDS = 600
+var LOOP_STATES = ["none", "playlist", "track"]
+
+// The repeat button cycles none -> playlist -> track -> none.
+function nextLoop(loop) {
+  var i = LOOP_STATES.indexOf(loop)
+  return LOOP_STATES[(i + 1) % LOOP_STATES.length]
+}
 
 function mediaId(key) {
   return "media:" + String(key || "player").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80)
@@ -747,12 +759,31 @@ function mediaActivity(m) {
   var len = num(m.length, 0)
   var pos = num(m.position, 0)
   var timed = len > 0 && len < 1e9
+  var seekable = timed && !!m.canSeek
+  var long = seekable && len >= MEDIA_LONG_SECONDS
+  if (long) {
+    actions.push({ id: "back10", label: "−10 s", icon: "\u{f0d2a}" })
+    actions.push({ id: "forward10", label: "+10 s", icon: "\u{f0d71}" })
+  }
+  var loop = m.loopSupported && LOOP_STATES.indexOf(m.loop) !== -1 ? m.loop : ""
+  if (m.shuffleSupported) actions.push({ id: "shuffle", label: "Shuffle", icon: "\u{f049d}" })
+  if (loop) actions.push({ id: "loop", label: "Repeat", icon: loop === "track" ? "\u{f0458}" : "\u{f0456}" })
+  if (m.canRaise) actions.push({ id: "raise", label: "Open player", icon: "\u{f03cc}", opensApp: true })
+  var album = clean(m.album)
   return {
     id: mediaId(m.key),
     module: "media",
     target: String(m.key || ""),
-    seekable: timed && !!m.canSeek,
+    playing: !!m.playing,
+    seekable: seekable,
+    long: long,
+    position: timed ? Math.max(0, Math.min(len, pos)) : 0,
     length: timed ? len : 0,
+    // null when the player can't shuffle; "" when it can't repeat.
+    shuffle: m.shuffleSupported ? !!m.shuffle : null,
+    loop: loop,
+    canRaise: !!m.canRaise,
+    album: album,
     volume: m.volumeSupported ? Math.max(0, Math.min(1, num(m.volume, 0))) : -1,
     priority: m.playing ? PRIORITY.mediaPlaying : PRIORITY.mediaPaused,
     icon: m.playing ? "\u{f075a}" : "\u{f03e4}",
@@ -761,10 +792,52 @@ function mediaActivity(m) {
     subtitle: [artist, player].filter(function(x) { return x }).join(" · "),
     pillText: artist ? title + " · " + artist : title,
     progress: len > 0 && len < 1e9 ? Math.max(0, Math.min(1, pos / len)) : -1,
-    details: len > 0 && len < 1e9 ? [formatDuration(pos * 1000) + " / " + formatDuration(len * 1000)] : [],
+    // The times are shown on both sides of the bar instead.
+    details: album && album !== title ? [album] : [],
     actions: actions,
     signature: (m.playing ? "p:" : "s:") + clean(m.key, 80) + ":" + title
   }
+}
+
+// Players hidden from the Now Bar, by name ("chromium, firefox"): matched
+// without case against the player's name, desktop entry or bus name. The
+// media keys still reach them.
+function parseIgnoredPlayers(text) {
+  var out = []
+  String(text || "").split(",").forEach(function(x) {
+    var n = clean(x, 60).toLowerCase()
+    if (n && out.indexOf(n) === -1) out.push(n)
+  })
+  return out.slice(0, 30)
+}
+
+function isIgnoredPlayer(ignored, names) {
+  if (!ignored || ignored.length === 0) return false
+  for (var i = 0; i < (names || []).length; i++) {
+    var n = String(names[i] || "").toLowerCase()
+    if (!n) continue
+    for (var j = 0; j < ignored.length; j++) if (n === ignored[j] || n.indexOf("." + ignored[j]) !== -1) return true
+  }
+  return false
+}
+
+// The list with `name` added or taken out, as stored in settings.
+function toggleIgnoredPlayer(text, name, ignore) {
+  var list = parseIgnoredPlayers(text)
+  var n = clean(name, 60).toLowerCase()
+  if (!n) return list.join(",")
+  var i = list.indexOf(n)
+  if (ignore && i === -1) list.push(n)
+  if (!ignore && i !== -1) list.splice(i, 1)
+  return list.join(",")
+}
+
+// A paused player that has had the pill for `minutes` gives it up (it stays
+// in the carousel). 0: never.
+function staleMedia(activity, pausedAt, now, minutes) {
+  if (!activity || activity.module !== "media" || activity.playing) return false
+  if (!(minutes > 0) || !(pausedAt > 0)) return false
+  return now - pausedAt >= minutes * 60000
 }
 
 // --- cover art ---------------------------------------------------------------
@@ -1579,6 +1652,8 @@ function defaultPrefs() {
     showQuickStart: true,   // the popup's Quick start (timers, stopwatch, Pomodoro, sleep)
     quickStartItems: QUICK_START_EXTRAS.join(","),   // which extras, besides the timers
     coverAccent: true,      // media: accent color taken from the cover art
+    mediaPausedMinutes: 15, // a paused player leaves the pill after this long (0: never)
+    mediaIgnore: "",        // players kept out of the Now Bar, comma separated
     animations: true,       // the popup unfolds from the pill, cards and sections slide in
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
     maxWidth: 220,          // width of the text area: the pill always has this size
@@ -1621,6 +1696,9 @@ function normalizePrefs(input) {
   out.updateSourceList = parseIdList(src.updateSources, UPDATE_SOURCES)
   out.updateSources = out.updateSourceList.join(",")
   out.updateInterval = clampInt(src.updateInterval, 5, 10080, d.updateInterval)
+  out.mediaPausedMinutes = clampInt(src.mediaPausedMinutes, 0, 1440, d.mediaPausedMinutes)
+  out.ignoredPlayers = parseIgnoredPlayers(src.mediaIgnore)
+  out.mediaIgnore = out.ignoredPlayers.join(",")
   out.modules = {}
   for (var i = 0; i < MODULES.length; i++) out.modules[MODULES[i]] = out[moduleKey(MODULES[i])]
   return out
@@ -1678,6 +1756,11 @@ if (typeof module !== "undefined") {
     useImperial: useImperial,
     parseWttr: parseWttr,
     weatherActivity: weatherActivity,
+    nextLoop: nextLoop,
+    parseIgnoredPlayers: parseIgnoredPlayers,
+    isIgnoredPlayer: isIgnoredPlayer,
+    toggleIgnoredPlayer: toggleIgnoredPlayer,
+    staleMedia: staleMedia,
     parseUpdates: parseUpdates,
     normalizeUpdates: normalizeUpdates,
     updatesDue: updatesDue,

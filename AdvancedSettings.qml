@@ -48,6 +48,18 @@ Column {
   property string indicatorsState: ""
   // The update sources this system can check (Flatpak only when installed).
   property var updateSourcesAvailable: []
+  // Media players around now; with the ignored ones, the "Show" list.
+  property var playerNames: []
+  readonly property var playerList: {
+    var out = []
+    var seen = {}
+    var names = (playerNames || []).concat(root.prefs.ignoredPlayers || [])
+    for (var i = 0; i < names.length; i++) {
+      var key = String(names[i]).toLowerCase()
+      if (key && !seen[key]) { seen[key] = true; out.push(names[i]) }
+    }
+    return out
+  }
 
   signal changed(string name, var value)
   signal weatherWidgetRequested(bool replace)
@@ -405,6 +417,86 @@ Column {
       key: "autoFocus"
       label: "Focus new activities"
       hint: "Something that just started takes the pill, unless you switched by hand a moment ago."
+    }
+
+    Section { text: "MEDIA" }
+
+    Option {
+      label: "Paused player"
+      hint: "Gives the pill to what else is going on after this long; it stays in the carousel."
+      ButtonGroup {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        options: [
+          { value: "0", label: "Never" },
+          { value: "5", label: "5m" },
+          { value: "15", label: "15m" },
+          { value: "60", label: "1h" }
+        ]
+        value: String(root.prefs.mediaPausedMinutes)
+        onChanged: function(v) { root.changed("mediaPausedMinutes", parseInt(v, 10)) }
+      }
+    }
+
+    Intro {
+      text: root.playerList.length > 0
+        ? "Players shown in the Now Bar. A hidden one still answers the media keys."
+        : "Players show up here while they are open, to hide the ones you don't want in the Now Bar."
+    }
+
+    Grid {
+      width: parent.width
+      columns: 2
+      columnSpacing: Style.space(16)
+      rowSpacing: Style.space(8)
+      visible: root.playerList.length > 0
+
+      Repeater {
+        model: root.playerList
+
+        Item {
+          id: pc
+          required property var modelData
+          readonly property bool shown: !Model.isIgnoredPlayer(root.prefs.ignoredPlayers || [], [modelData])
+          width: (parent.width - parent.columnSpacing) / 2
+          height: Math.max(pcLabel.implicitHeight, pcSwitch.implicitHeight)
+
+          Text {
+            id: pcGlyph
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(20)
+            textFormat: Text.PlainText
+            text: "\u{f075a}"
+            color: pc.shown ? root.foreground : Qt.darker(root.foreground, 1.8)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          Text {
+            id: pcLabel
+            textFormat: Text.PlainText
+            anchors.left: pcGlyph.right
+            anchors.right: pcSwitch.left
+            anchors.rightMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            text: pc.modelData
+            color: pc.shown ? root.foreground : Qt.darker(root.foreground, 1.5)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            elide: Text.ElideRight
+          }
+
+          ToggleSwitch {
+            id: pcSwitch
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            foreground: root.foreground
+            checked: pc.shown
+            onToggled: root.changed("mediaIgnore", Model.toggleIgnoredPlayer(root.prefs.mediaIgnore, pc.modelData, checked))
+          }
+        }
+      }
     }
   }
 

@@ -20,6 +20,11 @@ activities, and click it for the details and controls.
   popup red.
 - **Dynamic colors:** media cards take their colors from the album cover, the
   weather card from the sky.
+- **A real player:** the media card has big round controls (play/pause in
+  the middle), the blurred cover behind it, elapsed and remaining time on
+  each side of the bar, shuffle and repeat, 10 s back / forward on long
+  podcasts and videos, and the cover opens the player. A new track slides
+  in, and while something plays the pill shows three dancing bars.
 - **Charging glows blue to green:** while plugged in, the pill fills up to
   the charge with a blue-to-green gradient and a wave of light running
   through it, and the popup takes the same colors, at any percentage.
@@ -49,7 +54,7 @@ activities, and click it for the details and controls.
 
 | Samsung Now Bar         | Here                                                        | Source                                       |
 | ----------------------- | ----------------------------------------------------------- | -------------------------------------------- |
-| Media player            | One card per player: cover, title · artist, seekable progress bar, volume, play/pause, previous, next | MPRIS |
+| Media player            | One card per player: cover (click: open the player) on a blurred backdrop, title · artist, album, seekable bar with elapsed / remaining time, volume, shuffle, previous, play/pause, next, repeat, and 10 s back / forward on long media | MPRIS |
 | Timer / Stopwatch       | Pause, +1 min, laps; a timer can also run until a time (`14:30`); kept across shell restarts | This plugin (notifies when the timer ends) |
 | Focus modes             | Pomodoro: focus / break cycles, a long break every 4        | This plugin (notifies at each change)        |
 | Media sleep timer       | Pauses every player when it ends                            | This plugin                                  |
@@ -198,7 +203,11 @@ Each action shows Omarchy's OSD with the track (after next/previous, the new
 one).
 
 A player that is playing gets a card; one you paused keeps its card (up to
-3) so you can resume it, until it closes or you hide the card.
+3) so you can resume it, until it closes or you hide the card. After 15
+minutes paused (see the options) it gives the pill to whatever else is going
+on, and stays in the carousel; picking it by hand starts that clock over.
+Players hidden in the options never get a card, but the keys above still
+reach them.
 
 ## Weather
 
@@ -347,7 +356,10 @@ options, one tab at a time (Tab / Shift+Tab to switch):
 - **Activities:** which activities can show up (live ones: media, timers,
   reminders, recording, dictation, camera/mic; system ones: modes and VPN,
   battery, Bluetooth, screenshots, weather, scripts), and whether a new
-  activity takes the pill.
+  activity takes the pill. **Media:** how long a paused player keeps the pill
+  (5 min, 15 min, 1 hour or always), and which players show up at all: a
+  hidden one (a browser, say) stays out of the Now Bar but still answers the
+  media keys.
 - **Look:** the pill's text width, scrolling or cutting long text, the
   progress line, the `2/4` marker, what it shows when idle (the weather card,
   an empty pill, or nothing), the dynamic colors, and the animations.

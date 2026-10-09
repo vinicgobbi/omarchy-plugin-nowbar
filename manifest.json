@@ -45,6 +45,8 @@
       "weatherUnit": "auto",
       "autoFocus": true,
       "coverAccent": true,
+      "mediaPausedMinutes": 15,
+      "mediaIgnore": "",
       "animations": true,
       "whenEmpty": "brief",
       "showProgress": true,
@@ -195,6 +197,23 @@
         "label": "Dynamic colors",
         "description": "Media takes its colors from the album cover and weather from the sky: the highlight, the popup's border and a tint of its background.",
         "defaultValue": true
+      },
+      {
+        "key": "mediaPausedMinutes",
+        "type": "integer",
+        "label": "Paused media leaves the pill after (min)",
+        "description": "A paused player gives the pill to what else is going on, and stays in the carousel. 0: never.",
+        "min": 0,
+        "max": 1440,
+        "step": 5,
+        "defaultValue": 15
+      },
+      {
+        "key": "mediaIgnore",
+        "type": "string",
+        "label": "Hidden players",
+        "description": "Comma separated player names (e.g. chromium, firefox) kept out of the Now Bar. The media keys still reach them.",
+        "defaultValue": ""
       },
       {
         "key": "animations",

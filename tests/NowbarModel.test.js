@@ -654,3 +654,51 @@ test("actions that open an app are marked, so the popup closes first", () => {
   const s = M.screenshotActivity({ path: "/tmp/x.png", name: "x.png", at: 0 })
   assert.deepEqual(s.actions.filter(a => a.opensApp).map(a => a.id), ["edit", "open"])
 })
+
+test("media card: playing, album, long-form skips, shuffle, repeat, open player", () => {
+  const base = { key: "spotify", title: "Song", artist: "Band", album: "Record", player: "Spotify", playing: true,
+    canToggle: true, canPrevious: true, canNext: true, canSeek: true, position: 30, length: 200 }
+  const a = M.mediaActivity(base)
+  assert.equal(a.playing, true)
+  assert.equal(a.album, "Record")
+  assert.deepEqual(a.details, ["Record"])
+  assert.equal(a.position, 30)
+  assert.equal(a.long, false)
+  assert.equal(a.shuffle, null)
+  assert.equal(a.loop, "")
+  assert.deepEqual(a.actions.map(x => x.id), ["playPause", "previous", "next"])
+  const full = M.mediaActivity({ ...base, length: 3600, shuffleSupported: true, shuffle: true, loopSupported: true, loop: "track", canRaise: true })
+  assert.equal(full.long, true)
+  assert.equal(full.shuffle, true)
+  assert.equal(full.loop, "track")
+  assert.deepEqual(full.actions.map(x => x.id), ["playPause", "previous", "next", "back10", "forward10", "shuffle", "loop", "raise"])
+  assert.equal(full.actions.find(x => x.id === "raise").opensApp, true)
+  // Not seekable: no skips, however long.
+  assert.equal(M.mediaActivity({ ...base, length: 3600, canSeek: false }).long, false)
+  // An album named like the track isn't repeated.
+  assert.deepEqual(M.mediaActivity({ ...base, album: "Song" }).details, [])
+  assert.equal(M.nextLoop("none"), "playlist")
+  assert.equal(M.nextLoop("playlist"), "track")
+  assert.equal(M.nextLoop("track"), "none")
+})
+
+test("ignored players and paused media leaving the pill", () => {
+  const ig = M.parseIgnoredPlayers(" Chromium, firefox,chromium,, ")
+  assert.deepEqual(ig, ["chromium", "firefox"])
+  assert.equal(M.isIgnoredPlayer(ig, ["Chromium"]), true)
+  assert.equal(M.isIgnoredPlayer(ig, ["", "", "org.mpris.MediaPlayer2.firefox.instance_1_45"]), true)
+  assert.equal(M.isIgnoredPlayer(ig, ["Spotify", "spotify", "org.mpris.MediaPlayer2.spotify"]), false)
+  assert.equal(M.isIgnoredPlayer([], ["Chromium"]), false)
+  assert.equal(M.toggleIgnoredPlayer("chromium", "Firefox", true), "chromium,firefox")
+  assert.equal(M.toggleIgnoredPlayer("chromium,firefox", "Chromium", false), "firefox")
+  const paused = { module: "media", playing: false }
+  assert.equal(M.staleMedia(paused, 1000, 1000 + 15 * 60000, 15), true)
+  assert.equal(M.staleMedia(paused, 1000, 1000 + 14 * 60000, 15), false)
+  assert.equal(M.staleMedia(paused, 1000, 1000 + 99 * 60000, 0), false)
+  assert.equal(M.staleMedia({ module: "media", playing: true }, 1000, 1e12, 15), false)
+  assert.equal(M.staleMedia({ module: "timer" }, 1000, 1e12, 15), false)
+  const p = M.normalizePrefs({ mediaIgnore: "Chromium", mediaPausedMinutes: 5000 })
+  assert.deepEqual(p.ignoredPlayers, ["chromium"])
+  assert.equal(p.mediaPausedMinutes, 1440)
+  assert.equal(M.normalizePrefs({}).mediaPausedMinutes, 15)
+})

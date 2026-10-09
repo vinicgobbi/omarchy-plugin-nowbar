@@ -162,18 +162,44 @@ Item {
     return !!(p && (p.trackTitle || p.trackArtist))
   }
 
+  // When each player was last seen going from playing to paused, as
+  // { key: time }: a paused player gives up the pill after a while.
+  property var pausedAt: ({})
+
   function syncLastPlaying() {
     var t = Date.now()
     var next = {}
+    var paused = {}
     var alive = {}
     for (var i = 0; i < players.length; i++) alive[playerKey(players[i])] = true
     // Forget players that went away.
     for (var k in playedKeys) if (alive[k]) next[k] = playedKeys[k]
     for (var j = 0; j < players.length; j++) {
       var p = players[j]
-      if (p && p.isPlaying && !isProxy(p) && hasTrack(p)) next[playerKey(p)] = t
+      var key = playerKey(p)
+      if (p && p.isPlaying && !isProxy(p) && hasTrack(p)) next[key] = t
+      else if (p && !p.isPlaying && alive[key]) paused[key] = pausedAt[key] !== undefined ? pausedAt[key] : t
     }
     playedKeys = next
+    pausedAt = paused
+  }
+
+  // Players kept out of the Now Bar (the "Media" options); media keys still
+  // reach them.
+  function isIgnored(p) {
+    return Model.isIgnoredPlayer(prefs.ignoredPlayers, [p.identity, p.desktopEntry, p.dbusName])
+  }
+
+  // Names of the players around now, for the options' list.
+  readonly property var playerNames: {
+    var out = []
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i]
+      if (!p || isProxy(p)) continue
+      var n = String(p.identity || p.desktopEntry || "").trim()
+      if (n && out.indexOf(n) === -1) out.push(n)
+    }
+    return out
   }
 
   onPlayersChanged: syncLastPlaying()
@@ -195,7 +221,7 @@ Item {
     var paused = []
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
-      if (!hasTrack(p)) continue
+      if (!hasTrack(p) || isIgnored(p)) continue
       if (p.isPlaying) (isProxy(p) ? proxies : list).push(p)
       else if (!isProxy(p) && playedKeys[playerKey(p)] !== undefined) paused.push(p)
     }
@@ -214,6 +240,7 @@ Item {
         key: playerKey(p),
         title: p.trackTitle || "",
         artist: p.trackArtist || "",
+        album: p.trackAlbum || "",
         player: p.identity || p.desktopEntry || "",
         playing: !!p.isPlaying,
         canToggle: !!(p.canTogglePlaying || p.canPlay || p.canPause),
@@ -223,7 +250,12 @@ Item {
         position: p.positionSupported ? p.position : 0,
         length: p.lengthSupported ? p.length : 0,
         volumeSupported: !!p.volumeSupported,
-        volume: p.volumeSupported ? p.volume : 0
+        volume: p.volumeSupported ? p.volume : 0,
+        shuffleSupported: !!p.shuffleSupported && !!p.canControl,
+        shuffle: !!p.shuffle,
+        loopSupported: !!p.loopSupported && !!p.canControl,
+        loop: p.loopState === MprisLoopState.Track ? "track" : (p.loopState === MprisLoopState.Playlist ? "playlist" : "none"),
+        canRaise: !!p.canRaise
       }
     })
   }
@@ -497,6 +529,16 @@ Item {
       else if (p.canPlay) p.play()
     } else if (action === "next" && p.canGoNext) p.next()
     else if (action === "previous" && p.canGoPrevious) p.previous()
+    else if ((action === "back10" || action === "forward10") && p.canSeek && p.positionSupported) {
+      var len = p.lengthSupported ? p.length : 0
+      var to = p.position + (action === "back10" ? -10 : 10)
+      p.position = Math.max(0, len > 0 ? Math.min(len - 1, to) : to)
+    } else if (action === "shuffle" && p.shuffleSupported) p.shuffle = !p.shuffle
+    else if (action === "loop" && p.loopSupported) {
+      var cur = p.loopState === MprisLoopState.Track ? "track" : (p.loopState === MprisLoopState.Playlist ? "playlist" : "none")
+      var nxt = Model.nextLoop(cur)
+      p.loopState = nxt === "track" ? MprisLoopState.Track : (nxt === "playlist" ? MprisLoopState.Playlist : MprisLoopState.None)
+    } else if (action === "raise" && p.canRaise) p.raise()
   }
 
   // --- the "media" IPC target ---------------------------------------------------
@@ -1592,7 +1634,40 @@ Item {
     if (i < 0) return false
     focusId = activities[i].id
     manualUntil = Date.now() + 8000
+    freshenMedia(activities[i])
     return true
+  }
+
+  // A paused player chosen by hand starts its "leaves the pill" clock over.
+  function freshenMedia(a) {
+    if (!a || a.module !== "media" || a.playing || pausedAt[a.target] === undefined) return
+    var next = {}
+    for (var k in pausedAt) next[k] = pausedAt[k]
+    next[a.target] = Date.now()
+    pausedAt = next
+  }
+
+  // A player paused for a while (the "Media" options) gives the pill to the
+  // most important other activity; it stays in the carousel. Never to another
+  // player paused just as long, so two of them don't take turns.
+  function releaseStaleMedia() {
+    var a = focused
+    var t = Date.now()
+    var minutes = prefs.mediaPausedMinutes
+    if (!a || t < manualUntil || !Model.staleMedia(a, pausedAt[a.target], t, minutes)) return
+    // Not under you while you look at it.
+    if (root.shell && root.shell.isPluginOpen(root.pluginId)) return
+    for (var i = 0; i < activities.length; i++) {
+      var b = activities[i]
+      if (b.id !== a.id && !Model.staleMedia(b, pausedAt[b.target], t, minutes)) { focusId = b.id; return }
+    }
+  }
+
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.focused !== null && root.focused.module === "media" && !root.focused.playing && root.prefs.mediaPausedMinutes > 0
+    onTriggered: root.releaseStaleMedia()
   }
 
   // An activity id, or a module name / push id as a shortcut ("media" is the
@@ -1611,6 +1686,8 @@ Item {
     if (!id) return false
     focusId = id
     manualUntil = Date.now() + 8000
+    var i = Model.indexOfId(activities, id)
+    if (i >= 0) freshenMedia(activities[i])
     return true
   }
 

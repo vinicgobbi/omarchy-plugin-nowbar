@@ -1,4 +1,6 @@
 import QtQuick
+import QtQuick.Controls as QQC
+import QtQuick.Effects
 import Quickshell
 import qs.Ui
 import qs.Commons
@@ -104,6 +106,142 @@ Panel {
     var id = focused.id
     if (action.opensApp) close()
     service.act(id, action.id)
+  }
+
+  readonly property bool isMedia: focused !== null && focused.module === "media"
+
+  // A media control: the focused card's action with that id, if it has it.
+  function mediaAction(id) {
+    if (!isMedia) return null
+    for (var i = 0; i < focused.actions.length; i++) if (focused.actions[i].id === id) return focused.actions[i]
+    return null
+  }
+
+  // Which way the track change slides: back for Previous, else forward.
+  property int trackDir: 1
+  function mediaKey(id) {
+    var a = mediaAction(id)
+    if (!a) return
+    if (id === "previous") trackDir = -1
+    else if (id === "next") trackDir = 1
+    runAction(a)
+  }
+
+  // Another track on the same player: the title slides in from the side of
+  // the change (the cover fades in by itself once loaded).
+  readonly property string trackKey: isMedia ? focused.id + "\n" + focused.title + "\n" + focused.subtitle : ""
+  property string lastTrackKey: ""
+  onTrackKeyChanged: {
+    var before = lastTrackKey.split("\n")[0]
+    var now = trackKey.split("\n")[0]
+    lastTrackKey = trackKey
+    if (now !== "" && now === before && motion && opened) {
+      trackSwap.stop()
+      trackSlide.from = trackDir * Style.space(24)
+      trackSwap.start()
+    }
+    trackDir = 1
+  }
+
+  ParallelAnimation {
+    id: trackSwap
+    NumberAnimation { id: trackSlide; target: trackShift; property: "x"; to: 0; duration: 320; easing.type: Easing.OutQuint }
+    NumberAnimation { target: cardText; property: "opacity"; from: 0; to: 1; duration: 240; easing.type: Easing.OutCubic }
+  }
+
+  // Text on an accent-filled circle: dark on light colors, light on dark.
+  function onAccent(c) {
+    return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 0.6 ? Qt.rgba(0.07, 0.07, 0.08, 1) : Qt.rgba(1, 1, 1, 1)
+  }
+
+  // One round media button; the primary one (play/pause) is filled with the
+  // accent. `on` lights shuffle / repeat.
+  component MediaKey: Item {
+    id: mk
+    property string actionId: ""
+    property bool primary: false
+    property bool on: false
+    property string tip: ""
+    // Play/pause the biggest, previous/next a size down, the rest smaller.
+    readonly property bool transport: actionId === "previous" || actionId === "next"
+    readonly property var action: root.mediaAction(actionId)
+    visible: action !== null
+    width: Style.space(primary ? 50 : (transport ? 38 : 32))
+    height: width
+    // Keys of different sizes, centered on one line (a Row lines them up by
+    // the top otherwise).
+    anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+    scale: mkArea.pressed ? 0.88 : 1
+
+    Behavior on scale {
+      enabled: root.motion
+      NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+    }
+
+    Rectangle {
+      anchors.fill: parent
+      radius: width / 2
+      color: mk.primary ? root.accentFor(root.focused) : Util.alpha(root.popupFg, mkArea.containsMouse ? 0.12 : 0)
+      Behavior on color {
+        enabled: root.motion
+        ColorAnimation { duration: 160 }
+      }
+    }
+
+    Text {
+      anchors.centerIn: parent
+      // The play triangle looks off to the left when centered by its box.
+      anchors.horizontalCenterOffset: mk.action && mk.action.icon === "\u{f040a}" ? Math.round(width * 0.08) : 0
+      textFormat: Text.PlainText
+      text: mk.action ? mk.action.icon : ""
+      color: mk.primary ? root.onAccent(root.accentFor(root.focused)) : (mk.on ? root.accentFor(root.focused) : root.popupFg)
+      opacity: mk.primary || mk.on || mk.actionId !== "shuffle" && mk.actionId !== "loop" ? 1 : 0.55
+      font.family: root.family
+      font.pixelSize: mk.primary ? Style.font.displayLarge : (mk.transport ? Style.font.display : Style.font.iconLarge)
+    }
+
+    // A dot under shuffle / repeat while on.
+    Rectangle {
+      visible: mk.on
+      width: Style.space(4)
+      height: width
+      radius: width / 2
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      color: root.accentFor(root.focused)
+    }
+
+    MouseArea {
+      id: mkArea
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.mediaKey(mk.actionId)
+    }
+
+    // Same look as the shell's buttons' tooltips.
+    QQC.ToolTip {
+      visible: mk.tip !== "" && mkArea.containsMouse
+      text: mk.tip
+      delay: 400
+      padding: 0
+      background: BorderSurface {
+        color: Color.tooltip.background
+        borderSpec: Border.localOrSurfaceSpec("tooltip", "border", Color.tooltip.border, Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
+        radius: 0
+      }
+      contentItem: Text {
+        textFormat: Text.PlainText
+        text: mk.tip
+        color: Color.tooltip.text
+        font.family: root.family
+        font.pixelSize: Style.font.bodySmall
+        leftPadding: Style.spacing.controlPaddingX
+        rightPadding: Style.spacing.controlPaddingX
+        topPadding: Style.spacing.controlPaddingY
+        bottomPadding: Style.spacing.controlPaddingY
+      }
+    }
   }
 
   // --- motion -------------------------------------------------------------------
@@ -300,6 +438,35 @@ Panel {
     NumberAnimation { target: root; property: "pulse"; to: 0; duration: 520; easing.type: Easing.InOutSine }
   }
 
+  // Three bars bouncing at their own pace: something is playing.
+  component Equalizer: Row {
+    id: eq
+    property color color: root.fg
+    property bool running: false
+    spacing: Style.space(2)
+
+    Repeater {
+      model: [{ rest: 0.55, period: 460 }, { rest: 1.0, period: 340 }, { rest: 0.4, period: 560 }]
+
+      Rectangle {
+        required property var modelData
+        property real level: modelData.rest
+        anchors.bottom: parent.bottom
+        width: Math.max(2, Style.space(3))
+        height: Math.max(width, eq.height * level)
+        radius: width / 2
+        color: eq.color
+
+        SequentialAnimation on level {
+          running: eq.running
+          loops: Animation.Infinite
+          NumberAnimation { to: 1.0; duration: modelData.period; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 0.25; duration: modelData.period * 1.2; easing.type: Easing.InOutSine }
+        }
+      }
+    }
+  }
+
   // Charge level, blue to green, with a wave of light running through it.
   component ChargeWave: Item {
     id: wave
@@ -435,17 +602,34 @@ Panel {
       anchors.centerIn: parent
       spacing: Style.space(6)
 
-      Text {
-        id: pillIcon
+      // Media playing: three little bars dancing; anything else: its icon.
+      Item {
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(16)
-        horizontalAlignment: Text.AlignHCenter
-        textFormat: Text.PlainText
-        text: pill.hasActivity ? root.pillItem.icon : "\u{f0996}"
-        color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : (root.pillCharging ? root.chargeGreen : root.fg)
-        opacity: pill.hasActivity ? 1 : 0.6
-        font.family: root.family
-        font.pixelSize: Style.font.body
+        height: pillIcon.implicitHeight
+        readonly property bool playing: pill.hasActivity && root.pillItem.module === "media" && root.pillItem.playing === true
+
+        Text {
+          id: pillIcon
+          anchors.fill: parent
+          visible: !parent.playing
+          horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
+          textFormat: Text.PlainText
+          text: pill.hasActivity ? root.pillItem.icon : "\u{f0996}"
+          color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : (root.pillCharging ? root.chargeGreen : root.fg)
+          opacity: pill.hasActivity ? 1 : 0.6
+          font.family: root.family
+          font.pixelSize: Style.font.body
+        }
+
+        Equalizer {
+          anchors.centerIn: parent
+          visible: parent.playing
+          height: Style.space(11)
+          color: root.accentFor(root.pillItem)
+          running: parent.playing && root.motion
+        }
       }
 
       // Text longer than the slot either scrolls around (two copies side by
@@ -651,6 +835,63 @@ Panel {
       }
     }
 
+    // Media: the cover itself, blurred, behind everything (with "Dynamic
+    // colors"), fading into the theme's background toward the bottom so the
+    // rest of the popup reads as usual. Cut to the card's rounded corners.
+    Item {
+      id: coverBackdrop
+      anchors.fill: tintLayer
+      opacity: root.mediaThemed && root.coverUrl !== "" && backdropImage.status === Image.Ready ? (root.darkTheme ? 0.5 : 0.35) : 0
+      visible: opacity > 0
+
+      Behavior on opacity {
+        enabled: root.motion
+        NumberAnimation { duration: 320 }
+      }
+
+      Image {
+        id: backdropImage
+        anchors.fill: parent
+        visible: false
+        source: root.mediaThemed ? root.coverUrl : ""
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+        // Small: it is blurred anyway, and cheaper to blur.
+        sourceSize.width: 96
+        sourceSize.height: 96
+      }
+
+      Rectangle {
+        id: backdropMask
+        anchors.fill: parent
+        radius: tintLayer.radius
+        visible: false
+        layer.enabled: true
+      }
+
+      MultiEffect {
+        anchors.fill: parent
+        source: backdropImage
+        autoPaddingEnabled: false
+        blurEnabled: true
+        blur: 1.0
+        blurMax: 48
+        saturation: 0.2
+        maskEnabled: true
+        maskSource: backdropMask
+      }
+
+      Rectangle {
+        anchors.fill: parent
+        radius: tintLayer.radius
+        gradient: Gradient {
+          GradientStop { position: 0.0; color: Util.alpha(Color.popups.background, 0.15) }
+          GradientStop { position: 0.55; color: Util.alpha(Color.popups.background, 0.6) }
+          GradientStop { position: 1.0; color: Color.popups.background }
+        }
+      }
+    }
+
     // The content shows only as far as the card has unfolded.
     Item {
       anchors.fill: parent
@@ -714,6 +955,7 @@ Panel {
             weatherWidgetState: root.service ? root.service.weatherWidgetState : ""
             indicatorsState: root.service ? root.service.indicatorsState : ""
             updateSourcesAvailable: root.service ? root.service.availableUpdateSources : []
+            playerNames: root.service ? root.service.playerNames : []
             onIndicatorsRequested: function(replace) { if (root.service) root.service.setIndicators(replace) }
             onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
             onBackRequested: root.settingsOpen = false
@@ -865,11 +1107,19 @@ Panel {
                   // Media with cover art gets the cover, like omarchy-plugin-media;
                   // a screenshot gets its thumbnail.
                   readonly property bool hasCover: root.cardImage !== ""
-                  width: Style.space(root.shotUrl !== "" ? 96 : (hasCover ? 64 : 48))
+                  readonly property bool raisable: root.isMedia && root.focused.canRaise === true
+                  width: Style.space(root.shotUrl !== "" ? 96 : (hasCover ? 72 : 48))
                   height: width
                   radius: hasCover ? Style.spacing.labelGap : width / 2
                   color: Util.alpha(root.accentFor(root.focused), 0.2)
+                  scale: coverArea.pressed ? 0.95 : 1
 
+                  Behavior on scale {
+                    enabled: root.motion
+                    NumberAnimation { duration: 120 }
+                  }
+
+                  // A new cover fades in once it has loaded.
                   Image {
                     anchors.fill: parent
                     anchors.margins: Style.space(2)
@@ -878,7 +1128,39 @@ Panel {
                     sourceSize.width: 256
                     sourceSize.height: 256
                     source: root.cardImage
-                    visible: cardIcon.hasCover && status === Image.Ready
+                    visible: cardIcon.hasCover && opacity > 0
+                    opacity: status === Image.Ready ? 1 : 0
+
+                    Behavior on opacity {
+                      enabled: root.motion
+                      NumberAnimation { duration: 260 }
+                    }
+                  }
+
+                  // Click the cover: bring the player's window up.
+                  MouseArea {
+                    id: coverArea
+                    anchors.fill: parent
+                    enabled: cardIcon.raisable
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.mediaKey("raise")
+                  }
+
+                  Rectangle {
+                    anchors.fill: parent
+                    radius: parent.radius
+                    visible: coverArea.containsMouse
+                    color: Util.alpha("black", 0.35)
+
+                    Text {
+                      anchors.centerIn: parent
+                      textFormat: Text.PlainText
+                      text: "\u{f03cc}"
+                      color: "white"
+                      font.family: root.family
+                      font.pixelSize: Style.font.iconLarge
+                    }
                   }
 
                   Text {
@@ -893,9 +1175,11 @@ Panel {
                 }
 
                 Column {
-                  width: parent.width - cardIcon.width - parent.spacing
+                  id: cardText
+                  width: parent.width - cardIcon.width - parent.spacing - (mediaHide.visible ? mediaHide.width + parent.spacing : 0)
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(3)
+                  transform: Translate { id: trackShift }
 
                   Text {
                     width: parent.width
@@ -918,6 +1202,29 @@ Panel {
                     font.pixelSize: Style.font.bodySmall
                     elide: Text.ElideRight
                   }
+
+                  // Media: the album, under the artist.
+                  Text {
+                    width: parent.width
+                    visible: root.isMedia && text !== ""
+                    textFormat: Text.PlainText
+                    text: root.isMedia && root.focused.album !== root.focused.title ? root.focused.album : ""
+                    color: Qt.darker(root.popupFg, 1.6)
+                    font.family: root.family
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                }
+
+                // Media cards have their own controls below; hiding sits here.
+                Button {
+                  id: mediaHide
+                  visible: root.isMedia
+                  anchors.top: parent.top
+                  iconText: "\u{f0209}"
+                  foreground: Qt.darker(root.popupFg, 1.2)
+                  tooltipText: "Hide until it changes (x / right click)"
+                  onClicked: if (root.service && root.focused) root.service.dismiss(root.focused.id)
                 }
               }
 
@@ -964,7 +1271,12 @@ Panel {
 
                 Rectangle {
                   visible: progressBar.seekable
-                  readonly property real size: Style.space(progressBar.dragging ? 14 : 10)
+                  // Grows under the pointer, more while dragging.
+                  property real size: Style.space(progressBar.dragging ? 14 : (seekArea.containsMouse ? 12 : 10))
+                  Behavior on size {
+                    enabled: root.motion
+                    NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                  }
                   width: size
                   height: size
                   radius: size / 2
@@ -974,8 +1286,10 @@ Panel {
                 }
 
                 MouseArea {
+                  id: seekArea
                   anchors.fill: parent
                   enabled: progressBar.seekable
+                  hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
                   function valueAt(x) { return Math.max(0, Math.min(1, x / progressBar.width)) }
                   onPressed: function(mouse) { progressBar.dragging = true; progressBar.dragValue = valueAt(mouse.x) }
@@ -985,6 +1299,79 @@ Panel {
                     progressBar.dragging = false
                   }
                   onCanceled: progressBar.dragging = false
+                }
+              }
+
+              // 1:51 ................................ -1:20 (follows a drag).
+              Item {
+                width: parent.width
+                height: elapsedText.implicitHeight
+                visible: root.isMedia && root.focused.length > 0
+                readonly property real at: progressBar.shownValue * (root.focused ? root.focused.length : 0)
+
+                Text {
+                  id: elapsedText
+                  anchors.left: parent.left
+                  textFormat: Text.PlainText
+                  text: Model.formatDuration(parent.at * 1000)
+                  color: Qt.darker(root.popupFg, 1.3)
+                  font.family: root.family
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  anchors.right: parent.right
+                  textFormat: Text.PlainText
+                  text: "-" + Model.formatDuration(Math.max(0, (root.focused ? root.focused.length : 0) - parent.at) * 1000)
+                  color: Qt.darker(root.popupFg, 1.3)
+                  font.family: root.family
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(2)
+                visible: root.focused !== null && root.focused.details.length > 0 && !root.isWeather && !root.isMedia
+
+                Repeater {
+                  model: root.focused ? root.focused.details : []
+
+                  Text {
+                    required property var modelData
+                    width: parent.width
+                    textFormat: Text.PlainText
+                    text: modelData
+                    color: Qt.darker(root.popupFg, 1.2)
+                    font.family: root.family
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                }
+              }
+
+              //   ⤨  ↺10  ⏮  ( ⏯ )  ⏭  10↻  ⟳     (only what the player can do)
+              Item {
+                width: parent.width
+                height: mediaKeys.height
+                visible: root.isMedia
+
+                Row {
+                  id: mediaKeys
+                  anchors.centerIn: parent
+                  spacing: Style.space(10)
+
+                  MediaKey { actionId: "shuffle"; on: root.isMedia && root.focused.shuffle === true; tip: "Shuffle" }
+                  MediaKey { actionId: "back10"; tip: "Back 10 s" }
+                  MediaKey { actionId: "previous"; tip: "Previous" }
+                  MediaKey { actionId: "playPause"; primary: true; tip: "Play / pause (Enter, middle click)" }
+                  MediaKey { actionId: "next"; tip: "Next" }
+                  MediaKey { actionId: "forward10"; tip: "Forward 10 s" }
+                  MediaKey {
+                    actionId: "loop"
+                    on: root.isMedia && root.focused.loop !== "" && root.focused.loop !== "none"
+                    tip: root.isMedia && root.focused.loop === "track" ? "Repeat: this track" : (root.isMedia && root.focused.loop === "playlist" ? "Repeat: all" : "Repeat: off")
+                  }
                 }
               }
 
@@ -1061,30 +1448,10 @@ Panel {
                 }
               }
 
-              Column {
-                width: parent.width
-                spacing: Style.space(2)
-                visible: root.focused !== null && root.focused.details.length > 0 && !root.isWeather
-
-                Repeater {
-                  model: root.focused ? root.focused.details : []
-
-                  Text {
-                    required property var modelData
-                    width: parent.width
-                    textFormat: Text.PlainText
-                    text: modelData
-                    color: Qt.darker(root.popupFg, 1.2)
-                    font.family: root.family
-                    font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
-                  }
-                }
-              }
-
               Flow {
                 width: parent.width
                 spacing: Style.space(6)
+                visible: !root.isMedia
 
                 Repeater {
                   model: root.focused ? root.focused.actions : []
