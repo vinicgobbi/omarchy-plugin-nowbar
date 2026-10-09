@@ -38,9 +38,16 @@
       "moduleBluetooth": true,
       "moduleScreenshot": true,
       "moduleWeather": true,
+      "moduleUpdates": true,
+      "updateSources": "omarchy,pacman,aur,flatpak",
+      "updateInterval": 180,
+      "updateOnStartup": true,
       "weatherUnit": "auto",
       "autoFocus": true,
       "coverAccent": true,
+      "mediaPausedMinutes": 15,
+      "mediaIgnore": "",
+      "animations": true,
       "whenEmpty": "brief",
       "showProgress": true,
       "showCount": true,
@@ -53,7 +60,8 @@
       "timerPresets": "1,5,10,25",
       "pomodoroFocus": 25,
       "pomodoroBreak": 5,
-      "pomodoroLongBreak": 15
+      "pomodoroLongBreak": 15,
+      "pomodoroDnd": false
     },
     "schema": [
       {
@@ -137,6 +145,36 @@
         "defaultValue": true
       },
       {
+        "key": "moduleUpdates",
+        "type": "boolean",
+        "label": "Updates",
+        "description": "A card when updates are waiting (Omarchy, official packages, AUR, and Flatpak if installed), checked now and then. Checking needs no password; the card's Update button opens Omarchy's updater in a terminal, which asks for it.",
+        "defaultValue": true
+      },
+      {
+        "key": "updateSources",
+        "type": "string",
+        "label": "Update sources",
+        "description": "Comma separated: omarchy, pacman (official packages), aur (yay) and flatpak. The first three come with Omarchy; flatpak is checked only if installed. Empty: none.",
+        "defaultValue": "omarchy,pacman,aur,flatpak"
+      },
+      {
+        "key": "updateInterval",
+        "type": "integer",
+        "label": "Check for updates every (min)",
+        "min": 5,
+        "max": 10080,
+        "step": 15,
+        "defaultValue": 180
+      },
+      {
+        "key": "updateOnStartup",
+        "type": "boolean",
+        "label": "Check for updates at startup",
+        "description": "Once each time the computer starts, about a minute after login.",
+        "defaultValue": true
+      },
+      {
         "key": "weatherUnit",
         "type": "enum",
         "label": "Temperature",
@@ -159,6 +197,30 @@
         "type": "boolean",
         "label": "Dynamic colors",
         "description": "Media takes its colors from the album cover and weather from the sky: the highlight, the popup's border and a tint of its background.",
+        "defaultValue": true
+      },
+      {
+        "key": "mediaPausedMinutes",
+        "type": "integer",
+        "label": "Paused media leaves the pill after (min)",
+        "description": "A paused player gives the pill to what else is going on, and stays in the carousel. 0: never.",
+        "min": 0,
+        "max": 1440,
+        "step": 5,
+        "defaultValue": 15
+      },
+      {
+        "key": "mediaIgnore",
+        "type": "string",
+        "label": "Hidden players",
+        "description": "Comma separated player names (e.g. chromium, firefox) kept out of the Now Bar. The media keys still reach them.",
+        "defaultValue": ""
+      },
+      {
+        "key": "animations",
+        "type": "boolean",
+        "label": "Animations",
+        "description": "The popup unfolds from the pill, its sections and cards slide in, and the pill pulses when something urgent comes up. Off: everything changes at once.",
         "defaultValue": true
       },
       {
@@ -267,6 +329,13 @@
         "max": 120,
         "step": 5,
         "defaultValue": 15
+      },
+      {
+        "key": "pomodoroDnd",
+        "type": "boolean",
+        "label": "Pomodoro: Do Not Disturb while focusing",
+        "description": "Turned on for each focus block and off for the breaks; left alone if it was already on.",
+        "defaultValue": false
       }
     ]
   }

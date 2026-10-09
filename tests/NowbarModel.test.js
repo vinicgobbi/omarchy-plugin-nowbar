@@ -229,13 +229,24 @@ test("nextIndex wraps both ways", () => {
 
 test("resolveFocus: newcomers take focus unless less important or manual hold", () => {
   const list = [{ id: "privacy", priority: 10 }, { id: "timer", priority: 40 }, { id: "media", priority: 60 }]
-  const base = { list, focusId: "timer", knownIds: { timer: true, media: true }, autoFocus: true, manualUntil: 0, now: 100 }
+  const base = { list, focusId: "timer", knownIds: { timer: 40, media: 60 }, autoFocus: true, manualUntil: 0, now: 100 }
   assert.equal(M.resolveFocus(base), "privacy")
   assert.equal(M.resolveFocus({ ...base, autoFocus: false }), "timer")
   assert.equal(M.resolveFocus({ ...base, manualUntil: 200 }), "timer")
-  assert.equal(M.resolveFocus({ ...base, focusId: "privacy", knownIds: { privacy: true, timer: true } }), "privacy")
-  assert.equal(M.resolveFocus({ ...base, focusId: "gone", knownIds: { privacy: true, timer: true, media: true } }), "privacy")
+  assert.equal(M.resolveFocus({ ...base, focusId: "privacy", knownIds: { privacy: 10, timer: 40 } }), "privacy")
+  assert.equal(M.resolveFocus({ ...base, focusId: "gone", knownIds: { privacy: 10, timer: 40, media: 60 } }), "privacy")
   assert.equal(M.resolveFocus({ ...base, list: [] }), "")
+})
+
+test("resolveFocus: an activity that got more important counts as new", () => {
+  // Paused media (95) starts playing (60) while charging (80) has the pill.
+  const list = [{ id: "media", priority: 60 }, { id: "charging", priority: 80 }]
+  const base = { list, focusId: "charging", knownIds: { media: 95, charging: 80 }, autoFocus: true, manualUntil: 0, now: 100 }
+  assert.equal(M.resolveFocus(base), "media")
+  assert.equal(M.resolveFocus({ ...base, manualUntil: 200 }), "charging")
+  // Same importance as before, or less: no change.
+  assert.equal(M.resolveFocus({ ...base, knownIds: { media: 60, charging: 80 } }), "charging")
+  assert.equal(M.resolveFocus({ ...base, list: [{ id: "media", priority: 95 }, { id: "charging", priority: 80 }], knownIds: { media: 60, charging: 80 } }), "charging")
 })
 
 test("prefs normalize and store only non-defaults", () => {
@@ -250,6 +261,8 @@ test("prefs normalize and store only non-defaults", () => {
   assert.equal(M.normalizePrefs({ whenEmpty: "icon" }).whenEmpty, "icon")
   assert.equal(p.textMode, "scroll")
   assert.equal(p.coverAccent, true)
+  assert.equal(p.animations, true)
+  assert.equal(M.normalizePrefs({ animations: false }).animations, false)
   assert.equal(M.normalizePrefs({ textMode: "ellipsis" }).textMode, "ellipsis")
   assert.equal(p.maxWidth, 600)
   assert.equal(p.autoFocus, true)
@@ -481,7 +494,7 @@ test("weather card is ambient and lowest priority", () => {
   assert.equal(M.weatherActivity(null, true).title, "Update available")
   // A live activity always takes the focus from it.
   const list = M.sortActivities([a, { id: "timer", priority: 40 }])
-  assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: true }, autoFocus: true, manualUntil: 0, now: 1 }), "timer")
+  assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: 99 }, autoFocus: true, manualUntil: 0, now: 1 }), "timer")
 })
 
 test("cover base color and popup surface tint", () => {
@@ -525,4 +538,262 @@ test("Quick toggles / Quick start item lists", () => {
   const d = M.normalizePrefs({})
   assert.deepEqual(d.quickStartExtras, ["stopwatch", "pomodoro", "sleep"])
   assert.deepEqual(M.entrySettings(d, {}), {})
+})
+
+test("parseUpdates reads the script's lines and skips junk", () => {
+  const text = [
+    "pacman\taether\t4.32.0-1\t4.32.0-2",
+    "pacman\tomarchy\t3.1-1\t3.2-1",
+    "omarchy\tOmarchy\t\tomarchy 3.1-1 -> 3.2-1",
+    "flatpak\torg.gaphor.Gaphor\t3.3.2\t3.3.2",
+    "aur\tyay-bin\t12.1\t12.2",
+    "error\taur\tyay -Qua failed",
+    "error\tbogus\tx",
+    "weird\tline",
+    "pacman\t\t1\t2",
+    "pacman\tbad\u0007name\t1\t2"
+  ].join("\n")
+  const r = M.parseUpdates(text)
+  assert.deepEqual(r.items.map(u => u.source + ":" + u.name), ["pacman:aether", "omarchy:Omarchy", "flatpak:org.gaphor.Gaphor", "aur:yay-bin", "pacman:bad name"])
+  assert.deepEqual(r.errors, ["aur"])
+  // Without the omarchy source, Omarchy's package stays among the official ones.
+  assert.equal(M.parseUpdates("pacman\tomarchy\t1\t2").items.length, 1)
+  assert.deepEqual(M.parseUpdates(""), { items: [], errors: [] })
+})
+
+test("updatesActivity sums up by source", () => {
+  const state = M.normalizeUpdates({
+    items: [
+      { source: "pacman", name: "a", from: "1", to: "2" },
+      { source: "pacman", name: "b", from: "1", to: "2" },
+      { source: "flatpak", name: "org.x.Y", from: "3", to: "3" },
+      { source: "omarchy", name: "Omarchy", from: "", to: "omarchy 1 -> 2" }
+    ],
+    errors: ["aur"],
+    checkedAt: new Date(2026, 9, 8, 14, 5).getTime()
+  })
+  const a = M.updatesActivity(state, false)
+  assert.equal(a.title, "4 updates")
+  assert.equal(a.subtitle, "Omarchy · 2 Official · 1 Flatpak")
+  assert.equal(a.module, "updates")
+  assert.equal(a.urgent, false)
+  assert.ok(a.details[0].includes("omarchy 1 -> 2"))
+  assert.ok(a.details.includes("a  ·  1 → 2"))
+  assert.ok(a.details.includes("org.x.Y  ·  3 (new build)"))
+  assert.ok(a.details.some(d => d.includes("Couldn't check AUR")))
+  assert.ok(a.details.includes("Checked at 14:05"))
+  assert.deepEqual(a.actions.map(x => x.id), ["update", "check"])
+  assert.equal(M.updatesActivity(state, true).subtitle, "Checking…")
+  assert.equal(M.updatesActivity(M.normalizeUpdates({}), false), null)
+  // Same list, same signature; another list, another one.
+  assert.equal(M.updatesActivity(state, true).signature, a.signature)
+  assert.notEqual(M.updatesActivity(M.normalizeUpdates({ items: [{ source: "pacman", name: "a", to: "3" }] }), false).signature, a.signature)
+})
+
+test("updates prefs, schedule and interval labels", () => {
+  const p = M.normalizePrefs({})
+  assert.equal(p.modules.updates, true)
+  assert.deepEqual(p.updateSourceList, ["omarchy", "pacman", "aur", "flatpak"])
+  assert.equal(p.updateInterval, 180)
+  assert.equal(p.updateOnStartup, true)
+  assert.deepEqual(M.normalizePrefs({ updateSources: "flatpak,nope,pacman" }).updateSourceList, ["pacman", "flatpak"])
+  assert.equal(M.normalizePrefs({ updateInterval: 1 }).updateInterval, 5)
+  assert.equal(M.normalizePrefs({ updateInterval: 99999 }).updateInterval, 10080)
+  assert.equal(M.updatesDue(0, 180, 1000), true)
+  assert.equal(M.updatesDue(1000, 180, 1000 + 179 * 60000), false)
+  assert.equal(M.updatesDue(1000, 180, 1000 + 180 * 60000), true)
+  assert.equal(M.intervalLabel(30), "30 min")
+  assert.equal(M.intervalLabel(180), "3 h")
+  assert.equal(M.intervalLabel(90), "1 h 30 min")
+  assert.equal(M.intervalLabel(1440), "1 d")
+  assert.deepEqual(M.normalizeUpdates({ items: [{ source: "x", name: "a" }, { source: "aur", name: "" }], errors: ["aur", "x"], checkedAt: "5" }),
+    { items: [], errors: ["aur"], checkedAt: 5 })
+})
+
+test("mergeUpdates keeps what a failed source listed; updateCommand", () => {
+  const prev = { items: [{ source: "aur", name: "x", from: "1", to: "2" }, { source: "pacman", name: "old", from: "1", to: "2" }], errors: [], checkedAt: 1 }
+  const m = M.mergeUpdates(prev, { items: [{ source: "pacman", name: "new", from: "1", to: "2" }], errors: ["aur"] }, 50)
+  assert.deepEqual(m.items.map(u => u.name), ["new", "x"])
+  assert.deepEqual(m.errors, ["aur"])
+  assert.equal(m.checkedAt, 50)
+  assert.deepEqual(M.updatesFor(m, ["pacman"]).items.map(u => u.name), ["new"])
+  assert.deepEqual(M.updatesFor(m, ["pacman"]).errors, [])
+  assert.equal(M.updateCommand([{ source: "pacman" }]), "omarchy-update")
+  assert.equal(M.updateCommand([{ source: "flatpak" }]), "flatpak update")
+  assert.equal(M.updateCommand([{ source: "aur" }, { source: "flatpak" }]), "omarchy-update && flatpak update")
+  assert.equal(M.updateCommand([]), "omarchy-update")
+})
+
+test("newUpdates counts what a check found that wasn't waiting before", () => {
+  const prev = { items: [{ source: "pacman", name: "a", to: "2" }, { source: "aur", name: "b", to: "1" }] }
+  assert.equal(M.newUpdates(prev, prev), 0)
+  assert.equal(M.newUpdates(prev, { items: [{ source: "pacman", name: "a", to: "2" }] }), 0)
+  assert.equal(M.newUpdates(prev, { items: [{ source: "pacman", name: "a", to: "3" }, { source: "flatpak", name: "c", to: "1" }] }), 2)
+  assert.equal(M.newUpdates({ items: [] }, prev), 2)
+})
+
+test("the updates card has a normal priority", () => {
+  const a = M.updatesActivity(M.normalizeUpdates({ items: [{ source: "pacman", name: "a", from: "1", to: "2" }] }), false)
+  const list = M.sortActivities([a, M.chargingActivity({ present: true, charging: true, percentage: 0.5 }), M.timerActivity(M.startTimer(60, 0), 0)])
+  assert.deepEqual(list.map(x => x.id), ["timer", "updates", "charging"])
+})
+
+test("only the update sources this system has are offered and checked", () => {
+  // A fresh Omarchy install: no flatpak.
+  const fresh = M.parseAvailableSources("omarchy\npacman\naur\n")
+  assert.deepEqual(fresh, ["omarchy", "pacman", "aur"])
+  assert.deepEqual(M.parseAvailableSources("flatpak\nparu\n\npacman"), ["pacman", "flatpak"])
+  assert.deepEqual(M.activeSources(["omarchy", "pacman", "aur", "flatpak"], fresh), ["omarchy", "pacman", "aur"])
+  assert.deepEqual(M.activeSources(["flatpak"], fresh), [])
+  assert.deepEqual(M.activeSources(["aur", "flatpak"], []), [])
+})
+
+test("actions that open an app are marked, so the popup closes first", () => {
+  const u = M.updatesActivity(M.normalizeUpdates({ items: [{ source: "pacman", name: "a", from: "1", to: "2" }] }), false)
+  assert.deepEqual(u.actions.filter(a => a.opensApp).map(a => a.id), ["update"])
+  const s = M.screenshotActivity({ path: "/tmp/x.png", name: "x.png", at: 0 })
+  assert.deepEqual(s.actions.filter(a => a.opensApp).map(a => a.id), ["edit", "open"])
+})
+
+test("media card: playing, album, long-form skips, shuffle, repeat, open player", () => {
+  const base = { key: "spotify", title: "Song", artist: "Band", album: "Record", player: "Spotify", playing: true,
+    canToggle: true, canPrevious: true, canNext: true, canSeek: true, position: 30, length: 200 }
+  const a = M.mediaActivity(base)
+  assert.equal(a.playing, true)
+  assert.equal(a.album, "Record")
+  assert.deepEqual(a.details, ["Record"])
+  assert.equal(a.position, 30)
+  assert.equal(a.long, false)
+  assert.equal(a.shuffle, null)
+  assert.equal(a.loop, "")
+  assert.deepEqual(a.actions.map(x => x.id), ["playPause", "previous", "next"])
+  const full = M.mediaActivity({ ...base, length: 3600, shuffleSupported: true, shuffle: true, loopSupported: true, loop: "track", canRaise: true })
+  assert.equal(full.long, true)
+  assert.equal(full.shuffle, true)
+  assert.equal(full.loop, "track")
+  assert.deepEqual(full.actions.map(x => x.id), ["playPause", "previous", "next", "back10", "forward10", "shuffle", "loop", "raise"])
+  assert.equal(full.actions.find(x => x.id === "raise").opensApp, true)
+  // Not seekable: no skips, however long.
+  assert.equal(M.mediaActivity({ ...base, length: 3600, canSeek: false }).long, false)
+  // An album named like the track isn't repeated.
+  assert.deepEqual(M.mediaActivity({ ...base, album: "Song" }).details, [])
+  assert.equal(M.nextLoop("none"), "playlist")
+  assert.equal(M.nextLoop("playlist"), "track")
+  assert.equal(M.nextLoop("track"), "none")
+})
+
+test("ignored players and paused media leaving the pill", () => {
+  const ig = M.parseIgnoredPlayers(" Chromium, firefox,chromium,, ")
+  assert.deepEqual(ig, ["chromium", "firefox"])
+  assert.equal(M.isIgnoredPlayer(ig, ["Chromium"]), true)
+  assert.equal(M.isIgnoredPlayer(ig, ["", "", "org.mpris.MediaPlayer2.firefox.instance_1_45"]), true)
+  assert.equal(M.isIgnoredPlayer(ig, ["Spotify", "spotify", "org.mpris.MediaPlayer2.spotify"]), false)
+  assert.equal(M.isIgnoredPlayer([], ["Chromium"]), false)
+  assert.equal(M.toggleIgnoredPlayer("chromium", "Firefox", true), "chromium,firefox")
+  assert.equal(M.toggleIgnoredPlayer("chromium,firefox", "Chromium", false), "firefox")
+  const paused = { module: "media", playing: false }
+  assert.equal(M.staleMedia(paused, 1000, 1000 + 15 * 60000, 15), true)
+  assert.equal(M.staleMedia(paused, 1000, 1000 + 14 * 60000, 15), false)
+  assert.equal(M.staleMedia(paused, 1000, 1000 + 99 * 60000, 0), false)
+  assert.equal(M.staleMedia({ module: "media", playing: true }, 1000, 1e12, 15), false)
+  assert.equal(M.staleMedia({ module: "timer" }, 1000, 1e12, 15), false)
+  const p = M.normalizePrefs({ mediaIgnore: "Chromium", mediaPausedMinutes: 5000 })
+  assert.deepEqual(p.ignoredPlayers, ["chromium"])
+  assert.equal(p.mediaPausedMinutes, 1440)
+  assert.equal(M.normalizePrefs({}).mediaPausedMinutes, 15)
+})
+
+test("mixOklab: ends exact, a clean middle between opposite colors", () => {
+  const blue = { r: 0.22, g: 0.55, b: 0.95, a: 1 }
+  const orange = { r: 0.98, g: 0.45, b: 0.09, a: 1 }
+  const near = (x, y) => Math.abs(x - y) < 1e-3
+  const s = M.mixOklab(blue, orange, 0), e = M.mixOklab(blue, orange, 1)
+  assert.ok(near(s.r, blue.r) && near(s.g, blue.g) && near(s.b, blue.b))
+  assert.ok(near(e.r, orange.r) && near(e.g, orange.g) && near(e.b, orange.b))
+  // Halfway: lighter than the straight RGB average (no muddy dip), and no
+  // green showing up (no rainbow).
+  const m = M.mixOklab(blue, orange, 0.5)
+  const lum = c => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+  const rgbMid = { r: (blue.r + orange.r) / 2, g: (blue.g + orange.g) / 2, b: (blue.b + orange.b) / 2 }
+  assert.ok(lum(m) > lum(rgbMid))
+  assert.ok(m.g <= Math.max(m.r, m.b) + 0.05)
+})
+
+test("timer: time's up card, ending flag", () => {
+  const t = M.startTimer(300, 0)
+  assert.equal(M.timerActivity(t, 280000).ending, false)
+  assert.equal(M.timerActivity(t, 295000).ending, true)
+  const d = M.doneTimer(t, 300000)
+  const a = M.timerActivity(d, 300500)
+  assert.equal(a.title, "Time's up")
+  assert.equal(a.done, true)
+  assert.deepEqual(a.actions.map(x => x.id), ["repeat", "add", "ok"])
+  assert.equal(M.doneExpired(d, 300000 + M.TIMER_DONE_MS - 1), false)
+  assert.equal(M.doneExpired(d, 300000 + M.TIMER_DONE_MS), true)
+  assert.equal(M.normalizeTimer(d).state, "idle")
+})
+
+test("pomodoro: focus blocks counted per day", () => {
+  const day1 = new Date(2026, 9, 8, 10, 0).getTime()
+  const day2 = new Date(2026, 9, 9, 9, 0).getTime()
+  let s = M.countFocusDone(null, day1)
+  s = M.countFocusDone(s, day1)
+  assert.equal(s.count, 2)
+  assert.equal(M.normalizePomodoroStats(s, day2).count, 0)
+  const cfg = M.pomodoroConfig({})
+  const a = M.pomodoroActivity(M.startPomodoro(cfg, day1), cfg, day1, s)
+  assert.ok(a.subtitle.endsWith("· 2 today"))
+  assert.ok(!M.pomodoroActivity(M.startPomodoro(cfg, day1), cfg, day1, { day: "x", count: 0 }).subtitle.includes("today"))
+})
+
+test("reminders: postpone, fired, unit check", () => {
+  assert.equal(M.validReminderUnit("omarchy-reminder-5m-1791507560"), true)
+  assert.equal(M.validReminderUnit("omarchy-reminder-5m-1; rm -rf ~"), false)
+  assert.equal(M.validReminderUnit("other.timer"), false)
+  assert.equal(M.postponeMinutes(10 * 60000, 0, 5), 15)
+  assert.equal(M.postponeMinutes(90000, 0, 5), 7)
+  const before = [{ unit: "a", at: 1000 }, { unit: "b", at: 999999 }]
+  assert.deepEqual(M.firedReminders(before, [{ unit: "b", at: 999999 }], 1500).map(r => r.unit), ["a"])
+  // Cleared early (not due yet): not "fired".
+  assert.deepEqual(M.firedReminders(before, [], 1500).map(r => r.unit), ["a"])
+  const f = M.firedReminderActivity({ label: "Oven", at: 1000 })
+  assert.equal(f.title, "Oven")
+  assert.deepEqual(f.actions.map(x => x.id), ["snooze5", "snooze15", "ok"])
+  const r = M.remindersActivity([{ unit: "u", label: "Call", message: "Call", at: 600000, minutes: 10 }], 0)
+  assert.deepEqual(r.actions.map(x => x.id), ["postpone", "clear"])
+})
+
+test("recorded video: only Omarchy's recordings in the folder", () => {
+  const dir = "/home/u/Videos"
+  assert.equal(M.validRecordingPath(dir + "/screenrecording-2026-10-08_22-10-01.mp4", dir), true)
+  assert.equal(M.validRecordingPath(dir + "/screenrecording-2026-10-08_22-10-01.mp4", dir + "/"), true)
+  assert.equal(M.validRecordingPath(dir + "/../x/screenrecording-1.mp4", dir), false)
+  assert.equal(M.validRecordingPath("/etc/passwd", dir), false)
+  assert.equal(M.validRecordingPath(dir + "/notes.mp4", dir), false)
+  const a = M.recordedActivity({ path: dir + "/screenrecording-1.mp4", name: "screenrecording-1.mp4", thumb: "/c/t.png" })
+  assert.equal(a.image, "/c/t.png")
+  assert.deepEqual(a.actions.filter(x => x.opensApp).map(x => x.id), ["open", "folder"])
+})
+
+test("bluetooth: audio action, low battery card", () => {
+  assert.deepEqual(M.bluetoothActivity({ address: "AA:BB", name: "Buds", battery: 0.8, audio: true }).actions.map(x => x.id), ["audio"])
+  assert.deepEqual(M.bluetoothActivity({ address: "AA:BB", name: "Mouse", battery: 0.8 }).actions, [])
+  assert.equal(M.btLowActivity({ address: "AA:BB", name: "Mouse", battery: 0.5 }), null)
+  assert.equal(M.btLowActivity({ address: "AA:BB", name: "Mouse", battery: -1 }), null)
+  const low = M.btLowActivity({ address: "AA:BB", name: "Mouse", battery: 0.12 })
+  assert.equal(low.id, "btlow:AA:BB")
+  assert.equal(low.title, "Mouse battery low")
+  assert.equal(low.signature, "low:3")
+})
+
+test("rain alert: likely soon or in the next slot, not while raining", () => {
+  const w = (rain0, rain1, raining) => ({ raining, location: "Here", hours: [{ hour: 12, rain: rain0 }, { hour: 15, rain: rain1 }] })
+  assert.equal(M.rainActivity(w(10, 20, false)), null)
+  assert.equal(M.rainActivity(w(80, 90, true)), null)
+  assert.equal(M.rainActivity(w(70, 0, false)).title, "Rain likely soon")
+  const a = M.rainActivity(w(20, 75, false))
+  assert.equal(a.title, "Rain likely around 15:00")
+  assert.equal(a.subtitle, "75% chance · Here")
+  assert.equal(a.signature, "rain:15")
+  assert.equal(M.rainActivity(null), null)
 })

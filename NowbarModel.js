@@ -4,9 +4,11 @@
 //
 // An activity is:
 //   { id, module, priority, icon, urgent, title, subtitle, pillText,
-//     progress (0..1, or -1 for none), details: [string], actions: [{id, label, icon}],
+//     progress (0..1, or -1 for none), details: [string], actions: [{id, label, icon, opensApp?}],
 //     signature }
 // actions[0] is the primary action (middle click on the pill, Enter in the popup).
+// An action with `opensApp` opens a window (editor, terminal...): the popup
+// closes first, so it isn't left open over the app, holding the keyboard.
 // `signature` changes whenever the activity changes state; a dismissed
 // activity comes back once its signature differs from the one dismissed.
 
@@ -119,10 +121,14 @@ var PRIORITY = {
   timer: 40,
   pomodoro: 42,
   reminderSoon: 45,
+  reminderDone: 44,
+  btLow: 52,
+  rain: 58,
   stopwatch: 50,
   bluetooth: 55,
   mediaPlaying: 60,
   push: 65,
+  updates: 65,
   sleep: 70,
   reminder: 75,
   charging: 80,
@@ -135,11 +141,24 @@ var PRIORITY = {
 var REMINDER_SOON_SECONDS = 5 * 60
 
 // --- timer & stopwatch -------------------------------------------------------
-// timer:     { state: "idle"|"running"|"paused", durationMs, endsAt, remainingMs }
+// timer:     { state: "idle"|"running"|"paused"|"done", durationMs, endsAt, remainingMs, doneAt }
 // stopwatch: { state: "idle"|"running"|"paused", startedAt, accumulatedMs, laps: [ms] }
 
 var MAX_TIMER_MS = 24 * 3600 * 1000
 var MAX_LAPS = 99
+// A finished timer stays this long as "Time's up", with Repeat / +1 min / OK.
+var TIMER_DONE_MS = 30000
+// The last seconds of a countdown: the pill pulses.
+var ENDING_MS = 10000
+
+function doneTimer(t, now) {
+  return { state: "done", durationMs: t.durationMs, endsAt: 0, remainingMs: 0, doneAt: now }
+}
+
+// The "Time's up" card is over.
+function doneExpired(t, now) {
+  return !!t && t.state === "done" && now - t.doneAt >= TIMER_DONE_MS
+}
 
 function idleTimer() {
   return { state: "idle", durationMs: 0, endsAt: 0, remainingMs: 0 }
@@ -251,6 +270,27 @@ function lapStopwatch(s, now) {
 
 function timerActivity(t, now) {
   if (!t || t.state === "idle") return null
+  if (t.state === "done") {
+    return {
+      id: "timer",
+      module: "timer",
+      priority: PRIORITY.timer,
+      icon: "\u{f0e1b}",
+      urgent: false,
+      done: true,
+      title: "Time's up",
+      subtitle: "Timer \u00b7 " + presetLabel(t.durationMs / 1000),
+      pillText: "Time's up",
+      progress: 1,
+      details: [],
+      actions: [
+        { id: "repeat", label: "Repeat", icon: "\u{f0456}" },
+        { id: "add", label: "+1 min", icon: "\u{f0415}" },
+        { id: "ok", label: "OK", icon: "\u{f012c}" }
+      ],
+      signature: "done:" + t.doneAt
+    }
+  }
   var remaining = timerRemaining(t, now)
   var running = t.state === "running"
   var text = formatCountdown(remaining)
@@ -264,6 +304,7 @@ function timerActivity(t, now) {
     subtitle: "Timer · " + presetLabel(t.durationMs / 1000),
     pillText: running ? text : text + " ‖",
     progress: t.durationMs > 0 ? 1 - remaining / t.durationMs : -1,
+    ending: running && remaining <= ENDING_MS,
     details: [],
     actions: running
       ? [{ id: "pause", label: "Pause", icon: "\u{f03e4}" }, { id: "add", label: "+1 min", icon: "\u{f0415}" }, { id: "cancel", label: "Cancel", icon: "\u{f0156}" }]
@@ -373,7 +414,24 @@ function nextPomodoro(p, cfg, now) {
 
 var PHASE_LABEL = { focus: "Focus", "break": "Break", longBreak: "Long break" }
 
-function pomodoroActivity(p, cfg, now) {
+// Focus blocks finished today, kept as { day: "YYYY-MM-DD", count }.
+function dayKey(now) {
+  var d = new Date(now)
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+}
+
+function normalizePomodoroStats(s, now) {
+  var day = dayKey(now)
+  if (!s || typeof s !== "object" || s.day !== day) return { day: day, count: 0 }
+  return { day: day, count: Math.max(0, Math.min(999, Math.floor(num(s.count, 0)))) }
+}
+
+function countFocusDone(stats, now) {
+  var s = normalizePomodoroStats(stats, now)
+  return { day: s.day, count: s.count + 1 }
+}
+
+function pomodoroActivity(p, cfg, now, stats) {
   if (!p || p.state === "idle") return null
   var remaining = timerRemaining(p, now)
   var running = p.state === "running"
@@ -387,9 +445,11 @@ function pomodoroActivity(p, cfg, now) {
     icon: p.phase === "focus" ? "\u{f04fe}" : "\u{f0176}",
     urgent: false,
     title: label + " \u00b7 " + text + (running ? "" : " (paused)"),
-    subtitle: "Pomodoro \u00b7 " + (p.phase === "focus" ? "round " + Math.max(1, round) + "/" + cfg.every : p.focusDone + " done"),
+    subtitle: "Pomodoro \u00b7 " + (p.phase === "focus" ? "round " + Math.max(1, round) + "/" + cfg.every : p.focusDone + " done")
+      + (stats && stats.count > 0 ? " \u00b7 " + stats.count + " today" : ""),
     pillText: label + " " + text + (running ? "" : " \u2016"),
     progress: p.durationMs > 0 ? 1 - remaining / p.durationMs : -1,
+    ending: running && remaining <= ENDING_MS,
     details: [],
     actions: [
       running ? { id: "pause", label: "Pause", icon: "\u{f03e4}" } : { id: "resume", label: "Resume", icon: "\u{f040a}" },
@@ -447,6 +507,7 @@ function parseReminders(text) {
     if (at <= 0) continue
     out.push({
       unit: clean(r.unit, 80),
+      message: clean(r.message),
       label: clean(r.label || r.message || "Reminder"),
       at: at * 1000,
       minutes: Math.max(0, Math.floor(num(r.minutes, 0)))
@@ -477,8 +538,56 @@ function remindersActivity(reminders, now) {
     pillText: formatCountdown(left),
     progress: total > 0 ? Math.max(0, Math.min(1, 1 - left / total)) : -1,
     details: details,
-    actions: [{ id: "clear", label: pending.length > 1 ? "Clear all" : "Clear", icon: "\u{f0156}" }],
+    actions: [
+      { id: "postpone", label: "+5 min", icon: "\u{f0415}" },
+      { id: "clear", label: pending.length > 1 ? "Clear all" : "Clear", icon: "\u{f0156}" }
+    ],
     signature: next.unit + ":" + pending.length
+  }
+}
+
+// A systemd unit omarchy-reminder made: the only kind the Now Bar stops.
+function validReminderUnit(unit) {
+  return /^omarchy-reminder-\d{1,6}m-\d{1,12}$/.test(String(unit || ""))
+}
+
+// Minutes from now for a reminder `extraMin` later than it was due.
+function postponeMinutes(at, now, extraMin) {
+  return Math.max(1, Math.ceil(Math.max(0, at - now) / 60000) + extraMin)
+}
+
+// Reminders that went off since the last read: in `before`, gone from
+// `after`, and due by now.
+function firedReminders(before, after, now) {
+  var left = {}
+  for (var i = 0; i < (after || []).length; i++) left[after[i].unit] = true
+  return (before || []).filter(function(r) { return !left[r.unit] && r.at <= now + 3000 })
+}
+
+// A reminder that just went off, for a minute: snooze it or let it go.
+// f = { label, message, at, until }
+var REMINDER_DONE_MS = 60000
+
+function firedReminderActivity(f) {
+  if (!f) return null
+  return {
+    id: "reminderDone",
+    module: "reminders",
+    priority: PRIORITY.reminderDone,
+    icon: "\u{f009a}",
+    urgent: false,
+    done: true,
+    title: f.label,
+    subtitle: "Reminder \u00b7 now",
+    pillText: f.label,
+    progress: -1,
+    details: [],
+    actions: [
+      { id: "snooze5", label: "In 5 min", icon: "\u{f04b2}" },
+      { id: "snooze15", label: "In 15 min", icon: "\u{f04b2}" },
+      { id: "ok", label: "OK", icon: "\u{f012c}" }
+    ],
+    signature: String(f.at)
   }
 }
 
@@ -724,9 +833,21 @@ function batteryActivity(b) {
 }
 
 // --- media (MPRIS) --------------------------------------------------------------
-// m = { key, title, artist, player, playing, canPrevious, canNext, canToggle,
-//       position (s), length (s), canSeek, volumeSupported, volume (0..1) }
+// m = { key, title, artist, album, player, playing, canPrevious, canNext, canToggle,
+//       position (s), length (s), canSeek, volumeSupported, volume (0..1),
+//       shuffleSupported, shuffle, loopSupported, loop ("none" | "track" | "playlist"),
+//       canRaise }
 // One activity per player: "media:<key>".
+
+// Long enough (podcasts, long videos) for the 10 s back / forward buttons.
+var MEDIA_LONG_SECONDS = 600
+var LOOP_STATES = ["none", "playlist", "track"]
+
+// The repeat button cycles none -> playlist -> track -> none.
+function nextLoop(loop) {
+  var i = LOOP_STATES.indexOf(loop)
+  return LOOP_STATES[(i + 1) % LOOP_STATES.length]
+}
 
 function mediaId(key) {
   return "media:" + String(key || "player").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80)
@@ -744,12 +865,31 @@ function mediaActivity(m) {
   var len = num(m.length, 0)
   var pos = num(m.position, 0)
   var timed = len > 0 && len < 1e9
+  var seekable = timed && !!m.canSeek
+  var long = seekable && len >= MEDIA_LONG_SECONDS
+  if (long) {
+    actions.push({ id: "back10", label: "−10 s", icon: "\u{f0d2a}" })
+    actions.push({ id: "forward10", label: "+10 s", icon: "\u{f0d71}" })
+  }
+  var loop = m.loopSupported && LOOP_STATES.indexOf(m.loop) !== -1 ? m.loop : ""
+  if (m.shuffleSupported) actions.push({ id: "shuffle", label: "Shuffle", icon: "\u{f049d}" })
+  if (loop) actions.push({ id: "loop", label: "Repeat", icon: loop === "track" ? "\u{f0458}" : "\u{f0456}" })
+  if (m.canRaise) actions.push({ id: "raise", label: "Open player", icon: "\u{f03cc}", opensApp: true })
+  var album = clean(m.album)
   return {
     id: mediaId(m.key),
     module: "media",
     target: String(m.key || ""),
-    seekable: timed && !!m.canSeek,
+    playing: !!m.playing,
+    seekable: seekable,
+    long: long,
+    position: timed ? Math.max(0, Math.min(len, pos)) : 0,
     length: timed ? len : 0,
+    // null when the player can't shuffle; "" when it can't repeat.
+    shuffle: m.shuffleSupported ? !!m.shuffle : null,
+    loop: loop,
+    canRaise: !!m.canRaise,
+    album: album,
     volume: m.volumeSupported ? Math.max(0, Math.min(1, num(m.volume, 0))) : -1,
     priority: m.playing ? PRIORITY.mediaPlaying : PRIORITY.mediaPaused,
     icon: m.playing ? "\u{f075a}" : "\u{f03e4}",
@@ -758,10 +898,92 @@ function mediaActivity(m) {
     subtitle: [artist, player].filter(function(x) { return x }).join(" · "),
     pillText: artist ? title + " · " + artist : title,
     progress: len > 0 && len < 1e9 ? Math.max(0, Math.min(1, pos / len)) : -1,
-    details: len > 0 && len < 1e9 ? [formatDuration(pos * 1000) + " / " + formatDuration(len * 1000)] : [],
+    // The times are shown on both sides of the bar instead.
+    details: album && album !== title ? [album] : [],
     actions: actions,
     signature: (m.playing ? "p:" : "s:") + clean(m.key, 80) + ":" + title
   }
+}
+
+// Players hidden from the Now Bar, by name ("chromium, firefox"): matched
+// without case against the player's name, desktop entry or bus name. The
+// media keys still reach them.
+function parseIgnoredPlayers(text) {
+  var out = []
+  String(text || "").split(",").forEach(function(x) {
+    var n = clean(x, 60).toLowerCase()
+    if (n && out.indexOf(n) === -1) out.push(n)
+  })
+  return out.slice(0, 30)
+}
+
+function isIgnoredPlayer(ignored, names) {
+  if (!ignored || ignored.length === 0) return false
+  for (var i = 0; i < (names || []).length; i++) {
+    var n = String(names[i] || "").toLowerCase()
+    if (!n) continue
+    for (var j = 0; j < ignored.length; j++) if (n === ignored[j] || n.indexOf("." + ignored[j]) !== -1) return true
+  }
+  return false
+}
+
+// The list with `name` added or taken out, as stored in settings.
+function toggleIgnoredPlayer(text, name, ignore) {
+  var list = parseIgnoredPlayers(text)
+  var n = clean(name, 60).toLowerCase()
+  if (!n) return list.join(",")
+  var i = list.indexOf(n)
+  if (ignore && i === -1) list.push(n)
+  if (!ignore && i !== -1) list.splice(i, 1)
+  return list.join(",")
+}
+
+// A paused player that has had the pill for `minutes` gives it up (it stays
+// in the carousel). 0: never.
+function staleMedia(activity, pausedAt, now, minutes) {
+  if (!activity || activity.module !== "media" || activity.playing) return false
+  if (!(minutes > 0) || !(pausedAt > 0)) return false
+  return now - pausedAt >= minutes * 60000
+}
+
+// --- color blending ---------------------------------------------------------
+// a -> b at t (0..1), mixed in OKLab (Björn Ottosson's), as CSS color-mix
+// does: the halfway point between opposite colors stays clean, neither the
+// muddy gray of straight RGB nor a rainbow through the hues between. a and b
+// are { r, g, b, a } in 0..1 (a QML color works); returns a Qt.rgba-like object.
+
+function srgbToLinear(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
+function linearToSrgb(c) { return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055 }
+
+function toOklab(c) {
+  var r = srgbToLinear(c.r), g = srgbToLinear(c.g), b = srgbToLinear(c.b)
+  var l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  var m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  var s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return {
+    L: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    a: 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    b: 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+  }
+}
+
+function fromOklab(o) {
+  var l = Math.pow(o.L + 0.3963377774 * o.a + 0.2158037573 * o.b, 3)
+  var m = Math.pow(o.L - 0.1055613458 * o.a - 0.0638541728 * o.b, 3)
+  var s = Math.pow(o.L - 0.0894841775 * o.a - 1.2914855480 * o.b, 3)
+  var clamp = function(x) { return Math.max(0, Math.min(1, linearToSrgb(x))) }
+  return {
+    r: clamp(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    g: clamp(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    b: clamp(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
+  }
+}
+
+function mixOklab(a, b, t) {
+  var x = toOklab(a), y = toOklab(b)
+  var c = fromOklab({ L: x.L + (y.L - x.L) * t, a: x.a + (y.a - x.a) * t, b: x.b + (y.b - x.b) * t })
+  var alpha = (a.a === undefined ? 1 : a.a) + ((b.a === undefined ? 1 : b.a) - (a.a === undefined ? 1 : a.a)) * t
+  return typeof Qt !== "undefined" ? Qt.rgba(c.r, c.g, c.b, alpha) : { r: c.r, g: c.g, b: c.b, a: alpha }
 }
 
 // --- cover art ---------------------------------------------------------------
@@ -1015,7 +1237,7 @@ function pushActivity(item, now) {
 }
 
 // --- Bluetooth device just connected (shown for a few seconds) ---------------------
-// d = { address, name, battery (0..1, or -1 when unknown) }
+// d = { address, name, battery (0..1, or -1 when unknown), audio (headphones, speaker) }
 
 var BLUETOOTH_SHOW_MS = 10000
 
@@ -1035,8 +1257,36 @@ function bluetoothActivity(d) {
     pillText: hasBattery ? name + " \u00b7 " + pct + "%" : name,
     progress: hasBattery ? pct / 100 : -1,
     details: [],
-    actions: [],
+    actions: d.audio ? [{ id: "audio", label: "Use for audio", icon: "\u{f02cb}" }] : [],
     signature: "connected"
+  }
+}
+
+function btAddress(a) {
+  return String(a || "").replace(/[^A-Fa-f0-9:]/g, "").slice(0, 17)
+}
+
+// A connected device (mouse, headphones...) running low: stays until charged
+// or hidden; hidden, it comes back 5% lower.
+var BT_LOW = 0.15
+
+function btLowActivity(d) {
+  if (!d || !(num(d.battery, -1) >= 0) || d.battery > BT_LOW) return null
+  var name = clean(d.name, 60) || "Bluetooth device"
+  var pct = Math.round(Math.max(0, d.battery) * 100)
+  return {
+    id: "btlow:" + btAddress(d.address),
+    module: "bluetooth",
+    priority: PRIORITY.btLow,
+    icon: "\u{f0083}",
+    urgent: false,
+    title: name + " battery low",
+    subtitle: pct + "% \u00b7 charge it soon",
+    pillText: name + " \u00b7 " + pct + "%",
+    progress: pct / 100,
+    details: [],
+    actions: [],
+    signature: "low:" + Math.ceil(pct / 5)
   }
 }
 
@@ -1068,12 +1318,226 @@ function screenshotActivity(s) {
     progress: -1,
     details: [],
     actions: [
-      { id: "edit", label: "Edit", icon: "\u{f03eb}" },
+      { id: "edit", label: "Edit", icon: "\u{f03eb}", opensApp: true },
       { id: "copy", label: "Copy", icon: "\u{f018f}" },
-      { id: "open", label: "Open", icon: "\u{f03cc}" }
+      { id: "open", label: "Open", icon: "\u{f03cc}", opensApp: true }
     ],
     signature: clean(s.name, 80)
   }
+}
+
+// --- screen recording just saved (shown for a few seconds) ---------------------------
+// The file omarchy-capture-screenrecording wrote; r = { path, name, thumb, dir }.
+
+var RECORDED_SHOW_MS = 20000
+
+// Only a recording as Omarchy names it, straight in the recordings folder.
+function validRecordingPath(path, dir) {
+  var p = String(path || ""), d = String(dir || "").replace(/\/+$/, "")
+  if (!d || p.indexOf(d + "/") !== 0) return false
+  var name = p.slice(d.length + 1)
+  return /^screenrecording-[0-9_-]{1,40}\.mp4$/.test(name)
+}
+
+function recordedActivity(r) {
+  if (!r || !r.path) return null
+  return {
+    id: "recorded",
+    module: "recording",
+    priority: PRIORITY.screenshot,
+    icon: "\u{f0fce}",
+    urgent: false,
+    image: r.thumb || "",
+    title: "Recording saved",
+    subtitle: clean(r.name, 80),
+    pillText: "Recording saved",
+    progress: -1,
+    details: [],
+    actions: [
+      { id: "open", label: "Play", icon: "\u{f040a}", opensApp: true },
+      { id: "copy", label: "Copy", icon: "\u{f018f}" },
+      { id: "folder", label: "Folder", icon: "\u{f0770}", opensApp: true }
+    ],
+    signature: clean(r.name, 80)
+  }
+}
+
+// --- updates waiting (bin/nowbar-updates, now and then) ----------------------------
+
+// Omarchy, official packages (checkupdates) and the AUR (yay) come with every
+// Omarchy install; Flatpak only when installed. Only the sources this system
+// can check (`nowbar-updates --available`) are offered or checked.
+var UPDATE_SOURCES = ["omarchy", "pacman", "aur", "flatpak"]
+var UPDATE_SOURCE_LABELS = { omarchy: "Omarchy", pacman: "Official", aur: "AUR", flatpak: "Flatpak" }
+// Minutes; the Updates tab's presets. Any other value is a custom interval.
+var UPDATE_INTERVALS = [30, 60, 180, 360, 720, 1440]
+var MAX_UPDATES = 2000
+
+// The script's output -> { items: [{ source, name, from, to }], errors: [source] }.
+// Omarchy's own package is told by the omarchy source; it isn't counted twice
+// among the official packages.
+function parseUpdates(text) {
+  var items = []
+  var errors = []
+  var lines = String(text || "").split("\n")
+  var hasOmarchy = false
+  for (var i = 0; i < lines.length && items.length < MAX_UPDATES; i++) {
+    var f = lines[i].split("\t")
+    if (f[0] === "error") {
+      if (UPDATE_SOURCES.indexOf(f[1]) !== -1 && errors.indexOf(f[1]) === -1) errors.push(f[1])
+      continue
+    }
+    if (UPDATE_SOURCES.indexOf(f[0]) === -1 || f.length < 4) continue
+    var name = clean(f[1], 80)
+    if (!name) continue
+    if (f[0] === "omarchy") hasOmarchy = true
+    items.push({ source: f[0], name: name, from: clean(f[2], 40), to: clean(f[3], 80) })
+  }
+  if (hasOmarchy) items = items.filter(function(u) { return !(u.source === "pacman" && (u.name === "omarchy" || u.name === "omarchy-dev")) })
+  return { items: items, errors: errors }
+}
+
+// What was stored in state.json -> the same shape, or nothing found yet.
+function normalizeUpdates(data) {
+  var d = data && typeof data === "object" ? data : {}
+  var items = Array.isArray(d.items) ? d.items.slice(0, MAX_UPDATES).filter(function(u) {
+    return u && UPDATE_SOURCES.indexOf(u.source) !== -1 && typeof u.name === "string" && u.name !== ""
+  }).map(function(u) {
+    return { source: u.source, name: clean(u.name, 80), from: clean(u.from, 40), to: clean(u.to, 80) }
+  }) : []
+  var errors = Array.isArray(d.errors) ? d.errors.filter(function(e) { return UPDATE_SOURCES.indexOf(e) !== -1 }) : []
+  return { items: items, errors: errors, checkedAt: Math.max(0, num(d.checkedAt, 0)) }
+}
+
+// A new check's result over the last one: a source that couldn't be checked
+// (offline, a lock held) keeps what it listed before.
+function mergeUpdates(prev, result, now) {
+  var errors = result.errors || []
+  var kept = (prev && prev.items ? prev.items : []).filter(function(u) { return errors.indexOf(u.source) !== -1 })
+  return { items: (result.items || []).concat(kept).slice(0, MAX_UPDATES), errors: errors.slice(), checkedAt: now }
+}
+
+// Updates in `next` that `prev` didn't list (another package, or a newer
+// version of one already waiting): a check that found something new.
+function newUpdates(prev, next) {
+  var seen = {}
+  var old = prev && prev.items ? prev.items : []
+  for (var i = 0; i < old.length; i++) seen[old[i].source + ":" + old[i].name + ":" + old[i].to] = true
+  var count = 0
+  var list = next && next.items ? next.items : []
+  for (var j = 0; j < list.length; j++) if (!seen[list[j].source + ":" + list[j].name + ":" + list[j].to]) count++
+  return count
+}
+
+// `nowbar-updates --available` -> the known sources it names, in order.
+function parseAvailableSources(text) {
+  var named = String(text || "").split("\n").map(function(x) { return x.trim() })
+  return UPDATE_SOURCES.filter(function(s) { return named.indexOf(s) !== -1 })
+}
+
+// The sources to check: turned on in the options and available here.
+function activeSources(wanted, available) {
+  return (wanted || []).filter(function(s) { return (available || []).indexOf(s) !== -1 })
+}
+
+// Only the sources turned on in the options.
+function updatesFor(state, sources) {
+  var on = sources || UPDATE_SOURCES
+  return {
+    items: state.items.filter(function(u) { return on.indexOf(u.source) !== -1 }),
+    errors: state.errors.filter(function(e) { return on.indexOf(e) !== -1 }),
+    checkedAt: state.checkedAt
+  }
+}
+
+// What the Update button runs in a terminal: Omarchy's updater for system
+// and AUR packages, flatpak's for flatpaks. Fixed commands, nothing from
+// the package lists goes in.
+function updateCommand(items) {
+  var system = false
+  var flatpak = false
+  for (var i = 0; i < (items || []).length; i++) {
+    if (items[i].source === "flatpak") flatpak = true
+    else system = true
+  }
+  var parts = []
+  if (system || !flatpak) parts.push("omarchy-update")
+  if (flatpak) parts.push("flatpak update")
+  return parts.join(" && ")
+}
+
+// Whether a check is due: `minutes` after the last one, or never checked.
+function updatesDue(checkedAt, minutes, now) {
+  if (!(checkedAt > 0)) return true
+  return now - checkedAt >= Math.max(1, minutes) * 60000
+}
+
+function intervalLabel(minutes) {
+  if (minutes % 1440 === 0) return (minutes / 1440) + " d"
+  if (minutes % 60 === 0) return (minutes / 60) + " h"
+  if (minutes > 60) return Math.floor(minutes / 60) + " h " + (minutes % 60) + " min"
+  return minutes + " min"
+}
+
+function updateLine(u) {
+  if (u.source === "omarchy") return "\u{f06b0}  " + (u.to || "Omarchy update")
+  var change = u.from && u.to && u.from !== u.to ? u.from + " → " + u.to : (u.to ? u.to + " (new build)" : "")
+  return u.name + (change ? "  ·  " + change : "")
+}
+
+// One card for everything waiting, as important as a script's update: it
+// takes the pill when updates show up, unless something more important is on.
+function updatesActivity(state, checking) {
+  var items = state && state.items ? state.items : []
+  if (items.length === 0) return null
+  var counts = {}
+  for (var i = 0; i < items.length; i++) counts[items[i].source] = (counts[items[i].source] || 0) + 1
+  var parts = []
+  for (var j = 0; j < UPDATE_SOURCES.length; j++) {
+    var src = UPDATE_SOURCES[j]
+    if (!counts[src]) continue
+    parts.push(src === "omarchy" ? "Omarchy" : counts[src] + " " + UPDATE_SOURCE_LABELS[src])
+  }
+  // Omarchy first, then the rest in the order they came.
+  var sorted = items.filter(function(u) { return u.source === "omarchy" }).concat(items.filter(function(u) { return u.source !== "omarchy" }))
+  var details = sorted.slice(0, 6).map(updateLine)
+  if (items.length > 6) details.push("…and " + (items.length - 6) + " more")
+  if (state.errors && state.errors.length) {
+    details.push("\u{f0026}  Couldn't check " + state.errors.map(function(e) { return UPDATE_SOURCE_LABELS[e] }).join(", "))
+  }
+  if (state.checkedAt > 0) {
+    var d = new Date(state.checkedAt)
+    details.push("Checked at " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()))
+  }
+  var n = items.length
+  var title = n === 1 ? "1 update" : n + " updates"
+  return {
+    id: "updates",
+    module: "updates",
+    priority: PRIORITY.updates,
+    icon: "\u{f06b0}",
+    urgent: false,
+    title: title,
+    subtitle: checking ? "Checking…" : parts.join(" · "),
+    pillText: title,
+    progress: -1,
+    details: details,
+    actions: [
+      { id: "update", label: "Update", icon: "\u{f06b0}", opensApp: true },
+      { id: "check", label: checking ? "Checking…" : "Check now", icon: "\u{f0450}" }
+    ],
+    // Hidden by hand, it comes back when the list changes.
+    signature: updatesSignature(items)
+  }
+}
+
+function updatesSignature(items) {
+  var h = 5381
+  for (var i = 0; i < items.length; i++) {
+    var t = items[i].source + ":" + items[i].name + ":" + items[i].to + ";"
+    for (var k = 0; k < t.length; k++) h = ((h * 33) ^ t.charCodeAt(k)) >>> 0
+  }
+  return items.length + ":" + h.toString(16)
 }
 
 // --- weather (the Now Brief) ----------------------------------------------------------
@@ -1147,6 +1611,43 @@ var DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 // wttr.in's ?format=j1 answer -> what the card shows, or null when it can't be
 // read. `now` is epoch ms (local time decides "now", night and day names);
 // `opts` = { unit: "auto"|"metric"|"imperial", locale }.
+// Weather codes with rain, drizzle or a storm.
+var RAIN_CODES = [176, 200, 263, 266, 293, 296, 299, 302, 305, 308, 353, 356, 359, 386, 389]
+
+function isRainCode(code) {
+  return RAIN_CODES.indexOf(parseInt(String(code || "0"), 10)) !== -1
+}
+
+// Rain on the way: not raining now, and likely (60%+) in this 3-hour slot or
+// the next. A real activity (it takes the pill like any new one), once per
+// slot; hidden, it stays hidden for that slot.
+var RAIN_LIKELY = 60
+
+function rainActivity(w) {
+  if (!w || w.raining || !Array.isArray(w.hours) || w.hours.length === 0) return null
+  for (var i = 0; i < Math.min(2, w.hours.length); i++) {
+    var h = w.hours[i]
+    if (h.rain < RAIN_LIKELY) continue
+    var when = i === 0 ? "soon" : "around " + pad2(h.hour) + ":00"
+    return {
+      id: "rain",
+      module: "weather",
+      priority: PRIORITY.rain,
+      icon: "\u{e318}",
+      color: "#3d8fe0",
+      urgent: false,
+      title: "Rain likely " + when,
+      subtitle: h.rain + "% chance" + (w.location ? " \u00b7 " + w.location : ""),
+      pillText: "Rain " + when + " \u00b7 " + h.rain + "%",
+      progress: -1,
+      details: [],
+      actions: [],
+      signature: "rain:" + (i === 0 ? "now" : h.hour)
+    }
+  }
+  return null
+}
+
 function parseWttr(text, now, opts) {
   var data
   try { data = JSON.parse(String(text || "")) } catch (e) { return null }
@@ -1190,6 +1691,7 @@ function parseWttr(text, now, opts) {
       if (ht === null) continue
       hours.push({
         label: hours.length === 0 ? "Now" : pad2(slot) + "h",
+        hour: slot,
         icon: weatherIcon(h.weatherCode, slotNight),
         temp: ht,
         rain: Math.max(0, Math.min(100, Math.round(num(h.chanceofrain, 0))))
@@ -1238,6 +1740,7 @@ function parseWttr(text, now, opts) {
     sunrise: clockLabel(sunrise),
     sunset: clockLabel(sunset),
     hours: hours,
+    raining: isRainCode(cur.weatherCode),
     days: forecast
   }
 }
@@ -1326,11 +1829,13 @@ function nextIndex(length, index, delta) {
 }
 
 // Which activity has the focus after the list changed.
-//   s = { list, focusId, knownIds: {id: true}, autoFocus, manualUntil, now }
-// A newcomer (an id not in knownIds) takes the focus when autoFocus is on and
-// the user hasn't switched by hand in the last few seconds, as long as it is
-// at least as important as the current one. Otherwise the focus stays on the
-// same id; if that one is gone, it goes to the most important activity.
+//   s = { list, focusId, knownIds: {id: priority}, autoFocus, manualUntil, now }
+// A newcomer takes the focus when autoFocus is on and the user hasn't switched
+// by hand in the last few seconds, as long as it is at least as important as
+// the current one. A newcomer is an id not in knownIds, or one that got more
+// important since (paused media that starts playing, a reminder coming up).
+// Otherwise the focus stays on the same id; if that one is gone, it goes to
+// the most important activity.
 function resolveFocus(s) {
   var list = s.list || []
   if (list.length === 0) return ""
@@ -1338,7 +1843,8 @@ function resolveFocus(s) {
   if (s.autoFocus && !(s.now < s.manualUntil)) {
     for (var i = 0; i < list.length; i++) {
       var a = list[i]
-      if (s.knownIds && s.knownIds[a.id]) continue
+      var known = s.knownIds ? s.knownIds[a.id] : undefined
+      if (known !== undefined && !(a.priority < known)) continue
       if (current === -1 || a.priority <= list[current].priority) return a.id
     }
   }
@@ -1347,7 +1853,7 @@ function resolveFocus(s) {
 
 // --- bar widget preferences -----------------------------------------------------------
 
-var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather"]
+var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
 
 // The popup's Quick toggles and Quick start extras, in the order shown.
 var QUICK_TOGGLES = ["dnd", "nightlight", "stayAwake", "record", "reminder", "dictation"]
@@ -1381,6 +1887,10 @@ function defaultPrefs() {
     moduleBluetooth: true,
     moduleScreenshot: true,
     moduleWeather: true,
+    moduleUpdates: true,
+    updateSources: UPDATE_SOURCES.join(","),        // which package sources the Updates card checks
+    updateInterval: 180,    // minutes between checks
+    updateOnStartup: true,  // also check right after login
     weatherUnit: "auto",    // "auto" (country, then locale), "metric" or "imperial"
     autoFocus: true,        // a new activity takes the pill
     whenEmpty: "brief",     // "brief": weather/next reminder/updates; "icon": empty pill; "hide": no pill
@@ -1391,12 +1901,16 @@ function defaultPrefs() {
     showQuickStart: true,   // the popup's Quick start (timers, stopwatch, Pomodoro, sleep)
     quickStartItems: QUICK_START_EXTRAS.join(","),   // which extras, besides the timers
     coverAccent: true,      // media: accent color taken from the cover art
+    mediaPausedMinutes: 15, // a paused player leaves the pill after this long (0: never)
+    mediaIgnore: "",        // players kept out of the Now Bar, comma separated
+    animations: true,       // the popup unfolds from the pill, cards and sections slide in
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
     maxWidth: 220,          // width of the text area: the pill always has this size
     timerPresets: DEFAULT_PRESETS, // quick start timers, minutes
     pomodoroFocus: 25,
     pomodoroBreak: 5,
-    pomodoroLongBreak: 15
+    pomodoroLongBreak: 15,
+    pomodoroDnd: false      // Do Not Disturb during focus blocks
   }
 }
 
@@ -1429,6 +1943,12 @@ function normalizePrefs(input) {
   out.quickToggleItems = out.quickToggles.join(",")
   out.quickStartExtras = parseIdList(src.quickStartItems, QUICK_START_EXTRAS)
   out.quickStartItems = out.quickStartExtras.join(",")
+  out.updateSourceList = parseIdList(src.updateSources, UPDATE_SOURCES)
+  out.updateSources = out.updateSourceList.join(",")
+  out.updateInterval = clampInt(src.updateInterval, 5, 10080, d.updateInterval)
+  out.mediaPausedMinutes = clampInt(src.mediaPausedMinutes, 0, 1440, d.mediaPausedMinutes)
+  out.ignoredPlayers = parseIgnoredPlayers(src.mediaIgnore)
+  out.mediaIgnore = out.ignoredPlayers.join(",")
   out.modules = {}
   for (var i = 0; i < MODULES.length; i++) out.modules[MODULES[i]] = out[moduleKey(MODULES[i])]
   return out
@@ -1486,6 +2006,37 @@ if (typeof module !== "undefined") {
     useImperial: useImperial,
     parseWttr: parseWttr,
     weatherActivity: weatherActivity,
+    nextLoop: nextLoop,
+    doneTimer: doneTimer,
+    doneExpired: doneExpired,
+    TIMER_DONE_MS: TIMER_DONE_MS,
+    normalizePomodoroStats: normalizePomodoroStats,
+    countFocusDone: countFocusDone,
+    validReminderUnit: validReminderUnit,
+    postponeMinutes: postponeMinutes,
+    firedReminders: firedReminders,
+    firedReminderActivity: firedReminderActivity,
+    validRecordingPath: validRecordingPath,
+    recordedActivity: recordedActivity,
+    btLowActivity: btLowActivity,
+    rainActivity: rainActivity,
+    mixOklab: mixOklab,
+    parseIgnoredPlayers: parseIgnoredPlayers,
+    isIgnoredPlayer: isIgnoredPlayer,
+    toggleIgnoredPlayer: toggleIgnoredPlayer,
+    staleMedia: staleMedia,
+    parseUpdates: parseUpdates,
+    normalizeUpdates: normalizeUpdates,
+    updatesDue: updatesDue,
+    updatesActivity: updatesActivity,
+    mergeUpdates: mergeUpdates,
+    newUpdates: newUpdates,
+    parseAvailableSources: parseAvailableSources,
+    activeSources: activeSources,
+    updatesFor: updatesFor,
+    updateCommand: updateCommand,
+    intervalLabel: intervalLabel,
+    UPDATE_INTERVALS: UPDATE_INTERVALS,
     PRIORITY: PRIORITY,
     idleTimer: idleTimer,
     idleStopwatch: idleStopwatch,

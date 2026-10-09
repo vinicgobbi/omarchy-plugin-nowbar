@@ -14,6 +14,7 @@ import "NowbarModel.js" as Model
 //   Quick       the popup's Quick toggles and Quick start (and Omarchy's
 //               indicators widget, which the Quick toggles replace)
 //   Weather     temperature unit and taking over Omarchy's weather widget
+//   Updates     which package sources are checked, and how often
 Column {
   id: root
 
@@ -21,13 +22,14 @@ Column {
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
 
-  // "activities" | "look" | "quick" | "weather"
+  // "activities" | "look" | "quick" | "weather" | "updates"
   property string tab: "activities"
   readonly property var tabs: [
     { value: "activities", label: "Activities" },
     { value: "look", label: "Look" },
     { value: "quick", label: "Quick" },
-    { value: "weather", label: "Weather" }
+    { value: "weather", label: "Weather" },
+    { value: "updates", label: "Updates" }
   ]
 
   // Tab / Shift+Tab in the popup.
@@ -44,6 +46,20 @@ Column {
   // Service.qml's setIndicators.
   property string weatherWidgetState: ""
   property string indicatorsState: ""
+  // The update sources this system can check (Flatpak only when installed).
+  property var updateSourcesAvailable: []
+  // Media players around now; with the ignored ones, the "Show" list.
+  property var playerNames: []
+  readonly property var playerList: {
+    var out = []
+    var seen = {}
+    var names = (playerNames || []).concat(root.prefs.ignoredPlayers || [])
+    for (var i = 0; i < names.length; i++) {
+      var key = String(names[i]).toLowerCase()
+      if (key && !seen[key]) { seen[key] = true; out.push(names[i]) }
+    }
+    return out
+  }
 
   signal changed(string name, var value)
   signal weatherWidgetRequested(bool replace)
@@ -392,6 +408,7 @@ Column {
       Cell { glyph: "\u{f0e51}"; label: "Screenshot"; key: "moduleScreenshot" }
       Cell { glyph: "\u{f0599}"; label: "Weather"; key: "moduleWeather" }
       Cell { glyph: "\u{f0996}"; label: "Scripts"; key: "modulePush" }
+      Cell { glyph: "\u{f06b0}"; label: "Updates"; key: "moduleUpdates" }
     }
 
     PanelSeparator { foreground: root.foreground }
@@ -400,6 +417,86 @@ Column {
       key: "autoFocus"
       label: "Focus new activities"
       hint: "Something that just started takes the pill, unless you switched by hand a moment ago."
+    }
+
+    Section { text: "MEDIA" }
+
+    Option {
+      label: "Paused player"
+      hint: "Gives the pill to what else is going on after this long; it stays in the carousel."
+      ButtonGroup {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        options: [
+          { value: "0", label: "Never" },
+          { value: "5", label: "5m" },
+          { value: "15", label: "15m" },
+          { value: "60", label: "1h" }
+        ]
+        value: String(root.prefs.mediaPausedMinutes)
+        onChanged: function(v) { root.changed("mediaPausedMinutes", parseInt(v, 10)) }
+      }
+    }
+
+    Intro {
+      text: root.playerList.length > 0
+        ? "Players shown in the Now Bar. A hidden one still answers the media keys."
+        : "Players show up here while they are open, to hide the ones you don't want in the Now Bar."
+    }
+
+    Grid {
+      width: parent.width
+      columns: 2
+      columnSpacing: Style.space(16)
+      rowSpacing: Style.space(8)
+      visible: root.playerList.length > 0
+
+      Repeater {
+        model: root.playerList
+
+        Item {
+          id: pc
+          required property var modelData
+          readonly property bool shown: !Model.isIgnoredPlayer(root.prefs.ignoredPlayers || [], [modelData])
+          width: (parent.width - parent.columnSpacing) / 2
+          height: Math.max(pcLabel.implicitHeight, pcSwitch.implicitHeight)
+
+          Text {
+            id: pcGlyph
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(20)
+            textFormat: Text.PlainText
+            text: "\u{f075a}"
+            color: pc.shown ? root.foreground : Qt.darker(root.foreground, 1.8)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          Text {
+            id: pcLabel
+            textFormat: Text.PlainText
+            anchors.left: pcGlyph.right
+            anchors.right: pcSwitch.left
+            anchors.rightMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            text: pc.modelData
+            color: pc.shown ? root.foreground : Qt.darker(root.foreground, 1.5)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            elide: Text.ElideRight
+          }
+
+          ToggleSwitch {
+            id: pcSwitch
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            foreground: root.foreground
+            checked: pc.shown
+            onToggled: root.changed("mediaIgnore", Model.toggleIgnoredPlayer(root.prefs.mediaIgnore, pc.modelData, checked))
+          }
+        }
+      }
     }
   }
 
@@ -467,6 +564,14 @@ Column {
       key: "coverAccent"
       label: "Dynamic colors"
       hint: "Media takes its colors from the album cover, weather from the sky: highlight, popup border and background."
+    }
+
+    Section { text: "MOTION" }
+
+    SwitchOption {
+      key: "animations"
+      label: "Animations"
+      hint: "The popup unfolds from the pill, cards slide in, and the pill pulses when something urgent comes up. Off: everything changes at once."
     }
   }
 
@@ -592,6 +697,12 @@ Column {
         onModified: function(v) { root.changed("pomodoroLongBreak", v) }
       }
     }
+
+    SwitchOption {
+      key: "pomodoroDnd"
+      label: "Do Not Disturb while focusing"
+      hint: "Turned on for each focus block and off for the breaks (left alone if you had it on already)."
+    }
   }
 
   // --- Weather ---------------------------------------------------------------------
@@ -632,6 +743,65 @@ Column {
       replaceLabel: "Replace the weather widget"
       restoreLabel: "Restore Omarchy's widget"
       onRequested: function(replace) { root.weatherWidgetRequested(replace) }
+    }
+  }
+
+  // --- Updates ----------------------------------------------------------------------
+
+  Column {
+    width: parent.width
+    spacing: Style.space(10)
+    visible: root.tab === "updates"
+
+    Intro {
+      text: "Updates waiting show up as a card, which takes the pill when something new is found (like any new activity). Checking only reads: no password asked. The card's Update button opens a terminal with Omarchy's updater (and flatpak's, when installed), which asks for your password there."
+    }
+
+    Section { text: "CHECK" }
+
+    Grid {
+      width: parent.width
+      columns: 2
+      columnSpacing: Style.space(16)
+      rowSpacing: Style.space(8)
+
+      ListCell { glyph: "\u{f06b0}"; label: "Omarchy"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "omarchy"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("omarchy") !== -1 }
+      ListCell { glyph: "\u{f08c7}"; label: "Official"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "pacman"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("pacman") !== -1 }
+      ListCell { glyph: "\u{f0487}"; label: "AUR"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "aur"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("aur") !== -1 }
+      ListCell { glyph: "\u{f01a7}"; label: "Flatpak"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "flatpak"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("flatpak") !== -1 }
+    }
+
+    Section { text: "HOW OFTEN" }
+
+    Option {
+      label: "Every"
+      ButtonGroup {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        options: Model.UPDATE_INTERVALS.map(function(m) { return { value: String(m), label: Model.intervalLabel(m).replace(" min", "m").replace(" h", "h").replace(" d", "d") } })
+        value: String(root.prefs.updateInterval)
+        onChanged: function(v) { root.changed("updateInterval", parseInt(v, 10)) }
+      }
+    }
+
+    Option {
+      label: "Custom (minutes)"
+      hint: "Any interval, from 5 minutes to 7 days. Now: " + Model.intervalLabel(root.prefs.updateInterval || 180) + "."
+      NumberField {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        value: root.prefs.updateInterval || 180
+        from: 5
+        to: 10080
+        stepSize: 15
+        onModified: function(v) { root.changed("updateInterval", v) }
+      }
+    }
+
+    SwitchOption {
+      key: "updateOnStartup"
+      label: "Check at startup"
+      hint: "Once each time the computer starts (about a minute after you log in), besides the interval."
     }
   }
 }

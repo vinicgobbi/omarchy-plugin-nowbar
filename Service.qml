@@ -31,6 +31,10 @@ Item {
   property var timerState: Model.idleTimer()
   property var stopwatchState: Model.idleStopwatch()
   property var pomodoroState: Model.idlePomodoro()
+  // Focus blocks finished today, and whether the Pomodoro turned Do Not
+  // Disturb on (so it only turns off what it turned on).
+  property var pomodoroStats: Model.normalizePomodoroStats(null, Date.now())
+  property bool pomodoroDndOwned: false
   property var sleepState: Model.idleSleep()
   readonly property var pomodoroCfg: Model.pomodoroConfig(prefs)
   property bool stateLoaded: false
@@ -39,7 +43,8 @@ Item {
 
   function saveState() {
     if (!stateLoaded) return
-    stateFile.setText(JSON.stringify({ timer: timerState, stopwatch: stopwatchState, pomodoro: pomodoroState, sleep: sleepState }) + "\n")
+    stateFile.setText(JSON.stringify({ timer: timerState, stopwatch: stopwatchState, pomodoro: pomodoroState, sleep: sleepState,
+      updates: updatesState, bootId: updatesBootId, pomodoroStats: pomodoroStats, pomodoroDnd: pomodoroDndOwned }) + "\n")
   }
 
   function restoreState(text) {
@@ -49,6 +54,11 @@ Item {
     stopwatchState = Model.normalizeStopwatch(data.stopwatch)
     pomodoroState = Model.normalizePomodoro(data.pomodoro)
     sleepState = Model.normalizeSleep(data.sleep)
+    updatesState = Model.normalizeUpdates(data.updates)
+    pomodoroStats = Model.normalizePomodoroStats(data.pomodoroStats, Date.now())
+    pomodoroDndOwned = data.pomodoroDnd === true
+    updatesSavedBootId = typeof data.bootId === "string" ? data.bootId : ""
+    updatesBootId = updatesSavedBootId
     stateLoaded = true
     root.now = Date.now()
     checkTimer()
@@ -103,6 +113,29 @@ Item {
     return true
   }
 
+  // --- Pomodoro: Do Not Disturb during focus (an option) ---------------------------
+
+  readonly property bool pomodoroWantsDnd: prefs.pomodoroDnd === true && pomodoroState.state !== "idle" && pomodoroState.phase === "focus"
+  onPomodoroWantsDndChanged: syncPomodoroDnd()
+  onStateLoadedChanged: if (stateLoaded) syncPomodoroDnd()
+
+  function syncPomodoroDnd() {
+    if (!stateLoaded) return
+    if (pomodoroWantsDnd && !pomodoroDndOwned) {
+      // Already on by hand: leave it, and leave it on afterwards too.
+      if (modesState.dnd === true) return
+      Quickshell.execDetached(["omarchy-shell", "-q", "notifications", "setDnd", "on"])
+      pomodoroDndOwned = true
+      saveState()
+      modesFollowUp.restart()
+    } else if (!pomodoroWantsDnd && pomodoroDndOwned) {
+      Quickshell.execDetached(["omarchy-shell", "-q", "notifications", "setDnd", "off"])
+      pomodoroDndOwned = false
+      saveState()
+      modesFollowUp.restart()
+    }
+  }
+
   // Fixed headline first in every notification: the helper treats leading
   // "--x" words as options.
   function notify(glyph, headline, body) {
@@ -115,11 +148,18 @@ Item {
     var changed = false
     if (Model.timerFinished(timerState, t)) {
       notify("\u{f13ab}", "Timer finished", Model.presetLabel(timerState.durationMs / 1000) + " timer is up")
+      // "Time's up" for a moment, with Repeat / +1 min / OK, in the pill.
+      timerState = Model.doneTimer(timerState, t)
+      focusId = "timer"
+      changed = true
+    }
+    if (Model.doneExpired(timerState, t)) {
       timerState = Model.idleTimer()
       changed = true
     }
     if (Model.timerFinished(pomodoroState, t)) {
       var was = pomodoroState.phase
+      if (was === "focus") pomodoroStats = Model.countFocusDone(pomodoroStats, t)
       pomodoroState = Model.nextPomodoro(pomodoroState, pomodoroCfg, t)
       notify("\u{f04fe}", was === "focus" ? "Focus done" : "Break over",
         was === "focus" ? "Take a " + (pomodoroState.phase === "longBreak" ? "long " : "") + "break: " + Model.presetLabel(pomodoroState.durationMs / 1000)
@@ -158,18 +198,44 @@ Item {
     return !!(p && (p.trackTitle || p.trackArtist))
   }
 
+  // When each player was last seen going from playing to paused, as
+  // { key: time }: a paused player gives up the pill after a while.
+  property var pausedAt: ({})
+
   function syncLastPlaying() {
     var t = Date.now()
     var next = {}
+    var paused = {}
     var alive = {}
     for (var i = 0; i < players.length; i++) alive[playerKey(players[i])] = true
     // Forget players that went away.
     for (var k in playedKeys) if (alive[k]) next[k] = playedKeys[k]
     for (var j = 0; j < players.length; j++) {
       var p = players[j]
-      if (p && p.isPlaying && !isProxy(p) && hasTrack(p)) next[playerKey(p)] = t
+      var key = playerKey(p)
+      if (p && p.isPlaying && !isProxy(p) && hasTrack(p)) next[key] = t
+      else if (p && !p.isPlaying && alive[key]) paused[key] = pausedAt[key] !== undefined ? pausedAt[key] : t
     }
     playedKeys = next
+    pausedAt = paused
+  }
+
+  // Players kept out of the Now Bar (the "Media" options); media keys still
+  // reach them.
+  function isIgnored(p) {
+    return Model.isIgnoredPlayer(prefs.ignoredPlayers, [p.identity, p.desktopEntry, p.dbusName])
+  }
+
+  // Names of the players around now, for the options' list.
+  readonly property var playerNames: {
+    var out = []
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i]
+      if (!p || isProxy(p)) continue
+      var n = String(p.identity || p.desktopEntry || "").trim()
+      if (n && out.indexOf(n) === -1) out.push(n)
+    }
+    return out
   }
 
   onPlayersChanged: syncLastPlaying()
@@ -191,7 +257,7 @@ Item {
     var paused = []
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
-      if (!hasTrack(p)) continue
+      if (!hasTrack(p) || isIgnored(p)) continue
       if (p.isPlaying) (isProxy(p) ? proxies : list).push(p)
       else if (!isProxy(p) && playedKeys[playerKey(p)] !== undefined) paused.push(p)
     }
@@ -210,6 +276,7 @@ Item {
         key: playerKey(p),
         title: p.trackTitle || "",
         artist: p.trackArtist || "",
+        album: p.trackAlbum || "",
         player: p.identity || p.desktopEntry || "",
         playing: !!p.isPlaying,
         canToggle: !!(p.canTogglePlaying || p.canPlay || p.canPause),
@@ -219,7 +286,12 @@ Item {
         position: p.positionSupported ? p.position : 0,
         length: p.lengthSupported ? p.length : 0,
         volumeSupported: !!p.volumeSupported,
-        volume: p.volumeSupported ? p.volume : 0
+        volume: p.volumeSupported ? p.volume : 0,
+        shuffleSupported: !!p.shuffleSupported && !!p.canControl,
+        shuffle: !!p.shuffle,
+        loopSupported: !!p.loopSupported && !!p.canControl,
+        loop: p.loopState === MprisLoopState.Track ? "track" : (p.loopState === MprisLoopState.Playlist ? "playlist" : "none"),
+        canRaise: !!p.canRaise
       }
     })
   }
@@ -493,6 +565,16 @@ Item {
       else if (p.canPlay) p.play()
     } else if (action === "next" && p.canGoNext) p.next()
     else if (action === "previous" && p.canGoPrevious) p.previous()
+    else if ((action === "back10" || action === "forward10") && p.canSeek && p.positionSupported) {
+      var len = p.lengthSupported ? p.length : 0
+      var to = p.position + (action === "back10" ? -10 : 10)
+      p.position = Math.max(0, len > 0 ? Math.min(len - 1, to) : to)
+    } else if (action === "shuffle" && p.shuffleSupported) p.shuffle = !p.shuffle
+    else if (action === "loop" && p.loopSupported) {
+      var cur = p.loopState === MprisLoopState.Track ? "track" : (p.loopState === MprisLoopState.Playlist ? "playlist" : "none")
+      var nxt = Model.nextLoop(cur)
+      p.loopState = nxt === "track" ? MprisLoopState.Track : (nxt === "playlist" ? MprisLoopState.Playlist : MprisLoopState.None)
+    } else if (action === "raise" && p.canRaise) p.raise()
   }
 
   // --- the "media" IPC target ---------------------------------------------------
@@ -717,9 +799,47 @@ Item {
     command: ["omarchy-reminder", "show", "--json"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.reminders = Model.parseReminders(text)
+      onStreamFinished: {
+        var next = Model.parseReminders(text)
+        var fired = Model.firedReminders(root.reminders, next, Date.now())
+        root.reminders = next
+        if (fired.length > 0) {
+          var f = fired[fired.length - 1]
+          root.firedReminder = { label: f.label, message: f.message, at: f.at }
+          firedReminderTimer.restart()
+        }
+      }
     }
     onExited: function(exitCode) { if (exitCode !== 0) root.reminders = [] }
+  }
+
+  // A reminder that just went off: "Reminder · now" for a minute, to snooze.
+  property var firedReminder: null
+
+  Timer {
+    id: firedReminderTimer
+    interval: Model.REMINDER_DONE_MS
+    onTriggered: root.firedReminder = null
+  }
+
+  // The next reminder, 5 minutes later: its timer stopped, a new one set for
+  // what was left plus 5 (omarchy-reminder only counts from now).
+  function postponeReminder() {
+    var t = Date.now()
+    var next = null
+    for (var i = 0; i < reminders.length && !next; i++) if (reminders[i].at > t) next = reminders[i]
+    if (!next || !Model.validReminderUnit(next.unit)) return
+    Quickshell.execDetached(["systemctl", "--user", "stop", next.unit + ".timer"])
+    Quickshell.execDetached(["omarchy-reminder", String(Model.postponeMinutes(next.at, t, 5)), next.message || next.label])
+    remindersFollowUp.restart()
+  }
+
+  function snoozeReminder(minutes) {
+    var f = firedReminder
+    firedReminder = null
+    if (!f) return
+    Quickshell.execDetached(["omarchy-reminder", String(minutes), f.message || f.label])
+    remindersFollowUp.restart()
   }
 
   // omarchy-reminder creates (and clears) transient systemd user timers; their
@@ -771,16 +891,25 @@ Item {
   Process {
     id: recordingProcess
     // Only this user's recorder: another account recording doesn't count.
-    command: ["sh", "-c", "pid=$(pgrep -o -u \"$(id -u)\" -f '^gpu-screen-recorder') || exit 1; ps -o etimes= -p \"$pid\""]
-    // Prints the recorder's uptime in seconds, nothing when not recording.
+    command: ["sh", "-c", "pid=$(pgrep -o -u \"$(id -u)\" -f '^gpu-screen-recorder') || exit 1; ps -o etimes= -p \"$pid\"; "
+      + "head -c 512 /tmp/omarchy-screenrecord-filename 2>/dev/null"]
+    // Prints the recorder's uptime in seconds (nothing when not recording),
+    // then the file omarchy-capture-screenrecording is writing to.
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var out = String(text || "").trim()
+        var lines = String(text || "").split("\n")
+        var out = String(lines[0] || "").trim()
         if (out === "") {
-          if (root.recording.active) root.recording = { active: false, startedAt: 0 }
+          if (root.recording.active) {
+            root.recording = { active: false, startedAt: 0 }
+            // It stopped: show the video once Omarchy is done with it.
+            if (root.recordingPath !== "") { recordedPoll.tries = 0; recordedPoll.restart() }
+          }
           return
         }
+        var file = String(lines[1] || "").trim()
+        if (Model.validRecordingPath(file, root.recordingDir)) root.recordingPath = file
         // Keep the first estimate: re-reading it every poll would jitter by a second.
         if (root.recording.active) return
         var secs = parseInt(out, 10)
@@ -795,6 +924,69 @@ Item {
     running: root.modules.recording
     triggeredOnStart: true
     onTriggered: root.refreshRecording()
+  }
+
+  // --- a recording just saved ----------------------------------------------------------
+  // Same folder as omarchy-capture-screenrecording. After it stops, Omarchy
+  // trims and normalizes the file (then removes its filename note): the card
+  // shows up once that is done, with a thumbnail (ffmpegthumbnailer, part of
+  // Omarchy) and Play / Copy / Folder, for 20 seconds.
+
+  readonly property string recordingDir: Quickshell.env("OMARCHY_SCREENRECORD_DIR") || Quickshell.env("XDG_VIDEOS_DIR") || (Quickshell.env("HOME") + "/Videos")
+  property string recordingPath: ""
+  // { path, name, thumb, until } or null
+  property var recorded: null
+  property string recordedThumb: ""
+
+  Timer {
+    id: recordedPoll
+    property int tries: 0
+    interval: 1000
+    onTriggered: {
+      if (recordedCheck.running) return
+      tries += 1
+      var thumb = root._artCacheDir + "/recording-" + Date.now() + ".png"
+      recordedCheck.thumb = thumb
+      recordedCheck.command = ["sh", "-c",
+        "[ -e /tmp/omarchy-screenrecord-filename ] && exit 2; "
+        + "[ -f \"$1\" ] && [ ! -L \"$1\" ] && [ ! -e \"${1%.mp4}-processed.mp4\" ] || exit 2; "
+        + "command -v ffmpegthumbnailer >/dev/null 2>&1 && ffmpegthumbnailer -i \"$1\" -o \"$2\" -s 256 -q 6 >/dev/null 2>&1; "
+        // 0: with a thumbnail, 3: without one (the card shows an icon).
+        + "[ -s \"$2\" ] && exit 0; exit 3",
+        "_", root.recordingPath, thumb]
+      recordedCheck.running = true
+    }
+  }
+
+  Process {
+    id: recordedCheck
+    property string thumb: ""
+    onExited: function(exitCode) {
+      if (exitCode === 2) {
+        // Still being processed: try again, for up to a minute.
+        if (recordedPoll.tries < 60) recordedPoll.restart()
+        else root.recordingPath = ""
+        return
+      }
+      if ((exitCode !== 0 && exitCode !== 3) || !root.modules.recording) { root.recordingPath = ""; return }
+      var path = root.recordingPath
+      var shot = exitCode === 0 ? thumb : ""
+      if (root.recordedThumb) artCleanupProcess.remove(root.recordedThumb)
+      root.recordedThumb = shot
+      root.recorded = { path: path, name: path.slice(path.lastIndexOf("/") + 1), thumb: shot, until: Date.now() + Model.RECORDED_SHOW_MS }
+      root.recordingPath = ""
+      root.now = Date.now()
+    }
+  }
+
+  function recordedAction(action) {
+    var r = recorded
+    if (!r) return
+    if (action === "open") Quickshell.execDetached(["xdg-open", r.path])
+    else if (action === "folder") Quickshell.execDetached(["xdg-open", root.recordingDir])
+    // As a file: pastes into a chat, a file manager...
+    else if (action === "copy") Quickshell.execDetached(["wl-copy", "--type", "text/uri-list", Util.fileUrl(r.path)])
+    recorded = null
   }
 
   // --- dictation (voxtype) ---------------------------------------------------------
@@ -1176,6 +1368,7 @@ Item {
       address: address,
       name: dev.name || dev.deviceName || "",
       battery: dev.batteryAvailable ? dev.battery : -1,
+      audio: String(dev.icon || "").indexOf("audio") === 0,
       until: Date.now() + Model.BLUETOOTH_SHOW_MS
     }
     btRecent = next
@@ -1190,6 +1383,34 @@ Item {
       else changed = true
     }
     if (changed) btRecent = next
+  }
+
+  // Plays through the device: its PipeWire sink (bluez_output.<MAC>) becomes
+  // the default output (wireplumber's wpctl). The sink can take a few seconds
+  // to show up after connecting.
+  function useForAudio(address) {
+    var mac = String(address || "")
+    if (!/^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/.test(mac)) return
+    Quickshell.execDetached(["sh", "-c",
+      "m=$(printf %s \"$1\" | tr : _); i=0; while [ $i -lt 10 ]; do "
+      + "id=$(pw-dump 2>/dev/null | jq -r --arg p \"bluez_output.$m\" "
+      + "'[.[] | select(.type == \"PipeWire:Interface:Node\") | select((.info.props[\"node.name\"] // \"\") | startswith($p))][0].id // empty'); "
+      + "[ -n \"$id\" ] && exec wpctl set-default \"$id\"; i=$((i + 1)); sleep 0.5; done; exit 1", "_", mac])
+  }
+
+  // Connected devices running low (mouse, keyboard, headphones), as long as
+  // they are low.
+  readonly property var btLowDevices: {
+    var _tick = root.now
+    var out = []
+    var list = Bluetooth.devices ? Bluetooth.devices.values : []
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i]
+      if (!d || !d.connected || !d.batteryAvailable) continue
+      var a = Model.btLowActivity({ address: d.address, name: d.name || d.deviceName, battery: d.battery })
+      if (a) out.push(a)
+    }
+    return out
   }
 
   // Only changes count: devices already connected when the shell starts
@@ -1375,9 +1596,135 @@ Item {
   Timer {
     interval: 3 * 3600 * 1000
     repeat: true
-    running: root.weatherEnabled
+    // The Updates card tells it otherwise.
+    running: root.weatherEnabled && !root.modules.updates
     triggeredOnStart: true
     onTriggered: if (!updateProcess.running) updateProcess.running = true
+  }
+
+  // --- updates waiting (bin/nowbar-updates) -----------------------------------------
+  // Checked every `updateInterval` minutes (counted from the last check, kept
+  // in state.json across restarts), and once after the computer starts when
+  // "Check at startup" is on. Nothing here needs sudo; the Update button opens
+  // a terminal running Omarchy's updater, which asks for the password there.
+
+  property var updatesState: Model.normalizeUpdates(null)
+  property bool updatesChecking: false
+  // This boot's id, and the one the last startup check ran in: a shell
+  // restart in the same boot isn't a startup.
+  property string updatesBootId: ""
+  property string updatesSavedBootId: ""
+  // With "Check at startup" off, the first check comes one interval after this.
+  readonly property double serviceStartedAt: Date.now()
+  // What this system can check (see bin/nowbar-updates --available): a
+  // fresh Omarchy has Omarchy, official and AUR; Flatpak only if installed.
+  property var availableUpdateSources: []
+  readonly property var updateSources: Model.activeSources(prefs.updateSourceList, availableUpdateSources)
+  readonly property var shownUpdates: Model.updatesFor(updatesState, updateSources)
+  readonly property string updatesScript: decodeURIComponent(String(Qt.resolvedUrl("bin/nowbar-updates")).replace(/^file:\/\//, ""))
+
+  function checkUpdates() {
+    if (!modules.updates || updatesProcess.running || updateSources.length === 0) return false
+    updatesProcess.command = [updatesScript].concat(updateSources)
+    updatesChecking = true
+    updatesProcess.running = true
+    return true
+  }
+
+  function checkUpdatesIfDue() {
+    var last = updatesState.checkedAt > 0 ? updatesState.checkedAt : (prefs.updateOnStartup ? 0 : serviceStartedAt)
+    if (Model.updatesDue(last, prefs.updateInterval, Date.now())) checkUpdates()
+  }
+
+  Process {
+    id: updatesProcess
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var prev = Model.updatesFor(root.updatesState, root.updateSources)
+        root.updatesState = Model.mergeUpdates(root.updatesState, Model.parseUpdates(text), Date.now())
+        root.saveState()
+        // The card was already there: something new waiting brings it to
+        // the pill all the same, like a new activity would.
+        if (prev.items.length > 0 && Model.newUpdates(prev, root.shownUpdates) > 0) root.focusNewcomer("updates")
+      }
+    }
+    onExited: root.updatesChecking = false
+  }
+
+  Process {
+    id: updateSourcesProcess
+    command: [root.updatesScript, "--available"]
+    running: root.modules.updates
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.availableUpdateSources = Model.parseAvailableSources(text)
+    }
+  }
+
+  Process {
+    id: bootIdProcess
+    command: ["cat", "/proc/sys/kernel/random/boot_id"]
+    running: root.stateLoaded && root.modules.updates
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var id = String(text || "").trim()
+        if (!id) return
+        root.updatesBootId = id
+        if (id !== root.updatesSavedBootId && root.prefs.updateOnStartup) updatesStartup.start()
+      }
+    }
+  }
+
+  // A little after login, so the network is up.
+  Timer {
+    id: updatesStartup
+    interval: 45000
+    onTriggered: {
+      if (!root.checkUpdates()) return
+      root.updatesSavedBootId = root.updatesBootId
+      root.saveState()
+    }
+  }
+
+  Timer {
+    interval: 60000
+    repeat: true
+    running: root.modules.updates && root.stateLoaded
+    onTriggered: root.checkUpdatesIfDue()
+  }
+
+  // Updating anywhere (the Update button, a terminal) writes pacman's log or
+  // flatpak's .changed stamp: check again once it has been quiet for a bit,
+  // so the card goes away by itself. Needs inotifywait.
+  Process {
+    id: updatesWatch
+    command: ["sh", "-c",
+      "command -v inotifywait >/dev/null 2>&1 || exit 3; set --; "
+      + "for f in /var/log/pacman.log /var/lib/flatpak/.changed \"$HOME/.local/share/flatpak/.changed\"; do [ -e \"$f\" ] && set -- \"$@\" \"$f\"; done; "
+      + "[ $# -gt 0 ] || exit 4; exec setpriv --pdeathsig TERM inotifywait -mq -e modify,attrib,close_write --format x -- \"$@\""]
+    running: root.modules.updates && root.stateLoaded
+    stdout: SplitParser {
+      onRead: function(line) { updatesSettle.restart() }
+    }
+    onExited: function(exitCode) { if (exitCode !== 3 && exitCode !== 4 && root.modules.updates) updatesWatchRetry.restart() }
+  }
+
+  Timer {
+    id: updatesSettle
+    interval: 20000
+    onTriggered: root.checkUpdates()
+  }
+
+  Timer {
+    id: updatesWatchRetry
+    interval: 60000
+    onTriggered: if (root.modules.updates && !updatesWatch.running) updatesWatch.running = true
+  }
+
+  function runUpdate() {
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", Model.updateCommand(shownUpdates.items)])
   }
 
   // --- pushed live updates (IPC) ---------------------------------------------------
@@ -1391,7 +1738,7 @@ Item {
     var list = []
     list.push(Model.timerActivity(timerState, t))
     list.push(Model.stopwatchActivity(stopwatchState, t))
-    list.push(Model.pomodoroActivity(pomodoroState, pomodoroCfg, t))
+    list.push(Model.pomodoroActivity(pomodoroState, pomodoroCfg, t, Model.normalizePomodoroStats(pomodoroStats, t)))
     list.push(Model.sleepActivity(sleepState, t))
     list.push(Model.remindersActivity(reminders, t))
     list.push(Model.recordingActivity(recording, t))
@@ -1402,8 +1749,13 @@ Item {
     list.push(Model.batteryActivity(chargingInfo))
     for (var m = 0; m < mediaInfos.length; m++) list.push(Model.mediaActivity(mediaInfos[m]))
     for (var b in btRecent) list.push(Model.bluetoothActivity(btRecent[b]))
+    for (var bl = 0; bl < btLowDevices.length; bl++) list.push(btLowDevices[bl])
     if (screenshot) list.push(Model.screenshotActivity(screenshot))
-    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable))
+    if (recorded) list.push(Model.recordedActivity(recorded))
+    if (firedReminder) list.push(Model.firedReminderActivity(firedReminder))
+    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates))
+    if (weatherEnabled) list.push(Model.rainActivity(weather))
+    if (modules.updates) list.push(Model.updatesActivity(shownUpdates, updatesChecking))
     for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })
   }
@@ -1430,7 +1782,7 @@ Item {
 
   onActivitiesChanged: {
     var ids = {}
-    for (var i = 0; i < activities.length; i++) ids[activities[i].id] = true
+    for (var i = 0; i < activities.length; i++) ids[activities[i].id] = activities[i].priority
     var next = Model.resolveFocus({
       list: activities,
       focusId: focusId,
@@ -1443,12 +1795,58 @@ Item {
     if (next !== focusId) focusId = next
   }
 
+  // Gives `id` the focus as if it had just shown up: only with "Focus new
+  // activities" on, not right after a switch by hand, and not over something
+  // more important.
+  function focusNewcomer(id) {
+    if (!prefs.autoFocus || Date.now() < manualUntil) return false
+    var i = Model.indexOfId(activities, id)
+    if (i < 0) return false
+    var a = activities[i]
+    if (focused && focused.id !== id && focused.priority < a.priority) return false
+    focusId = id
+    return true
+  }
+
   function step(delta) {
     var i = Model.nextIndex(activities.length, focusIndex, delta)
     if (i < 0) return false
     focusId = activities[i].id
     manualUntil = Date.now() + 8000
+    freshenMedia(activities[i])
     return true
+  }
+
+  // A paused player chosen by hand starts its "leaves the pill" clock over.
+  function freshenMedia(a) {
+    if (!a || a.module !== "media" || a.playing || pausedAt[a.target] === undefined) return
+    var next = {}
+    for (var k in pausedAt) next[k] = pausedAt[k]
+    next[a.target] = Date.now()
+    pausedAt = next
+  }
+
+  // A player paused for a while (the "Media" options) gives the pill to the
+  // most important other activity; it stays in the carousel. Never to another
+  // player paused just as long, so two of them don't take turns.
+  function releaseStaleMedia() {
+    var a = focused
+    var t = Date.now()
+    var minutes = prefs.mediaPausedMinutes
+    if (!a || t < manualUntil || !Model.staleMedia(a, pausedAt[a.target], t, minutes)) return
+    // Not under you while you look at it.
+    if (root.shell && root.shell.isPluginOpen(root.pluginId)) return
+    for (var i = 0; i < activities.length; i++) {
+      var b = activities[i]
+      if (b.id !== a.id && !Model.staleMedia(b, pausedAt[b.target], t, minutes)) { focusId = b.id; return }
+    }
+  }
+
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.focused !== null && root.focused.module === "media" && !root.focused.playing && root.prefs.mediaPausedMinutes > 0
+    onTriggered: root.releaseStaleMedia()
   }
 
   // An activity id, or a module name / push id as a shortcut ("media" is the
@@ -1467,6 +1865,8 @@ Item {
     if (!id) return false
     focusId = id
     manualUntil = Date.now() + 8000
+    var i = Model.indexOfId(activities, id)
+    if (i >= 0) freshenMedia(activities[i])
     return true
   }
 
@@ -1520,6 +1920,21 @@ Item {
       saveState()
     } else if (activityId === "screenshot") {
       screenshotAction(actionId)
+    } else if (activityId === "recorded") {
+      recordedAction(actionId)
+    } else if (activityId === "reminderDone") {
+      if (actionId === "snooze5") snoozeReminder(5)
+      else if (actionId === "snooze15") snoozeReminder(15)
+      else firedReminder = null
+    } else if (activityId === "reminders" && actionId === "postpone") {
+      postponeReminder()
+    } else if (activityId.indexOf("bt:") === 0 && actionId === "audio") {
+      useForAudio(activityId.slice(3))
+    } else if (activityId === "timer" && timerState.state === "done") {
+      if (actionId === "repeat") timerState = Model.startTimer(timerState.durationMs / 1000, t)
+      else if (actionId === "add") timerState = Model.startTimer(60, t)
+      else timerState = Model.idleTimer()
+      saveState()
     } else if (activityId === "timer") {
       if (actionId === "pause") timerState = Model.pauseTimer(timerState, t)
       else if (actionId === "resume") timerState = Model.resumeTimer(timerState, t)
@@ -1545,6 +1960,9 @@ Item {
       modeAction(actionId)
     } else if (a && a.module === "media") {
       mediaAction(a.target, actionId)
+    } else if (activityId === "updates") {
+      if (actionId === "update") runUpdate()
+      else if (actionId === "check") checkUpdates()
     } else if (activityId.indexOf("push:") === 0 && actionId === "remove") {
       removePush(activityId.slice(5))
     } else {
@@ -1576,7 +1994,8 @@ Item {
 
   // One clock for everything that counts: timer, stopwatch, recording,
   // reminders, pushes with a TTL, and the media position.
-  readonly property bool needsTick: timerState.state === "running"
+  readonly property bool needsTick: timerState.state === "running" || timerState.state === "done"
+    || recorded !== null
     || stopwatchState.state === "running"
     || recording.active
     || reminders.length > 0
@@ -1601,6 +2020,7 @@ Item {
       root.checkTimer()
       root.pruneBluetooth(root.now)
       if (root.screenshot && root.screenshot.until <= root.now) root.screenshot = null
+      if (root.recorded && root.recorded.until <= root.now) root.recorded = null
       var pruned = Model.prunePushes(root.pushes, root.now)
       if (pruned !== root.pushes) root.pushes = pruned
     }
@@ -1641,18 +2061,24 @@ Item {
   IpcHandler {
     target: "nowbar"
 
-    // Open the popup on the options: settings [activities|look|quick|weather]
+    // Open the popup on the options: settings [activities|look|quick|weather|updates]
     function settings(tab: string): string {
       var t = String(tab || "")
       if (t === "timers") t = "quick"   // the tab's old name
-      if (t !== "" && ["activities", "look", "quick", "weather"].indexOf(t) === -1)
-        return "unknown tab: use activities, look, quick or weather"
+      if (t !== "" && ["activities", "look", "quick", "weather", "updates"].indexOf(t) === -1)
+        return "unknown tab: use activities, look, quick, weather or updates"
       root.settingsRequested(t)
       if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
       return "ok"
     }
 
     function status(): string { return root.statusJson() }
+    // Check for updates now (the Updates card).
+    function updates(): string {
+      if (!root.modules.updates) return "error: the updates module is turned off"
+      if (root.updatesChecking) return "already checking"
+      return root.checkUpdates() ? "checking" : "error: no source turned on"
+    }
     function next(): string { return root.step(1) ? "ok" : "empty" }
     function prev(): string { return root.step(-1) ? "ok" : "empty" }
     function toggle(): string {
