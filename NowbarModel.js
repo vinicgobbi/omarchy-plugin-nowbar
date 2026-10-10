@@ -1648,6 +1648,73 @@ function clockLabel(minutes) {
   return minutes < 0 ? "" : Math.floor(minutes / 60) + ":" + pad2(minutes % 60)
 }
 
+// --- weather location ------------------------------------------------------------
+// The place is Omarchy's own (~/.local/state/omarchy/settings/weather.json,
+// written by omarchy-weather-location), shared with its weather panel:
+// {"name", "latitude", "longitude"}. Missing, blank or broken means a guess
+// from the IP. Adapted from Omarchy's weather panel (MIT, see above).
+
+function parseLocationFile(raw) {
+  var unset = { name: "", latitude: null, longitude: null }
+  try {
+    var data = JSON.parse(String(raw || ""))
+    if (!data || typeof data !== "object" || Array.isArray(data)) return unset
+    var lat = parseFloat(data.latitude)
+    var lon = parseFloat(data.longitude)
+    var coords = validCoords(lat, lon)
+    return {
+      name: typeof data.name === "string" ? clean(data.name, 80) : "",
+      latitude: coords ? lat : null,
+      longitude: coords ? lon : null
+    }
+  } catch (e) {
+    return unset
+  }
+}
+
+function validCoords(lat, lon) {
+  return typeof lat === "number" && typeof lon === "number" && isFinite(lat) && isFinite(lon)
+    && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+}
+
+// The wttr.in path for a place: its coordinates when known (a name alone can
+// land on another town with the same name), else the encoded name; "" asks
+// wttr.in to guess from the IP.
+function wttrLocationQuery(loc) {
+  if (!loc) return ""
+  if (validCoords(loc.latitude, loc.longitude)) return loc.latitude + "," + loc.longitude
+  var name = String(loc.name || "").trim()
+  return name === "" ? "" : encodeURIComponent(name)
+}
+
+// Open-Meteo's geocoding answer -> up to 5 places to pick from:
+// { name, region ("Espírito Santo, Brazil"), latitude, longitude }.
+function parseGeocodingResults(raw) {
+  try {
+    var results = (JSON.parse(String(raw || "{}")) || {}).results
+    if (!Array.isArray(results)) return []
+    var out = []
+    for (var i = 0; i < results.length && out.length < 5; i++) {
+      var r = results[i]
+      if (!r || typeof r.name !== "string") continue
+      var lat = parseFloat(r.latitude)
+      var lon = parseFloat(r.longitude)
+      if (!validCoords(lat, lon)) continue
+      var name = clean(r.name, 80)
+      if (!name) continue
+      out.push({
+        name: name,
+        region: [r.admin1, r.country].filter(function(x) { return typeof x === "string" && x.trim() }).map(function(x) { return clean(x, 60) }).join(", "),
+        latitude: Math.round(lat * 1e4) / 1e4,
+        longitude: Math.round(lon * 1e4) / 1e4
+      })
+    }
+    return out
+  } catch (e) {
+    return []
+  }
+}
+
 // °C or °F: an explicit choice, else the country of the forecast, else the
 // locale. Same rules as Omarchy's weather panel (MIT, see above).
 function useImperial(unit, localeName, country) {
@@ -2100,6 +2167,9 @@ if (typeof module !== "undefined") {
     replaceWarning: replaceWarning,
     keepOrder: keepOrder,
     hiddenActivities: hiddenActivities,
+    parseLocationFile: parseLocationFile,
+    wttrLocationQuery: wttrLocationQuery,
+    parseGeocodingResults: parseGeocodingResults,
     normalizePomodoroStats: normalizePomodoroStats,
     countFocusDone: countFocusDone,
     validReminderUnit: validReminderUnit,

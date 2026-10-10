@@ -853,3 +853,32 @@ test("updates card with plugins and themes", () => {
   assert.ok(a.details.some(d => d.includes("Couldn't check some plugins")))
   assert.deepEqual(M.parseAvailableSources("plugins\nthemes\n"), ["plugins", "themes"])
 })
+
+test("weather location: Omarchy's file, wttr.in query, geocoding", () => {
+  assert.deepEqual(M.parseLocationFile(""), { name: "", latitude: null, longitude: null })
+  assert.deepEqual(M.parseLocationFile("[1]"), { name: "", latitude: null, longitude: null })
+  assert.deepEqual(M.parseLocationFile('{"name":"Malibu"}'), { name: "Malibu", latitude: null, longitude: null })
+  const full = M.parseLocationFile('{"name":"Iconha","latitude":-20.79,"longitude":-40.81}')
+  assert.deepEqual(full, { name: "Iconha", latitude: -20.79, longitude: -40.81 })
+  // Out of range coordinates are dropped, the name is kept.
+  assert.equal(M.parseLocationFile('{"name":"X","latitude":200,"longitude":0}').latitude, null)
+  assert.equal(M.parseLocationFile('{"name":"a\\nb"}').name, "a b")
+
+  assert.equal(M.wttrLocationQuery(full), "-20.79,-40.81")
+  assert.equal(M.wttrLocationQuery({ name: "São Paulo" }), "S%C3%A3o%20Paulo")
+  assert.equal(M.wttrLocationQuery({ name: "  " }), "")
+  assert.equal(M.wttrLocationQuery(null), "")
+
+  const geo = JSON.stringify({ results: [
+    { name: "Iconha", admin1: "Espírito Santo", country: "Brazil", latitude: -20.79167, longitude: -40.81083 },
+    { name: "No coords" },
+    { name: "Far", latitude: 95, longitude: 0 },
+    { name: "Paris", country: "France", latitude: 48.85, longitude: 2.35 }
+  ] })
+  assert.deepEqual(M.parseGeocodingResults(geo), [
+    { name: "Iconha", region: "Espírito Santo, Brazil", latitude: -20.7917, longitude: -40.8108 },
+    { name: "Paris", region: "France", latitude: 48.85, longitude: 2.35 }
+  ])
+  assert.deepEqual(M.parseGeocodingResults("{}"), [])
+  assert.deepEqual(M.parseGeocodingResults("junk"), [])
+})

@@ -40,7 +40,7 @@ Column {
   }
 
   // True while typing in a text field: the popup's key shortcuts step aside.
-  readonly property bool editing: presetsField.activeFocus
+  readonly property bool editing: presetsField.activeFocus || locationField.activeFocus
 
   // "replaced" / "native" / "" (unknown) — see bin/nowbar-weather-widget and
   // Service.qml's setIndicators.
@@ -66,6 +66,29 @@ Column {
   signal indicatorsRequested(bool replace)
   signal resetRequested()
   signal backRequested()
+  // Weather location (Service.qml): search by name, pick one (null:
+  // automatic), and hand the keyboard back to the popup when done.
+  signal locationSearch(string text)
+  signal locationPicked(var place)
+  signal keysReleased()
+
+  // Omarchy's saved place ({ name, latitude, longitude }; no name: automatic),
+  // the one being saved, and what wttr.in placed the IP in.
+  property var weatherLocation: ({ name: "", latitude: null, longitude: null })
+  property var weatherLocationSaving: null
+  property string detectedPlace: ""
+  property bool locationEditable: false
+  property var locationResults: []
+  property bool locationSearching: false
+  property bool locationSearchFailed: false
+  property int locationIndex: 0
+  onLocationResultsChanged: locationIndex = 0
+
+  function pickLocation(place) {
+    root.locationPicked(place)
+    locationField.text = ""
+    root.keysReleased()
+  }
 
   spacing: Style.space(10)
 
@@ -766,7 +789,100 @@ Column {
     spacing: Style.space(10)
     visible: root.tab === "weather"
 
-    Intro { text: "The weather card: wttr.in, for the location saved in Omarchy (or a guess from your IP)." }
+    Intro { text: "The weather card: wttr.in, for the place below." }
+
+    Section { text: "LOCATION" }
+
+    // What it uses now: the saved place, or automatic and where the IP is.
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
+      readonly property var shown: root.weatherLocationSaving !== null ? root.weatherLocationSaving : root.weatherLocation
+      text: root.weatherLocationSaving !== null
+        ? "\u{f034e}  Saving " + (shown.name !== "" ? shown.name : "automatic") + "…"
+        : (shown.name !== ""
+          ? "\u{f034e}  " + shown.name + (shown.latitude !== null ? "  (" + shown.latitude + ", " + shown.longitude + ")" : "")
+          : "\u{f034e}  Automatic: " + (root.detectedPlace !== "" ? root.detectedPlace + ", a guess from your IP" : "a guess from your IP"))
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+    }
+
+    TextField {
+      id: locationField
+      width: parent.width
+      visible: root.locationEditable
+      foreground: root.foreground
+      font.family: root.fontFamily
+      placeholderText: "Search a city to use instead"
+      onTextChanged: root.locationSearch(text)
+      // ↑/↓ choose among the places found, Enter takes it, Esc gives up.
+      Keys.onDownPressed: root.locationIndex = Math.min(root.locationResults.length - 1, root.locationIndex + 1)
+      Keys.onUpPressed: root.locationIndex = Math.max(0, root.locationIndex - 1)
+      Keys.onEscapePressed: { text = ""; root.keysReleased() }
+      onAccepted: if (root.locationResults.length > 0) root.pickLocation(root.locationResults[root.locationIndex])
+    }
+
+    Text {
+      width: parent.width
+      visible: root.locationEditable && locationField.text.trim().length >= 2
+        && (root.locationSearching || root.locationSearchFailed || root.locationResults.length === 0)
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
+      text: root.locationSearching ? "Searching…"
+        : (root.locationSearchFailed ? "Couldn't search (offline?)" : "No place found with that name")
+      color: root.locationSearchFailed ? Color.urgent : Util.alpha(root.foreground, 0.62)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    Column {
+      width: parent.width
+      spacing: Style.space(4)
+      visible: root.locationEditable && locationField.text.trim().length >= 2 && root.locationResults.length > 0
+
+      Repeater {
+        model: root.locationResults
+
+        Button {
+          required property var modelData
+          required property int index
+          width: parent.width
+          leftAlign: true
+          iconText: "\u{f034e}"
+          text: modelData.name + (modelData.region ? "  ·  " + modelData.region : "")
+          foreground: root.foreground
+          selected: index === root.locationIndex
+          tooltipText: modelData.latitude + ", " + modelData.longitude
+          onClicked: root.pickLocation(modelData)
+        }
+      }
+    }
+
+    Button {
+      visible: root.locationEditable && root.weatherLocation.name !== "" && root.weatherLocationSaving === null
+      iconText: "\u{f01a4}"
+      text: "Use automatic location"
+      foreground: root.foreground
+      bordered: true
+      tooltipText: "Forget the saved place and let wttr.in guess from your IP"
+      onClicked: root.pickLocation(null)
+    }
+
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
+      text: root.locationEditable
+        ? "\u{f0026}  Shared with Omarchy's weather panel: changing it here changes it there too."
+        : "Changing the place needs omarchy-weather-location (a newer Omarchy)."
+      color: Util.alpha(root.foreground, 0.62)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    PanelSeparator { foreground: root.foreground }
 
     Option {
       label: "Temperature"

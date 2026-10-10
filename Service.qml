@@ -1527,36 +1527,171 @@ Item {
   readonly property int weatherSlot: Math.floor(root.now / 600000)
   readonly property var weather: {
     var _slot = weatherSlot
-    return weatherRaw ? Model.parseWttr(weatherRaw, Date.now(), { unit: prefs.weatherUnit, locale: Qt.locale().name }) : null
+    var w = weatherRaw ? Model.parseWttr(weatherRaw, Date.now(), { unit: prefs.weatherUnit, locale: Qt.locale().name }) : null
+    // A saved place goes by its own name (from coordinates, wttr.in may
+    // answer with the nearest village), like in Omarchy's weather panel.
+    if (w && weatherLocation.name !== "") w.location = Model.clean(weatherLocation.name, 40)
+    return w
   }
 
   function refreshWeather() {
-    if (!weatherEnabled || weatherProcess.running) return
+    if (!weatherEnabled) return
+    // Asked again mid-fetch (the place changed): once this one is done.
+    if (weatherProcess.running) { weatherAgain = true; return }
+    weatherProcess.query = weatherQuery
+    weatherProcess.command = ["sh", "-c", "curl -fsS --max-time 10 \"https://wttr.in/$1?format=j1\" 2>/dev/null | head -c 524288", "_", weatherQuery]
     weatherProcess.running = true
+  }
+  property bool weatherAgain: false
+
+  // --- the place: Omarchy's, shared with its weather panel ----------------------
+  // Read straight from its file (watched, so a change from Omarchy's panel
+  // shows up here too), written only through omarchy-weather-location.
+
+  readonly property string weatherLocationPath: Quickshell.env("HOME") + "/.local/state/omarchy/settings/weather.json"
+  property var weatherLocation: Model.parseLocationFile("")
+  readonly property string weatherQuery: Model.wttrLocationQuery(weatherLocation)
+  // The place being saved, until the file says so (or the save failed).
+  property var weatherLocationSaving: null
+  property bool hasWeatherLocationTool: false
+
+  // Another place: fetch it now. The last report stays meanwhile, so the
+  // card doesn't vanish (and take the focus with it) while it loads.
+  onWeatherQueryChanged: {
+    weatherFetchedAt = 0
+    refreshWeather()
+  }
+
+  function useWeatherLocation(loc) {
+    weatherLocationSaving = null
+    if (JSON.stringify(loc) !== JSON.stringify(weatherLocation)) weatherLocation = loc
+  }
+
+  FileView {
+    id: weatherLocationFile
+    path: root.weatherLocationPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.useWeatherLocation(Model.parseLocationFile(text()))
+    onLoadFailed: root.useWeatherLocation(Model.parseLocationFile(""))
+  }
+
+  // The watch can't see the file being created (it doesn't exist while on
+  // automatic) or come back after `--clear` deletes it, so it is read again
+  // now and then, and whenever the popup opens. It's a few bytes.
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.weatherEnabled
+    onTriggered: weatherLocationFile.reload()
+  }
+
+  Process {
+    id: weatherLocationToolCheck
+    command: ["sh", "-c", "command -v omarchy-weather-location >/dev/null 2>&1"]
+    onExited: function(exitCode) { root.hasWeatherLocationTool = exitCode === 0 }
+  }
+
+  // A place picked in the options (from the search), or null for automatic
+  // (a guess from the IP).
+  function setWeatherLocation(place) {
+    if (!hasWeatherLocationTool || weatherLocationSave.running) return false
+    if (place && place.name && Model.wttrLocationQuery({ name: "", latitude: place.latitude, longitude: place.longitude }) !== "") {
+      weatherLocationSave.command = ["omarchy-weather-location", "--set", Model.clean(place.name, 80), place.latitude + "," + place.longitude]
+      weatherLocationSaving = { name: Model.clean(place.name, 80), latitude: place.latitude, longitude: place.longitude }
+    } else {
+      weatherLocationSave.command = ["omarchy-weather-location", "--clear"]
+      weatherLocationSaving = { name: "", latitude: null, longitude: null }
+    }
+    weatherLocationSave.running = true
+    return true
+  }
+
+  Process {
+    id: weatherLocationSave
+    onExited: function(exitCode) {
+      // The watch reloads the file; read it anyway (a hand-made file may not
+      // have been watched yet), and give up the "saving" state on failure.
+      weatherLocationFile.reload()
+      if (exitCode !== 0) {
+        root.weatherLocationSaving = null
+        root.notify("\u{f0599}", "Weather location", "Couldn't save it (exit " + exitCode + ")")
+      }
+    }
+  }
+
+  // Search for a place by name (Open-Meteo's geocoding, the same as Omarchy's
+  // weather panel), debounced while typing. Only the newest search counts.
+  property string geocodeQuery: ""
+  property var geocodeResults: []
+  property bool geocodeBusy: false
+  property bool geocodeFailed: false
+
+  function searchWeatherLocation(text) {
+    geocodeQuery = String(text || "").trim().slice(0, 80)
+    geocodeFailed = false
+    if (geocodeQuery.length < 2) { geocodeDebounce.stop(); geocodeResults = []; geocodeBusy = false; return }
+    geocodeBusy = true
+    geocodeDebounce.restart()
+  }
+
+  Timer {
+    id: geocodeDebounce
+    interval: 350
+    onTriggered: root.startGeocode()
+  }
+
+  function startGeocode() {
+    if (geocodeProcess.running) { geocodeDebounce.restart(); return }
+    geocodeProcess.query = geocodeQuery
+    geocodeProcess.command = ["curl", "-fsS", "--max-time", "5", "--max-filesize", "262144",
+      "https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(geocodeQuery) + "&count=5&language=en&format=json"]
+    geocodeProcess.running = true
+  }
+
+  Process {
+    id: geocodeProcess
+    property string query: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (geocodeProcess.query !== root.geocodeQuery) return
+        root.geocodeResults = Model.parseGeocodingResults(text)
+      }
+    }
+    onExited: function(exitCode) {
+      if (query !== root.geocodeQuery) return
+      root.geocodeBusy = false
+      root.geocodeFailed = exitCode !== 0
+      if (exitCode !== 0) root.geocodeResults = []
+    }
   }
 
   // Older than 10 minutes: fetch again (when the card is shown).
   function refreshWeatherIfStale() {
+    weatherLocationFile.reload()
     if (Date.now() - weatherFetchedAt > 10 * 60 * 1000) refreshWeather()
   }
 
   Process {
     id: weatherProcess
-    // Same location rules as Omarchy's weather: the saved place if any, else
-    // wttr.in's guess from the IP. The report is capped at 512 KB.
-    command: ["sh", "-c",
-      "q=''; if [ -s \"$HOME/.local/state/omarchy/settings/weather.json\" ]; then "
-      + "l=$(omarchy-weather-location 2>/dev/null); [ -n \"$l\" ] && q=$(jq -rn --arg l \"$l\" '$l | @uri'); fi; "
-      + "curl -fsS --max-time 10 \"https://wttr.in/${q}?format=j1\" 2>/dev/null | head -c 524288"]
+    // Same place as Omarchy's weather (see weatherQuery): its coordinates or
+    // name, else wttr.in's guess from the IP. The query goes in as an argument,
+    // never into the script. The report is capped at 512 KB.
+    property string query: ""
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        // A report for a place that isn't the current one anymore.
+        if (weatherProcess.query !== root.weatherQuery) return
         // Keep the last good report when offline or when wttr.in answers junk.
         if (Model.parseWttr(text, Date.now(), {}) === null) return
         root.weatherRaw = text
         root.weatherFetchedAt = Date.now()
       }
     }
+    onExited: if (root.weatherAgain) { root.weatherAgain = false; root.refreshWeather() }
   }
 
   // --- replacing Omarchy's weather widget (opt-in, from a button) ------------------------
@@ -2103,6 +2238,7 @@ Item {
     checkIndicators()
     voxtypeCheck.running = true
     powerProfilesCheck.running = true
+    weatherLocationToolCheck.running = true
     syncLastPlaying()
     initArtCache()
   }
@@ -2120,7 +2256,7 @@ Item {
       focus: focusId,
       coverAccent: artAccent,
       coverBase: artBase,
-      weather: weather ? { temp: weather.temp, unit: weather.unit, desc: weather.desc, location: weather.location } : null,
+      weather: weather ? { temp: weather.temp, unit: weather.unit, desc: weather.desc, location: weather.location, query: weatherQuery } : null,
       activities: activities.map(function(a) {
         return { id: a.id, module: a.module, title: a.title, subtitle: a.subtitle, progress: a.progress }
       })

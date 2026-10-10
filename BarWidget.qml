@@ -1308,6 +1308,16 @@ Panel {
             onIndicatorsRequested: function(replace) { if (root.service) root.service.setIndicators(replace) }
             onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
             onBackRequested: root.settingsOpen = false
+            weatherLocation: root.service ? root.service.weatherLocation : ({ name: "", latitude: null, longitude: null })
+            weatherLocationSaving: root.service ? root.service.weatherLocationSaving : null
+            detectedPlace: root.service && root.service.weather ? root.service.weather.location : ""
+            locationEditable: root.service ? root.service.hasWeatherLocationTool : false
+            locationResults: root.service ? root.service.geocodeResults : []
+            locationSearching: root.service ? root.service.geocodeBusy : false
+            locationSearchFailed: root.service ? root.service.geocodeFailed : false
+            onLocationSearch: function(text) { if (root.service) root.service.searchWeatherLocation(text) }
+            onLocationPicked: function(place) { if (root.service) root.service.setWeatherLocation(place) }
+            onKeysReleased: root.forceKeyFocus()
           }
         }
 

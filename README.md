@@ -133,7 +133,9 @@ the tools the Updates card uses for Omarchy, official packages
 
 **External services.** The weather card asks [wttr.in](https://wttr.in) for
 the weather every 20 minutes (for the location saved in Omarchy, or a guess
-from your IP); turning the Weather activity off stops it. The Updates card
+from your IP); turning the Weather activity off stops it. Searching for a
+place in the options asks [Open-Meteo's geocoding](https://open-meteo.com/en/docs/geocoding-api)
+for matching names (only what you type there, only while you type). The Updates card
 checks the package mirrors, the AUR and the Flatpak remotes at the interval
 you pick (3 hours by default); turning it off stops that. Cover art is
 downloaded from wherever the player points to (https only, never this
@@ -230,8 +232,9 @@ reach them.
 ## Weather
 
 The weather card uses the same source as Omarchy's weather widget (wttr.in),
-the same saved location (`omarchy-weather-location`, else a guess from your
-IP), and °C or °F the same way (or as set in the options). It shows:
+the same saved place (its coordinates, so a town isn't mixed up with another
+of the same name; else a guess from your IP), and °C or °F the same way (or
+as set in the options). It shows:
 
 - the temperature, condition and place, today's high and low, feels like;
 - wind, humidity, today's chance of rain, and the next sunset (or sunrise);
@@ -241,6 +244,24 @@ IP), and °C or °F the same way (or as set in the options). It shows:
 It is one more card in the carousel (and in the `2/4` marker), but never takes
 the pill from a live activity. `omarchy-shell nowbar weather` opens the popup
 on it.
+
+### Choosing the place
+
+By default the place is a guess from your IP. To pick one, open the options'
+**Weather** tab and type a city under **Location**: matching places show up
+as you type (↑/↓ and Enter, or a click), with their region and country.
+**Use automatic location** goes back to the guess.
+
+> **This changes Omarchy's setting too:** the place is Omarchy's own (saved
+> with `omarchy-weather-location` in
+> `~/.local/state/omarchy/settings/weather.json`), so Omarchy's weather panel
+> follows it, and a place picked there shows up here.
+
+From a terminal, the same thing:
+
+```bash
+omarchy-weather-location --set Iconha -20.7931,-40.8111   # or --clear for automatic
+```
 
 ### Replacing Omarchy's weather widget
 
@@ -394,8 +415,8 @@ options, one tab at a time (Tab / Shift+Tab to switch):
   "Time's up" stays (until OK by default, or 1, 5 or 30 minutes). Then the
   Pomodoro lengths, and Do Not Disturb while focusing (off by default; it
   only turns off what it turned on).
-- **Weather:** °C, °F or automatic, and replacing (or restoring) Omarchy's
-  weather widget.
+- **Weather:** the place (searched by name, or automatic), °C, °F or
+  automatic, and replacing (or restoring) Omarchy's weather widget.
 - **Updates:** which sources are checked (Omarchy, official, AUR, and
   Flatpak, plugins and themes when there are some to check; a source whose
   tool is missing isn't listed),
@@ -423,7 +444,10 @@ The same options are in the widget's settings. **Reset** restores them all
   `inotify-tools` installed. "Edit" opens `$OMARCHY_SCREENSHOT_EDITOR`
   (`tensaku-edit` by default).
 - **Weather** is fetched every 20 minutes (and when the popup opens with a
-  reading older than 10). Turning the "Weather" activity off stops it.
+  reading older than 10), and right away when the place changes. The saved
+  place is read again every 30 seconds and when the popup opens (it is a few
+  bytes), so a change made in Omarchy's panel or a terminal shows up on its
+  own. Turning the "Weather" activity off stops it.
 - **Updates** are checked by `bin/nowbar-updates`, which only reads:
   `checkupdates` syncs a temporary copy of the package databases, never the
   system's, and plugins and themes are compared with their remotes through
