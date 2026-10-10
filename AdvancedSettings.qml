@@ -11,8 +11,8 @@ import "NowbarModel.js" as Model
 // One tab at a time, so it stays short:
 //   Activities  what can show up, and whether new ones take the pill
 //   Look        what the pill shows and the dynamic colors
-//   Quick       the popup's Quick toggles and Quick start (and Omarchy's
-//               indicators widget, which the Quick toggles replace)
+//   Popup       the popup's Quick toggles and Quick start (and Omarchy's
+//               indicators widget, which the Quick toggles replace), timers
 //   Weather     temperature unit and taking over Omarchy's weather widget
 //   Updates     which package sources are checked, and how often
 Column {
@@ -22,12 +22,12 @@ Column {
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
 
-  // "activities" | "look" | "quick" | "weather" | "updates"
+  // "activities" | "look" | "popup" | "weather" | "updates"
   property string tab: "activities"
   readonly property var tabs: [
     { value: "activities", label: "Activities" },
     { value: "look", label: "Look" },
-    { value: "quick", label: "Quick" },
+    { value: "popup", label: "Popup" },
     { value: "weather", label: "Weather" },
     { value: "updates", label: "Updates" }
   ]
@@ -102,7 +102,7 @@ Column {
         width: parent.width
         visible: opt.hint !== ""
         text: opt.hint
-        color: Qt.darker(root.foreground, 1.5)
+        color: Util.alpha(root.foreground, 0.62)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
@@ -145,7 +145,7 @@ Column {
       width: Style.space(20)
       textFormat: Text.PlainText
       text: cell.glyph
-      color: root.prefs[cell.key] === true ? root.foreground : Qt.darker(root.foreground, 1.8)
+      color: root.prefs[cell.key] === true ? root.foreground : Util.alpha(root.foreground, 0.5)
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
     }
@@ -158,7 +158,7 @@ Column {
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       text: cell.label
-      color: root.prefs[cell.key] === true ? root.foreground : Qt.darker(root.foreground, 1.5)
+      color: root.prefs[cell.key] === true ? root.foreground : Util.alpha(root.foreground, 0.62)
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
       elide: Text.ElideRight
@@ -198,7 +198,7 @@ Column {
       width: Style.space(20)
       textFormat: Text.PlainText
       text: lc.glyph
-      color: lc.on ? root.foreground : Qt.darker(root.foreground, 1.8)
+      color: lc.on ? root.foreground : Util.alpha(root.foreground, 0.5)
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
     }
@@ -211,7 +211,7 @@ Column {
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       text: lc.label
-      color: lc.on ? root.foreground : Qt.darker(root.foreground, 1.5)
+      color: lc.on ? root.foreground : Util.alpha(root.foreground, 0.62)
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
       elide: Text.ElideRight
@@ -233,7 +233,7 @@ Column {
     width: parent ? parent.width : 0
     textFormat: Text.PlainText
     wrapMode: Text.WordWrap
-    color: Qt.darker(root.foreground, 1.4)
+    color: Util.alpha(root.foreground, 0.7)
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
   }
@@ -292,7 +292,7 @@ Column {
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         text: swap.swapState === "replaced" ? swap.replacedText : swap.nativeText
-        color: Qt.darker(root.foreground, 1.3)
+        color: Util.alpha(root.foreground, 0.75)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -303,7 +303,7 @@ Column {
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         text: "\u{f0026}  " + swap.warning
-        color: Qt.darker(root.foreground, 1.5)
+        color: Util.alpha(root.foreground, 0.62)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -351,12 +351,26 @@ Column {
       font.bold: true
     }
 
+    // Every tab at once (hidden players, timers...): a second click within a
+    // few seconds does it.
     Button {
+      id: resetButton
+      property bool armed: false
       anchors.right: parent.right
-      text: "Reset"
-      foreground: Qt.darker(root.foreground, 1.4)
-      tooltipText: "Restore the default options (all tabs)"
-      onClicked: root.resetRequested()
+      text: armed ? "Reset all?" : "Reset"
+      foreground: armed ? Color.urgent : Util.alpha(root.foreground, 0.7)
+      tooltipText: armed ? "Click again to restore every option (all tabs)" : "Restore the default options (all tabs)"
+      onClicked: {
+        if (!armed) { armed = true; resetDisarm.restart(); return }
+        armed = false
+        root.resetRequested()
+      }
+
+      Timer {
+        id: resetDisarm
+        interval: 4000
+        onTriggered: resetButton.armed = false
+      }
     }
   }
 
@@ -468,7 +482,7 @@ Column {
             width: Style.space(20)
             textFormat: Text.PlainText
             text: "\u{f075a}"
-            color: pc.shown ? root.foreground : Qt.darker(root.foreground, 1.8)
+            color: pc.shown ? root.foreground : Util.alpha(root.foreground, 0.5)
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
@@ -481,7 +495,7 @@ Column {
             anchors.rightMargin: Style.space(6)
             anchors.verticalCenter: parent.verticalCenter
             text: pc.modelData
-            color: pc.shown ? root.foreground : Qt.darker(root.foreground, 1.5)
+            color: pc.shown ? root.foreground : Util.alpha(root.foreground, 0.62)
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
             elide: Text.ElideRight
@@ -575,12 +589,12 @@ Column {
     }
   }
 
-  // --- Quick -------------------------------------------------------------------------
+  // --- Popup -------------------------------------------------------------------------
 
   Column {
     width: parent.width
     spacing: Style.space(10)
-    visible: root.tab === "quick"
+    visible: root.tab === "popup"
 
     Intro { text: "The two rows at the bottom of the popup. Keys there: 1\u20136 start a timer, s the stopwatch, p a Pomodoro." }
 
@@ -654,6 +668,46 @@ Column {
       ListCell { glyph: "\u{f520}"; label: "Stopwatch"; itemId: "stopwatch"; listKey: "quickStartItems"; list: root.prefs.quickStartExtras; allowed: Model.QUICK_START_EXTRAS; active: root.prefs.showQuickStart }
       ListCell { glyph: "\u{f04fe}"; label: "Pomodoro"; itemId: "pomodoro"; listKey: "quickStartItems"; list: root.prefs.quickStartExtras; allowed: Model.QUICK_START_EXTRAS; active: root.prefs.showQuickStart }
       ListCell { glyph: "\u{f04b2}"; label: "Sleep"; itemId: "sleep"; listKey: "quickStartItems"; list: root.prefs.quickStartExtras; allowed: Model.QUICK_START_EXTRAS; active: root.prefs.showQuickStart }
+    }
+
+    Option {
+      label: "Sleep timer (min)"
+      hint: "How long the Sleep button waits before pausing the media."
+      opacity: root.prefs.showQuickStart && root.prefs.quickStartExtras.indexOf("sleep") !== -1 ? 1 : 0.45
+      NumberField {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        value: root.prefs.sleepMinutes
+        from: 1
+        to: 720
+        stepSize: 5
+        onModified: function(v) { root.changed("sleepMinutes", v) }
+      }
+    }
+
+    Section { text: "WHEN A TIMER ENDS" }
+
+    SwitchOption {
+      key: "timerSound"
+      label: "Sound"
+      hint: "A timer or a Pomodoro block ending plays a sound (not with Do Not Disturb on)."
+    }
+
+    Option {
+      label: "Time's up stays"
+      hint: "How long a finished timer keeps the pill, with Repeat / +1 min / OK."
+      ButtonGroup {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        options: [
+          { value: "0", label: "Until OK" },
+          { value: "1", label: "1m" },
+          { value: "5", label: "5m" },
+          { value: "30", label: "30m" }
+        ]
+        value: String(root.prefs.timerDoneMinutes)
+        onChanged: function(v) { root.changed("timerDoneMinutes", parseInt(v, 10)) }
+      }
     }
 
     Section { text: "POMODORO" }

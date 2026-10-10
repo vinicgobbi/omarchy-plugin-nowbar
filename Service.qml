@@ -90,6 +90,13 @@ Item {
     return timerState.state === "running"
   }
 
+  // What starting `kind` from the popup would throw away ("" if nothing):
+  // the popup asks before doing it. IPC starts it right away.
+  function startWarning(kind) {
+    var state = kind === "timer" ? timerState : (kind === "stopwatch" ? stopwatchState : (kind === "pomodoro" ? pomodoroState : null))
+    return Model.replaceWarning(kind, state, Date.now())
+  }
+
   function startStopwatch() {
     stopwatchState = Model.startStopwatch(Date.now())
     root.now = Date.now()
@@ -142,18 +149,26 @@ Item {
     Quickshell.execDetached(["omarchy-notification-send", "-g", glyph, "-u", "critical", headline, body])
   }
 
+  // A sound from the freedesktop theme ("Timer sound" option), unless Do Not
+  // Disturb is on. Without pw-play or the sound theme, nothing plays.
+  function playSound(name) {
+    if (!prefs.timerSound || modesState.dnd === true) return
+    Quickshell.execDetached(["pw-play", "/usr/share/sounds/freedesktop/stereo/" + name + ".oga"])
+  }
+
   // Runs on every tick (and after a restore): ends whatever ran out.
   function checkTimer() {
     var t = root.now
     var changed = false
     if (Model.timerFinished(timerState, t)) {
       notify("\u{f13ab}", "Timer finished", Model.presetLabel(timerState.durationMs / 1000) + " timer is up")
-      // "Time's up" for a moment, with Repeat / +1 min / OK, in the pill.
+      playSound("alarm-clock-elapsed")
+      // "Time's up", with Repeat / +1 min / OK, in the pill until OK.
       timerState = Model.doneTimer(timerState, t)
       focusId = "timer"
       changed = true
     }
-    if (Model.doneExpired(timerState, t)) {
+    if (Model.doneExpired(timerState, t, prefs.timerDoneMinutes)) {
       timerState = Model.idleTimer()
       changed = true
     }
@@ -164,6 +179,7 @@ Item {
       notify("\u{f04fe}", was === "focus" ? "Focus done" : "Break over",
         was === "focus" ? "Take a " + (pomodoroState.phase === "longBreak" ? "long " : "") + "break: " + Model.presetLabel(pomodoroState.durationMs / 1000)
           : "Back to focus: " + Model.presetLabel(pomodoroState.durationMs / 1000))
+      playSound("complete")
       changed = true
     }
     if (Model.timerFinished(sleepState, t)) {
@@ -775,6 +791,18 @@ Item {
     return true
   }
 
+  // Keyboard in the popup: seek by seconds on any seekable track (not only
+  // long ones, like the ±10 s buttons).
+  function nudgeSeek(activityId, seconds) {
+    var a = findActivity(activityId)
+    if (!a || a.module !== "media" || !a.seekable) return false
+    var p = playerForKey(a.target)
+    if (!p) return false
+    p.position = Math.max(0, Math.min(a.length - 1, p.position + seconds))
+    root.now = Date.now()
+    return true
+  }
+
   function setVolume(activityId, value) {
     var a = findActivity(activityId)
     if (!a || a.module !== "media" || a.volume < 0) return false
@@ -1350,8 +1378,20 @@ Item {
       onBattery: UPower.onBattery,
       percentage: d.percentage,
       timeToFull: d.timeToFull,
-      timeToEmpty: d.timeToEmpty
+      timeToEmpty: d.timeToEmpty,
+      canPowerSave: hasPowerProfiles,
+      powerSaver: hasPowerProfiles && PowerProfiles.profile === PowerProfile.PowerSaver
     }
+  }
+
+  // power-profiles-daemon (what Omarchy switches profiles with): the low
+  // battery card offers "Power saver" only where it is.
+  property bool hasPowerProfiles: false
+
+  Process {
+    id: powerProfilesCheck
+    command: ["sh", "-c", "command -v powerprofilesctl >/dev/null 2>&1"]
+    onExited: function(exitCode) { root.hasPowerProfiles = exitCode === 0 }
   }
 
   // --- Bluetooth: a device that just connected, for a few seconds ---------------------
@@ -1772,7 +1812,26 @@ Item {
   // changes state (a new track, the timer paused...).
   property var dismissed: ({})
 
-  readonly property var activities: Model.visibleActivities(allActivities, prefs, dismissed)
+  // While a popup is open the carousel keeps its order (newcomers go last),
+  // so the dots don't move under the pointer. See holdOrder().
+  property var heldOrder: []
+  readonly property var activities: Model.keepOrder(Model.visibleActivities(allActivities, prefs, dismissed), heldOrder)
+  // Hidden by hand and still there: the popup offers to show them again.
+  readonly property var hiddenList: Model.hiddenActivities(allActivities, prefs, dismissed)
+
+  function holdOrder(on) {
+    heldOrder = on ? activities.map(function(a) { return a.id }) : []
+  }
+
+  // Brings back everything hidden by hand, focused on the most important.
+  function showHidden() {
+    var first = hiddenList.length ? hiddenList[0].id : ""
+    if (!first) return false
+    dismissed = ({})
+    focusId = first
+    manualUntil = Date.now() + 8000
+    return true
+  }
 
   property string focusId: ""
   property var knownIds: ({})
@@ -1962,6 +2021,8 @@ Item {
     } else if (activityId === "recording" && actionId === "stop") {
       Quickshell.execDetached(["omarchy-capture-screenrecording", "--stop-recording"])
       recordingFollowUp.restart()
+    } else if (activityId === "battery" && actionId === "powerSaver") {
+      PowerProfiles.profile = PowerProfile.PowerSaver
     } else if (activityId === "privacy" && actionId === "muteMic") {
       muteMic()
     } else if (activityId === "modes") {
@@ -2002,7 +2063,9 @@ Item {
 
   // One clock for everything that counts: timer, stopwatch, recording,
   // reminders, pushes with a TTL, and the media position.
-  readonly property bool needsTick: timerState.state === "running" || timerState.state === "done"
+  // "Time's up" only while it glows, or counts down to going away.
+  readonly property bool needsTick: timerState.state === "running"
+    || (timerState.state === "done" && (prefs.timerDoneMinutes > 0 || Model.doneAlerting(timerState, now)))
     || recorded !== null
     || stopwatchState.state === "running"
     || recording.active
@@ -2039,6 +2102,7 @@ Item {
     checkWeatherWidget()
     checkIndicators()
     voxtypeCheck.running = true
+    powerProfilesCheck.running = true
     syncLastPlaying()
     initArtCache()
   }
@@ -2069,12 +2133,12 @@ Item {
   IpcHandler {
     target: "nowbar"
 
-    // Open the popup on the options: settings [activities|look|quick|weather|updates]
+    // Open the popup on the options: settings [activities|look|popup|weather|updates]
     function settings(tab: string): string {
       var t = String(tab || "")
-      if (t === "timers") t = "quick"   // the tab's old name
-      if (t !== "" && ["activities", "look", "quick", "weather", "updates"].indexOf(t) === -1)
-        return "unknown tab: use activities, look, quick, weather or updates"
+      if (t === "timers" || t === "quick") t = "popup"   // the tab's old names
+      if (t !== "" && ["activities", "look", "popup", "weather", "updates"].indexOf(t) === -1)
+        return "unknown tab: use activities, look, popup, weather or updates"
       root.settingsRequested(t)
       if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
       return "ok"
@@ -2145,5 +2209,7 @@ Item {
       return "ok"
     }
     function remove(id: string): string { return root.removePush(String(id)) ? "ok" : "not found" }
+    // Show again what was hidden by hand.
+    function unhide(): string { return root.showHidden() ? "ok" : "none" }
   }
 }

@@ -151,6 +151,7 @@ test("modes", () => {
   const two = M.modesActivity({ dnd: true, stayAwake: true, nightlight: false })
   assert.equal(two.title, "2 modes on")
   assert.deepEqual(two.actions.map((a) => a.id), ["dnd", "stayAwake"])
+  assert.deepEqual(two.actions.map((a) => a.label), ["Turn off DND", "Turn off Stay awake"])
 })
 
 test("charging only while plugged in and charging", () => {
@@ -381,6 +382,10 @@ test("low battery", () => {
   assert.equal(a.urgent, true)
   assert.equal(a.subtitle, "40m left")
   assert.notEqual(a.signature, M.batteryActivity({ present: true, onBattery: true, percentage: 0.07 }).signature)
+  assert.deepEqual(a.actions, [])
+  const b = { present: true, onBattery: true, percentage: 0.12, canPowerSave: true }
+  assert.deepEqual(M.batteryActivity(b).actions.map(x => x.id), ["powerSaver"])
+  assert.deepEqual(M.batteryActivity(Object.assign({ powerSaver: true }, b)).actions, [])
 })
 
 test("one media activity per player, with seek and volume data", () => {
@@ -729,10 +734,48 @@ test("timer: time's up card, ending flag", () => {
   const a = M.timerActivity(d, 300500)
   assert.equal(a.title, "Time's up")
   assert.equal(a.done, true)
+  assert.match(a.subtitle, /ended at \d{1,2}:\d{2}$/)
   assert.deepEqual(a.actions.map(x => x.id), ["repeat", "add", "ok"])
-  assert.equal(M.doneExpired(d, 300000 + M.TIMER_DONE_MS - 1), false)
-  assert.equal(M.doneExpired(d, 300000 + M.TIMER_DONE_MS), true)
+  // Glows for a minute, then stays without moving.
+  assert.equal(M.timerActivity(d, 300000 + M.TIMER_ALERT_MS).done, false)
+  // Waits for OK unless told otherwise.
+  assert.equal(M.doneExpired(d, 300000 + 864e5, 0), false)
+  assert.equal(M.doneExpired(d, 300000 + 5 * 60000 - 1, 5), false)
+  assert.equal(M.doneExpired(d, 300000 + 5 * 60000, 5), true)
   assert.equal(M.normalizeTimer(d).state, "idle")
+})
+
+test("replacing something going on asks first", () => {
+  assert.equal(M.replaceWarning("timer", M.idleTimer(), 0), "")
+  assert.equal(M.replaceWarning("timer", M.doneTimer(M.startTimer(60, 0), 60000), 60000), "")
+  assert.equal(M.replaceWarning("timer", M.startTimer(300, 0), 60000), "Replace the timer (4:00 left)?")
+  assert.equal(M.replaceWarning("stopwatch", M.startStopwatch(0), 65000), "Restart the stopwatch (1:05)?")
+  const cfg = M.pomodoroConfig(M.normalizePrefs({}))
+  assert.equal(M.replaceWarning("pomodoro", M.startPomodoro(cfg, 0), 0), "Restart the Pomodoro (focus)?")
+  assert.equal(M.replaceWarning("pomodoro", M.idlePomodoro(), 0), "")
+})
+
+test("Quick start field hint", () => {
+  const now = new Date(2026, 9, 10, 14, 30).getTime()
+  assert.deepEqual(M.timerArgHint("", now), { seconds: 0, hint: "" })
+  assert.deepEqual(M.timerArgHint("12m", now), { seconds: 720, hint: "12 min · ends at 14:42" })
+  assert.equal(M.timerArgHint("15:00", now).hint, "30 min · ends at 15:00")
+  assert.equal(M.timerArgHint("soon", now).seconds, 0)
+  assert.match(M.timerArgHint("soon", now).hint, /^Not a duration/)
+  assert.equal(M.timerArgHint("999h", now).seconds, 0)
+})
+
+test("order kept while the popup is open; hidden activities", () => {
+  const list = [{ id: "a", priority: 10 }, { id: "b", priority: 20 }, { id: "new", priority: 5 }]
+  assert.deepEqual(M.keepOrder(list, ["b", "a"]).map(x => x.id), ["b", "a", "new"])
+  assert.equal(M.keepOrder(list, []), list)
+  const acts = [{ id: "timer", module: "timer", priority: 40, signature: "running:1" },
+                { id: "x", module: "media", priority: 60, signature: "p:1" }]
+  const prefs = M.normalizePrefs({})
+  assert.deepEqual(M.hiddenActivities(acts, prefs, { timer: "running:1" }).map(x => x.id), ["timer"])
+  // Changed since: it's back, so not hidden.
+  assert.deepEqual(M.hiddenActivities(acts, prefs, { timer: "paused:1" }), [])
+  assert.deepEqual(M.hiddenActivities(acts, M.normalizePrefs({ moduleTimer: false }), { timer: "running:1" }), [])
 })
 
 test("pomodoro: focus blocks counted per day", () => {

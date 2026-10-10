@@ -61,7 +61,10 @@
       "pomodoroFocus": 25,
       "pomodoroBreak": 5,
       "pomodoroLongBreak": 15,
-      "pomodoroDnd": false
+      "pomodoroDnd": false,
+      "sleepMinutes": 30,
+      "timerSound": true,
+      "timerDoneMinutes": 0
     },
     "schema": [
       {
@@ -336,6 +339,33 @@
         "label": "Pomodoro: Do Not Disturb while focusing",
         "description": "Turned on for each focus block and off for the breaks; left alone if it was already on.",
         "defaultValue": false
+      },
+      {
+        "key": "sleepMinutes",
+        "type": "integer",
+        "label": "Quick start sleep timer (min)",
+        "description": "How long the Sleep button waits before pausing the media.",
+        "min": 1,
+        "max": 720,
+        "step": 5,
+        "defaultValue": 30
+      },
+      {
+        "key": "timerSound",
+        "type": "boolean",
+        "label": "Sound when a timer ends",
+        "description": "A timer or a Pomodoro block ending plays a sound (pw-play and the freedesktop sound theme), not while Do Not Disturb is on.",
+        "defaultValue": true
+      },
+      {
+        "key": "timerDoneMinutes",
+        "type": "integer",
+        "label": "Time's up stays (min)",
+        "description": "How long a finished timer keeps the pill. 0: until you click OK.",
+        "min": 0,
+        "max": 1440,
+        "step": 1,
+        "defaultValue": 0
       }
     ]
   }

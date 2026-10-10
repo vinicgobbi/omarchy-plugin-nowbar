@@ -36,10 +36,14 @@ activities, and click it for the details and controls.
   recording, reminder and dictation, on and off. They can replace Omarchy's
   indicators widget.
 - **Quick start:** timers, stopwatch, Pomodoro and a sleep timer for the
-  media, one click away, plus a field for any timer (`12m`, `1h30m`, `14:30`).
+  media, one click away, plus a field for any timer (`12m`, `1h30m`, `14:30`)
+  that tells you what it understood ("12 min · ends at 14:42") as you type.
+  Starting one while another is going asks first, so a stray key doesn't
+  throw away a running timer.
 - **Countdowns you can feel:** timers, the Pomodoro and the sleep timer fill
   a ring (in the pill and on the card), the pill glows in their last 10
-  seconds, and a finished timer stays as "Time's up" with Repeat / +1 min / OK.
+  seconds, and a finished timer plays a sound and stays as "Time's up" with
+  Repeat / +1 min / OK until you click OK (or for as long as you choose).
 - **Weather card:** current conditions, the next hours and 3 days. When
   nothing else is going on, it is what the pill shows. It can replace
   Omarchy's weather widget.
@@ -59,7 +63,7 @@ activities, and click it for the details and controls.
 | Samsung Now Bar         | Here                                                        | Source                                       |
 | ----------------------- | ----------------------------------------------------------- | -------------------------------------------- |
 | Media player            | One card per player: cover (click: open the player) on a blurred backdrop, title · artist, album, seekable bar with elapsed / remaining time, volume, shuffle, previous, play/pause, next, repeat, and 10 s back / forward on long media | MPRIS |
-| Timer / Stopwatch       | Ring that fills up, pause, +1 min, laps; a timer can also run until a time (`14:30`); "Time's up" with Repeat / +1 min / OK; kept across shell restarts | This plugin (notifies when the timer ends) |
+| Timer / Stopwatch       | Ring that fills up, pause, +1 min, laps; a timer can also run until a time (`14:30`); "Time's up" with Repeat / +1 min / OK, and a sound; kept across shell restarts | This plugin (notifies when the timer ends) |
 | Focus modes             | Pomodoro: focus / break cycles, a long break every 4, blocks done today, and (an option) Do Not Disturb while focusing | This plugin (notifies at each change) |
 | Media sleep timer       | Pauses every player when it ends                            | This plugin                                  |
 | Alarms / reminders      | Countdown to the next reminder, +5 min, clear; when one goes off, a card to snooze it (5 or 15 min) | `omarchy-reminder`        |
@@ -67,7 +71,7 @@ activities, and click it for the details and controls.
 | Interpreter / voice     | Dictation: listening / transcribing                         | `omarchy-voxtype-status`                     |
 | Privacy indicator       | Camera and/or microphone in use, which apps, mute the mic   | PipeWire, and who has `/dev/video*` open     |
 | Modes & Routines / DND  | Do Not Disturb, stay awake, night light, VPN (while on), turn off | The shell's IPC, `nmcli`, `tailscale`  |
-| Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left | UPower                      |
+| Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left, and Power saver | UPower, power-profiles-daemon                      |
 | Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s (headphones: "Use for audio"); a connected device at 15% or less, until charged | Quickshell Bluetooth, `wpctl` |
 | Screenshot toolbar      | A screenshot just saved: thumbnail, Edit / Copy / Open, for 15 s | The screenshots folder                  |
 | Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off); "Rain likely around 15:00" as its own activity | wttr.in, `omarchy-update-available` |
@@ -119,6 +123,8 @@ to run.
 | `nmcli` (`networkmanager`)            | VPN connections in the Modes card                | VPN connections aren't shown                      |
 | `tailscale` (`tailscale`)             | Tailscale in the Modes card                      | Tailscale isn't shown                             |
 | `voxtype` (`voxtype`)                 | Dictation activity and the Dictate toggle        | Both are hidden                                   |
+| `pw-play` (`pipewire-audio`), `sound-theme-freedesktop` | The sound when a timer or a Pomodoro block ends | No sound (the notification still comes) |
+| `powerprofilesctl` (`power-profiles-daemon`) | Power saver on the low battery card     | No Power saver button                             |
 | `flatpak` (`flatpak`)                 | Flatpaks on the Updates card                     | Flatpak isn't offered or checked                  |
 
 `jq`, which the scripts and a few checks use, comes with Omarchy, and so do
@@ -154,7 +160,7 @@ media keys.
 | Left click    | Open/close the popup                                            |
 | Scroll        | Next / previous activity                                        |
 | Middle click  | Main action of the activity (pause the timer, play/pause, stop...) |
-| Right click   | Hide the activity until it changes (a new track, the timer paused...) |
+| Right click   | Hide the activity until it changes (a new track, the timer paused...); **Show hidden** in the popup brings it back |
 
 ### Popup keys
 
@@ -163,14 +169,20 @@ media keys.
 | ← / → (h / l)    | Previous / next activity                         |
 | Tab / Shift+Tab  | Next / previous activity (in the options: tab)   |
 | Enter / Space    | Main action                                      |
+| ↑ / ↓ (k / j)    | Media card: volume up / down                     |
+| [ / ]            | Media card: 10 s back / forward                  |
 | x                | Hide the activity until it changes               |
+| u                | Show the hidden activities again                 |
 | 1 – 6            | Start that Quick start timer                     |
 | s                | Start the stopwatch                              |
 | p                | Start a Pomodoro                                 |
 | c                | Options                                          |
 | q / Esc          | Close (or leave the options)                     |
 
-The Quick start keys work while Quick start is shown in the popup.
+The Quick start keys work while Quick start is shown in the popup. If a
+timer, the stopwatch or a Pomodoro is already going, the first press only
+asks ("Replace the timer (18:32 left)?"); the same press again within a few
+seconds replaces it, and Esc keeps it. Starting from IPC never asks.
 
 > **Note:** while the popup is open it has the keyboard focus, like every
 > Omarchy panel: keys you type go to the popup, so Space or Enter can pause
@@ -262,14 +274,17 @@ one on or off:
 | DND     | Silences notifications                 | Allows them again       |
 | Night   | Night light                            | Day light               |
 | Awake   | No idle lock or screensaver            | Normal idle             |
-| Record  | Opens Omarchy's screen recording menu  | Stops the recording     |
-| Remind  | Opens Omarchy's reminder panel         |                         |
-| Dictate | Opens voxtype's settings (if installed)|                         |
+| Record ↗  | Opens Omarchy's screen recording menu  | Stops the recording     |
+| Remind ↗  | Opens Omarchy's reminder panel         |                         |
+| Dictate ↗ | Opens voxtype's settings (if installed)|                         |
+
+The ↗ marks the ones that open something else (and close the popup) instead
+of switching on and off right there.
 
 ### Replacing Omarchy's indicators widget
 
 Click **Use instead of Omarchy's indicators** under the Quick toggles, or
-**Replace the indicators** in the options (Quick tab). That turns
+**Replace the indicators** in the options (Popup tab). That turns
 `omarchy.indicators` off; its place in the bar is remembered, and **Restore**
 puts it back there. With that widget off, the Now Bar also answers
 `omarchy-shell omarchy.indicators refresh` (called by `omarchy-reminder` and
@@ -342,13 +357,14 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `primary`                 | Main action of the focused activity                             |
 | `act <activity> <action>` | Any action, e.g. `act timer cancel`, `act media next` (`media` is the focused player) |
 | `dismiss`                 | Hide the focused activity until it changes (not the camera/mic card: only a click hides it) |
+| `unhide`                  | Show again everything hidden by hand                            |
 | `timer <duration>`        | Start a timer: `90` (seconds), `25m`, `1h30m`, or until `14:30` |
 | `stopwatch`               | Start the stopwatch                                             |
 | `pomodoro`                | Start a Pomodoro                                                |
 | `sleep <duration>`        | Pause the media after `30` (minutes), `1h`, or at `23:00`       |
 | `quick <id>`              | A Quick toggle: `dnd`, `nightlight`, `stayAwake`, `record`, `reminder`, `dictation` |
 | `weather`                 | Open the popup on the weather card                              |
-| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `quick`, `weather`, `updates`) |
+| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `popup`, `weather`, `updates`) |
 | `updates`                 | Check for updates now                                           |
 | `push <id> <json>`        | Add or update an activity from a script                         |
 | `remove <id>`             | Remove a pushed activity                                        |
@@ -369,10 +385,13 @@ options, one tab at a time (Tab / Shift+Tab to switch):
 - **Look:** the pill's text width, scrolling or cutting long text, the
   progress line, the `2/4` marker, what it shows when idle (the weather card,
   an empty pill, or nothing), the dynamic colors, and the animations.
-- **Quick:** the two rows at the bottom of the popup. Quick toggles: show
+- **Popup:** the two rows at the bottom of the popup. Quick toggles: show
   them or not, which ones, and replacing (or restoring) Omarchy's indicators
   widget. Quick start: show it or not, the timers (minutes, comma separated;
-  empty for none), which extras (stopwatch, Pomodoro, sleep timer), the
+  empty for none), which extras (stopwatch, Pomodoro, sleep timer) and how
+  long the sleep timer waits (30 min by default). When a timer ends: a sound
+  or not (on by default, never while Do Not Disturb is on), and how long
+  "Time's up" stays (until OK by default, or 1, 5 or 30 minutes). Then the
   Pomodoro lengths, and Do Not Disturb while focusing (off by default; it
   only turns off what it turned on).
 - **Weather:** °C, °F or automatic, and replacing (or restoring) Omarchy's
@@ -383,7 +402,8 @@ options, one tab at a time (Tab / Shift+Tab to switch):
   how often (30 min to 1 day, or any number of minutes from 5 to 7 days), and
   whether to check once after the computer starts.
 
-The same options are in the widget's settings. **Reset** restores them all.
+The same options are in the widget's settings. **Reset** restores them all
+(every tab, hidden players included), so it asks for a second click first.
 
 ## Details
 
@@ -422,12 +442,13 @@ The same options are in the widget's settings. **Reset** restores them all.
   before, and the card says so.
 - **Timers, stopwatch, Pomodoro and sleep timer** are kept in
   `~/.local/state/vinicgobbi.nowbar/state.json`. When one ends, a notification
-  is sent with `omarchy-notification-send`, so Do Not Disturb applies to it.
+  is sent with `omarchy-notification-send`, so Do Not Disturb applies to it,
+  and a sound plays with `pw-play` (not while Do Not Disturb is on).
 
 ## Uninstall
 
 If you replaced Omarchy's weather or indicators widget, **restore them first**
-(options: Weather tab and Quick tab), or from a terminal:
+(options: Weather tab and Popup tab), or from a terminal:
 
 ```bash
 ~/.config/omarchy/plugins/vinicgobbi.nowbar/bin/nowbar-weather-widget restore

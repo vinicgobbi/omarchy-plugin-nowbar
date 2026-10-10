@@ -19,7 +19,7 @@ Column {
   property string fontFamily: Style.font.family
 
   readonly property var w: weather || ({ hours: [], days: [] })
-  readonly property color dim: Qt.darker(foreground, 1.4)
+  readonly property color dim: Util.alpha(foreground, 0.7)
 
   spacing: Style.space(12)
 

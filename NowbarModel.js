@@ -89,6 +89,17 @@ function parseTimerArg(arg, now) {
   return 0
 }
 
+// What the Quick start field will do with `text`, shown under it as you type:
+// { seconds, hint }. seconds is 0 when it isn't a duration or a time.
+function timerArgHint(text, now) {
+  var t = String(text === undefined || text === null ? "" : text).trim()
+  if (t === "") return { seconds: 0, hint: "" }
+  var seconds = parseTimerArg(t, now)
+  if (!(seconds > 0) || seconds * 1000 > MAX_TIMER_MS)
+    return { seconds: 0, hint: "Not a duration: try 12m, 1h30m, 90 (seconds) or 14:30" }
+  return { seconds: seconds, hint: presetLabel(seconds) + " \u00b7 ends at " + clockAt(now + seconds * 1000) }
+}
+
 // Quick start timers, as minutes separated by commas ("1,5,10,25"). Returns
 // seconds, at most 6 entries, each 1 min to 24 h. Empty means no timers;
 // text with nothing usable in it falls back to the default.
@@ -146,8 +157,10 @@ var REMINDER_SOON_SECONDS = 5 * 60
 
 var MAX_TIMER_MS = 24 * 3600 * 1000
 var MAX_LAPS = 99
-// A finished timer stays this long as "Time's up", with Repeat / +1 min / OK.
-var TIMER_DONE_MS = 30000
+// A finished timer stays as "Time's up", with Repeat / +1 min / OK, until
+// OK (or as long as the "Time's up stays" option says); the pill glows for
+// this long, then stays without moving.
+var TIMER_ALERT_MS = 60000
 // The last seconds of a countdown: the pill pulses.
 var ENDING_MS = 10000
 
@@ -155,9 +168,22 @@ function doneTimer(t, now) {
   return { state: "done", durationMs: t.durationMs, endsAt: 0, remainingMs: 0, doneAt: now }
 }
 
-// The "Time's up" card is over.
-function doneExpired(t, now) {
-  return !!t && t.state === "done" && now - t.doneAt >= TIMER_DONE_MS
+// The "Time's up" card is over: `keepMinutes` after it went off (0: never,
+// it waits for OK).
+function doneExpired(t, now, keepMinutes) {
+  if (!t || t.state !== "done" || !(keepMinutes > 0)) return false
+  return now - t.doneAt >= keepMinutes * 60000
+}
+
+// Whether "Time's up" still glows (its first minute).
+function doneAlerting(t, now) {
+  return !!t && t.state === "done" && now - t.doneAt < TIMER_ALERT_MS
+}
+
+// "14:05", local time.
+function clockAt(ms) {
+  var d = new Date(ms)
+  return d.getHours() + ":" + pad2(d.getMinutes())
 }
 
 function idleTimer() {
@@ -277,9 +303,9 @@ function timerActivity(t, now) {
       priority: PRIORITY.timer,
       icon: "\u{f0e1b}",
       urgent: false,
-      done: true,
+      done: doneAlerting(t, now),
       title: "Time's up",
-      subtitle: "Timer \u00b7 " + presetLabel(t.durationMs / 1000),
+      subtitle: "Timer \u00b7 " + presetLabel(t.durationMs / 1000) + " \u00b7 ended at " + clockAt(t.doneAt),
       pillText: "Time's up",
       progress: 1,
       details: [],
@@ -340,6 +366,17 @@ function stopwatchActivity(s, now) {
       : [{ id: "resume", label: "Resume", icon: "\u{f040a}" }, { id: "reset", label: "Reset", icon: "\u{f099b}" }],
     signature: s.state
   }
+}
+
+// Starting `kind` ("timer", "stopwatch", "pomodoro") from the popup while
+// one is already going would throw it away: the question to ask first, or ""
+// when there's nothing to lose. `state` is that kind's state.
+function replaceWarning(kind, state, now) {
+  if (!state || state.state === "idle" || state.state === "done") return ""
+  if (kind === "timer") return "Replace the timer (" + formatCountdown(timerRemaining(state, now)) + " left)?"
+  if (kind === "stopwatch") return "Restart the stopwatch (" + formatDuration(stopwatchElapsed(state, now)) + ")?"
+  if (kind === "pomodoro") return "Restart the Pomodoro (" + (PHASE_LABEL[state.phase] || "Focus").toLowerCase() + ")?"
+  return ""
 }
 
 // --- pomodoro -------------------------------------------------------------------
@@ -758,9 +795,9 @@ function modesActivity(m) {
   var on = []
   var actions = []
   var details = []
-  if (m.dnd) { on.push("Do Not Disturb"); actions.push({ id: "dnd", label: "DND off", icon: "\u{f009b}" }) }
-  if (m.stayAwake) { on.push("Stay awake"); actions.push({ id: "stayAwake", label: "Stay awake off", icon: "\u{f0176}" }) }
-  if (m.nightlight) { on.push("Night light"); actions.push({ id: "nightlight", label: "Night light off", icon: "\u{f0594}" }) }
+  if (m.dnd) { on.push("Do Not Disturb"); actions.push({ id: "dnd", label: "Turn off DND", icon: "\u{f009b}" }) }
+  if (m.stayAwake) { on.push("Stay awake"); actions.push({ id: "stayAwake", label: "Turn off Stay awake", icon: "\u{f0176}" }) }
+  if (m.nightlight) { on.push("Night light"); actions.push({ id: "nightlight", label: "Turn off Night light", icon: "\u{f0594}" }) }
   for (var i = 0; i < vpns.length; i++) {
     on.push(vpns.length === 1 ? "VPN " + vpns[i].name : vpns[i].name)
     details.push("\u{f0582}  VPN: " + vpns[i].name)
@@ -826,7 +863,8 @@ function batteryActivity(b) {
     pillText: pct + "% \u00b7 " + (num(b.timeToEmpty, 0) > 0 ? formatEta(b.timeToEmpty) : "low"),
     progress: frac,
     details: [],
-    actions: [],
+    // Only where power-profiles-daemon is, and not already saving.
+    actions: b.canPowerSave && !b.powerSaver ? [{ id: "powerSaver", label: "Power saver", icon: "\u{f032a}" }] : [],
     // Shows up again (after a dismiss) at each 5% step down.
     signature: "low:" + Math.ceil(pct / 5)
   }
@@ -892,7 +930,9 @@ function mediaActivity(m) {
     album: album,
     volume: m.volumeSupported ? Math.max(0, Math.min(1, num(m.volume, 0))) : -1,
     priority: m.playing ? PRIORITY.mediaPlaying : PRIORITY.mediaPaused,
-    icon: m.playing ? "\u{f075a}" : "\u{f03e4}",
+    // The note either way: a pause glyph on a paused card reads like a
+    // button. Paused, the pill dims it.
+    icon: "\u{f075a}",
     urgent: false,
     title: title,
     subtitle: [artist, player].filter(function(x) { return x }).join(" · "),
@@ -1830,6 +1870,32 @@ function pruneDismissed(dismissed, list) {
   return changed ? next : dismissed
 }
 
+// The same list in the order `ids` had (while the popup is open, so the dots
+// don't move under the pointer); ones not in `ids` come after, by priority.
+function keepOrder(list, ids) {
+  if (!ids || ids.length === 0) return list
+  var rank = {}
+  for (var i = 0; i < ids.length; i++) rank[ids[i]] = i
+  var kept = []
+  var rest = []
+  for (var j = 0; j < (list || []).length; j++) (rank[list[j].id] !== undefined ? kept : rest).push(list[j])
+  kept.sort(function(a, b) { return rank[a.id] - rank[b.id] })
+  return kept.concat(rest)
+}
+
+// Activities hidden by hand that would show up otherwise (module on, same
+// state as when hidden).
+function hiddenActivities(list, prefs, dismissed) {
+  var out = []
+  for (var i = 0; i < (list || []).length; i++) {
+    var a = list[i]
+    if (!a || !dismissed || dismissed[a.id] === undefined || dismissed[a.id] !== a.signature) continue
+    if (prefs && prefs.modules && prefs.modules[a.module] === false) continue
+    out.push(a)
+  }
+  return sortActivities(out)
+}
+
 function indexOfId(list, id) {
   for (var i = 0; i < (list || []).length; i++) if (list[i].id === id) return i
   return -1
@@ -1923,7 +1989,10 @@ function defaultPrefs() {
     pomodoroFocus: 25,
     pomodoroBreak: 5,
     pomodoroLongBreak: 15,
-    pomodoroDnd: false      // Do Not Disturb during focus blocks
+    pomodoroDnd: false,     // Do Not Disturb during focus blocks
+    sleepMinutes: 30,       // the Quick start sleep timer
+    timerSound: true,       // a sound when a timer or a Pomodoro block ends (not with Do Not Disturb)
+    timerDoneMinutes: 0     // "Time's up" goes away after this long (0: waits for OK)
   }
 }
 
@@ -1952,6 +2021,8 @@ function normalizePrefs(input) {
   out.pomodoroFocus = clampInt(src.pomodoroFocus, 1, 180, d.pomodoroFocus)
   out.pomodoroBreak = clampInt(src.pomodoroBreak, 1, 60, d.pomodoroBreak)
   out.pomodoroLongBreak = clampInt(src.pomodoroLongBreak, 1, 120, d.pomodoroLongBreak)
+  out.sleepMinutes = clampInt(src.sleepMinutes, 1, 720, d.sleepMinutes)
+  out.timerDoneMinutes = clampInt(src.timerDoneMinutes, 0, 1440, d.timerDoneMinutes)
   out.quickToggles = parseIdList(src.quickToggleItems, QUICK_TOGGLES)
   out.quickToggleItems = out.quickToggles.join(",")
   out.quickStartExtras = parseIdList(src.quickStartItems, QUICK_START_EXTRAS)
@@ -2022,7 +2093,13 @@ if (typeof module !== "undefined") {
     nextLoop: nextLoop,
     doneTimer: doneTimer,
     doneExpired: doneExpired,
-    TIMER_DONE_MS: TIMER_DONE_MS,
+    doneAlerting: doneAlerting,
+    TIMER_ALERT_MS: TIMER_ALERT_MS,
+    clockAt: clockAt,
+    timerArgHint: timerArgHint,
+    replaceWarning: replaceWarning,
+    keepOrder: keepOrder,
+    hiddenActivities: hiddenActivities,
     normalizePomodoroStats: normalizePomodoroStats,
     countFocusDone: countFocusDone,
     validReminderUnit: validReminderUnit,
