@@ -163,11 +163,28 @@ Panel {
   // Edit, Open) closes the popup first: the window it opens takes the focus,
   // and a popup left open over it would keep the keyboard (and, while a
   // password prompt is up, could get stuck open until the app is done).
+  //
+  // One with `confirm` (Clear all reminders) only asks on the first click; the
+  // same button again within a few seconds does it.
+  property string armedAction: ""
+
   function runAction(action) {
     if (!service || !focused || !action) return
     var id = focused.id
+    if (action.confirm && armedAction !== id + "/" + action.id) {
+      armedAction = id + "/" + action.id
+      armedActionTimer.restart()
+      return
+    }
+    armedAction = ""
     if (action.opensApp) close()
     service.act(id, action.id)
+  }
+
+  Timer {
+    id: armedActionTimer
+    interval: 4000
+    onTriggered: root.armedAction = ""
   }
 
   readonly property bool isMedia: focused !== null && focused.module === "media"
@@ -975,14 +992,21 @@ Panel {
         id: textClip
         visible: !root.vertical
         anchors.verticalCenter: parent.verticalCenter
-        width: pill.textMax
+        // "Fit": as wide as the text, up to the width set; else always that.
+        width: root.prefs.pillWidth === "fit" ? Math.min(pill.textMax, Math.ceil(fullWidth)) : pill.textMax
+        Behavior on width {
+          enabled: root.motion
+          NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+        }
         height: measure.implicitHeight
         clip: true
 
         readonly property string label: pill.hasActivity ? root.pillItem.pillText : "Nothing going on"
         readonly property real gap: Style.space(28)
         readonly property real fullWidth: measure.implicitWidth
-        readonly property bool overflows: fullWidth > width
+        // Against the limit, not the width: in "fit" the width is still
+        // growing to the text for a moment.
+        readonly property bool overflows: fullWidth > pill.textMax
         readonly property bool scrolling: root.prefs.textMode === "scroll" && overflows && !root.vertical
         // Briefly off when the text changes, so the marquee starts over
         // (restart() would break the `running` binding).
@@ -1365,11 +1389,23 @@ Panel {
                     required property var modelData
                     required property int index
                     readonly property bool current: index === root.focusIndex
+                    // Came in while the popup is open: it waits here, lit,
+                    // instead of taking the card being read.
+                    readonly property bool fresh: !current && root.service !== null && root.service.heldOrder.length > 0
+                      && root.service.heldOrder.indexOf(modelData.id) === -1
                     anchors.verticalCenter: parent.verticalCenter
                     width: current ? Style.space(18) : Style.space(7)
                     height: Style.space(7)
                     radius: height / 2
-                    color: current ? root.accentFor(modelData) : Util.alpha(root.popupFg, 0.3)
+                    color: current || fresh ? root.accentFor(modelData) : Util.alpha(root.popupFg, 0.3)
+
+                    SequentialAnimation on opacity {
+                      running: parent.fresh && root.motion
+                      loops: Animation.Infinite
+                      onRunningChanged: if (!running) parent.opacity = 1
+                      NumberAnimation { to: 0.35; duration: 600; easing.type: Easing.InOutSine }
+                      NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutSine }
+                    }
 
                     Behavior on width {
                       enabled: root.motion
@@ -1389,7 +1425,7 @@ Panel {
                     // Which activity each dot is, without clicking through them.
                     Tip {
                       visible: dotArea.containsMouse
-                      text: parent.modelData.title
+                      text: (parent.fresh ? "New: " : "") + parent.modelData.title
                     }
                   }
                 }
@@ -1445,6 +1481,12 @@ Panel {
                 visible: root.isWeather && !!root.focused.weather
                 weather: root.isWeather ? root.focused.weather : null
                 extraLines: root.isWeather ? root.focused.details : []
+                ageText: root.service ? root.service.weatherAge.text : ""
+                stale: root.service ? root.service.weatherAge.stale : false
+                loading: root.service ? root.service.weatherLoading : false
+                onRefreshRequested: if (root.service) root.service.refreshWeather()
+                // The place: straight to where it is chosen.
+                onPlaceClicked: { settingsView.tab = "weather"; root.settingsOpen = true }
                 foreground: root.popupFg
                 accent: root.accentFor(root.focused)
                 fontFamily: root.family
@@ -1866,12 +1908,13 @@ Panel {
                   Button {
                     required property var modelData
                     required property int index
+                    readonly property bool armed: root.focused !== null && root.armedAction === root.focused.id + "/" + modelData.id
                     iconText: modelData.icon
-                    text: modelData.label
-                    foreground: root.popupFg
+                    text: armed ? modelData.confirm : modelData.label
+                    foreground: armed ? Color.urgent : root.popupFg
                     accent: root.accentFor(root.focused)
                     selected: index === 0
-                    tooltipText: index === 0 ? "Enter / middle click" : ""
+                    tooltipText: armed ? "Click again to do it" : (index === 0 ? "Enter / middle click" : "")
                     onClicked: root.runAction(modelData)
                   }
                 }

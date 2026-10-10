@@ -9,12 +9,15 @@ activities, and click it for the details and controls.
 
 - **One pill for all live activities.** It shows the most important one, with
   a thin progress line and a `2/4` position marker. The pill keeps a fixed
-  size; longer text scrolls around (or is cut with "…", if you prefer).
+  size (or fits its text, up to that size, if you prefer); longer text scrolls
+  around (or is cut with "…").
 - **A popup carousel** with ‹ › arrows, dots and ←/→ keys. Each card has the
   details and that activity's buttons.
 - **New activities take the pill** when they matter more than the current one
   (camera on, recording started...). Switching by hand pauses this for a few
-  seconds.
+  seconds, and while the popup is open the card you're reading stays put:
+  a newcomer waits for you with a blinking dot (only something urgent, or a
+  timer or reminder going off, takes the card).
 - **Urgent activities turn red:** camera or microphone in use, screen
   recording, low battery, or a script that failed paint the pill and the
   popup red.
@@ -66,12 +69,12 @@ activities, and click it for the details and controls.
 | Timer / Stopwatch       | Ring that fills up, pause, +1 min, laps; a timer can also run until a time (`14:30`); "Time's up" with Repeat / +1 min / OK, and a sound; kept across shell restarts | This plugin (notifies when the timer ends) |
 | Focus modes             | Pomodoro: focus / break cycles, a long break every 4, blocks done today, and (an option) Do Not Disturb while focusing | This plugin (notifies at each change) |
 | Media sleep timer       | Pauses every player when it ends                            | This plugin                                  |
-| Alarms / reminders      | Countdown to the next reminder, +5 min, clear; when one goes off, a card to snooze it (5 or 15 min) | `omarchy-reminder`        |
+| Alarms / reminders      | Countdown to the next reminder, +5 min, clear (Clear all asks for a second click); when one goes off, a card to snooze it (5 or 15 min) | `omarchy-reminder`        |
 | Voice / screen recorder | Screen recording with elapsed time and a breathing red dot, stop; once saved, the video's thumbnail with Play / Copy / Folder | `gpu-screen-recorder`, `ffmpegthumbnailer` |
 | Interpreter / voice     | Dictation: listening / transcribing                         | `omarchy-voxtype-status`                     |
-| Privacy indicator       | Camera and/or microphone in use, which apps, mute the mic   | PipeWire, and who has `/dev/video*` open     |
+| Privacy indicator       | Camera and/or microphone in use, which apps, mute the mic (muted, a quiet card keeps Unmute while the app holds it) | PipeWire, and who has `/dev/video*` open     |
 | Modes & Routines / DND  | Do Not Disturb, stay awake, night light, VPN (while on), turn off | The shell's IPC, `nmcli`, `tailscale`  |
-| Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left, and Power saver | UPower, power-profiles-daemon                      |
+| Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left, and Power saver; nothing once full | UPower, power-profiles-daemon                      |
 | Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s (headphones: "Use for audio"); a connected device at 15% or less, until charged | Quickshell Bluetooth, `wpctl` |
 | Screenshot toolbar      | A screenshot just saved: thumbnail, Edit / Copy / Open, for 15 s | The screenshots folder                  |
 | Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off); "Rain likely around 15:00" as its own activity | wttr.in, `omarchy-update-available` |
@@ -135,7 +138,8 @@ the tools the Updates card uses for Omarchy, official packages
 the weather every 20 minutes (for the location saved in Omarchy, or a guess
 from your IP); turning the Weather activity off stops it. Searching for a
 place in the options asks [Open-Meteo's geocoding](https://open-meteo.com/en/docs/geocoding-api)
-for matching names (only what you type there, only while you type). The Updates card
+for matching names (only what you type there, only while you type), and for
+a saved place's time zone. The Updates card
 checks the package mirrors, the AUR and the Flatpak remotes at the interval
 you pick (3 hours by default); turning it off stops that. Cover art is
 downloaded from wherever the player points to (https only, never this
@@ -239,7 +243,14 @@ as set in the options). It shows:
 - the temperature, condition and place, today's high and low, feels like;
 - wind, humidity, today's chance of rain, and the next sunset (or sunrise);
 - the next hours (3-hour steps), with the rain chance when it's 20% or more;
-- today and the next 2 days, each with its range on a shared temperature bar.
+- today and the next 2 days, each with its range on a shared temperature bar;
+- when it was updated, with a refresh button. A report older than an hour
+  (offline) says so ("Offline · updated 3 h ago") and stops warning about
+  rain.
+
+Hours, "Now" and day or night are the place's own: a saved place in another
+time zone gets its offset from UTC from Open-Meteo (once, then every 12
+hours). Click the place's name on the card to change it.
 
 It is one more card in the carousel (and in the `2/4` marker), but never takes
 the pill from a live activity. `omarchy-shell nowbar weather` opens the popup
@@ -403,7 +414,8 @@ options, one tab at a time (Tab / Shift+Tab to switch):
   (5 min, 15 min, 1 hour or always), and which players show up at all: a
   hidden one (a browser, say) stays out of the Now Bar but still answers the
   media keys.
-- **Look:** the pill's text width, scrolling or cutting long text, the
+- **Look:** the pill's width (fixed, or fit to its text up to a maximum),
+  scrolling or cutting long text, the
   progress line, the `2/4` marker, what it shows when idle (the weather card,
   an empty pill, or nothing), the dynamic colors, and the animations.
 - **Popup:** the two rows at the bottom of the popup. Quick toggles: show

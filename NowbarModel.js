@@ -144,6 +144,7 @@ var PRIORITY = {
   reminder: 75,
   charging: 80,
   pushLow: 85,
+  micMuted: 88,
   modes: 90,
   mediaPaused: 95,
   brief: 99
@@ -577,7 +578,9 @@ function remindersActivity(reminders, now) {
     details: details,
     actions: [
       { id: "postpone", label: "+5 min", icon: "\u{f0415}" },
-      { id: "clear", label: pending.length > 1 ? "Clear all" : "Clear", icon: "\u{f0156}" }
+      // Every reminder, not just this one: the popup asks before.
+      pending.length > 1 ? { id: "clear", label: "Clear all", icon: "\u{f0156}", confirm: "Clear all " + pending.length + "?" }
+        : { id: "clear", label: "Clear", icon: "\u{f0156}" }
     ],
     signature: next.unit + ":" + pending.length
   }
@@ -720,16 +723,36 @@ function uniqueNames(names) {
 // p = { micApps: [names], micMuted, cameraActive, cameraApps: [names] }
 function privacyActivity(p) {
   if (!p) return null
-  var mic = (p.micApps || []).length > 0 && !p.micMuted
+  var micUsed = (p.micApps || []).length > 0
+  var mic = micUsed && !p.micMuted
   var cam = !!p.cameraActive
-  if (!mic && !cam) return null
   var micApps = uniqueNames(p.micApps)
   var camApps = uniqueNames(p.cameraApps)
+  // Muted while an app still holds it: nothing to warn about, but the way
+  // back stays here (muting from this card would otherwise lose it).
+  if (!mic && !cam && micUsed) {
+    return {
+      id: "privacy",
+      module: "privacy",
+      priority: PRIORITY.micMuted,
+      icon: "\u{f036d}",
+      urgent: false,
+      title: "Microphone muted",
+      subtitle: micApps.join(", "),
+      pillText: "Mic muted",
+      progress: -1,
+      details: [],
+      actions: [{ id: "unmuteMic", label: "Unmute", icon: "\u{f036c}" }],
+      signature: "muted:" + micApps.join(",")
+    }
+  }
+  if (!mic && !cam) return null
   var what = mic && cam ? "Camera and microphone in use" : (cam ? "Camera in use" : "Microphone in use")
   var apps = uniqueNames((cam ? camApps : []).concat(mic ? micApps : []))
   var details = []
   if (cam) details.push("\u{f0100}  Camera: " + (camApps.length ? camApps.join(", ") : "unknown app"))
   if (mic) details.push("\u{f036c}  Microphone: " + (micApps.length ? micApps.join(", ") : "unknown app"))
+  else if (micUsed) details.push("\u{f036d}  Microphone: muted")
   return {
     id: "privacy",
     module: "privacy",
@@ -741,7 +764,8 @@ function privacyActivity(p) {
     pillText: cam && mic ? "Cam + mic" : (cam ? "Camera" : "Mic"),
     progress: -1,
     details: details,
-    actions: mic ? [{ id: "muteMic", label: "Mute mic", icon: "\u{f036d}" }] : [],
+    actions: mic ? [{ id: "muteMic", label: "Mute mic", icon: "\u{f036d}" }]
+      : (micUsed ? [{ id: "unmuteMic", label: "Unmute mic", icon: "\u{f036c}" }] : []),
     signature: (cam ? "c" : "") + (mic ? "m" : "") + ":" + apps.join(",")
   }
 }
@@ -826,6 +850,8 @@ function modesActivity(m) {
 function chargingActivity(b) {
   if (!b || !b.present || b.onBattery || !b.charging) return null
   var pct = Math.round(Math.max(0, Math.min(1, num(b.percentage, 0))) * 100)
+  // Full, with UPower still saying "charging" (charge limits do that).
+  if (pct >= 100) return null
   var eta = num(b.timeToFull, 0) > 0 ? "Full in " + formatEta(b.timeToFull) : "Charging"
   return {
     id: "charging",
@@ -1677,6 +1703,17 @@ function validCoords(lat, lon) {
     && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
 }
 
+// Open-Meteo's answer for a place (timezone=auto) -> its offset from UTC in
+// seconds, or null.
+function parseUtcOffset(raw) {
+  try {
+    var v = (JSON.parse(String(raw || "{}")) || {}).utc_offset_seconds
+    return typeof v === "number" && isFinite(v) && Math.abs(v) <= 14 * 3600 && v % 60 === 0 ? v : null
+  } catch (e) {
+    return null
+  }
+}
+
 // The wttr.in path for a place: its coordinates when known (a name alone can
 // land on another town with the same name), else the encoded name; "" asks
 // wttr.in to guess from the IP.
@@ -1743,8 +1780,21 @@ function isRainCode(code) {
 // slot; hidden, it stays hidden for that slot.
 var RAIN_LIKELY = 60
 
-function rainActivity(w) {
-  if (!w || w.raining || !Array.isArray(w.hours) || w.hours.length === 0) return null
+// A weather report older than this is shown as such ("Offline · updated 3 h
+// ago"), and doesn't warn about rain anymore.
+var WEATHER_STALE_MS = 3600000
+
+// The line at the bottom of the weather card: { stale, text }.
+function weatherAge(fetchedAt, now) {
+  if (!(fetchedAt > 0)) return { stale: false, text: "" }
+  var age = Math.max(0, now - fetchedAt)
+  if (age < WEATHER_STALE_MS) return { stale: false, text: "Updated " + clockAt(fetchedAt) }
+  var h = Math.floor(age / 3600000)
+  return { stale: true, text: "Offline \u00b7 updated " + (h >= 24 ? Math.floor(h / 24) + " d" : h + " h") + " ago" }
+}
+
+function rainActivity(w, stale) {
+  if (!w || stale || w.raining || !Array.isArray(w.hours) || w.hours.length === 0) return null
   for (var i = 0; i < Math.min(2, w.hours.length); i++) {
     var h = w.hours[i]
     if (h.rain < RAIN_LIKELY) continue
@@ -1786,8 +1836,18 @@ function parseWttr(text, now, opts) {
   var t = temp(cur.temp_C, cur.temp_F)
   if (t === null) return null
 
-  var d = new Date(now)
-  var nowMin = d.getHours() * 60 + d.getMinutes()
+  // The place's own clock: wttr.in's hours and dates are local to it. With
+  // `utcOffset` (seconds, for a saved place in another time zone) it is
+  // worked out from UTC; else this machine's clock is the place's.
+  var off = typeof o.utcOffset === "number" && isFinite(o.utcOffset) ? o.utcOffset : null
+  var d = off !== null ? new Date(now + off * 1000) : new Date(now)
+  var nowMin = off !== null ? d.getUTCHours() * 60 + d.getUTCMinutes() : d.getHours() * 60 + d.getMinutes()
+  var today = off !== null
+    ? d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate())
+    : d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+  // A report fetched before midnight (offline since): its first days are past.
+  days = days.filter(function(x) { return !(typeof x.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x.date) && x.date < today) })
+  if (days.length === 0) return null
   var astro = days[0].astronomy && days[0].astronomy[0] ? days[0].astronomy[0] : {}
   var sunrise = clockMinutes(astro.sunrise)
   var sunset = clockMinutes(astro.sunset)
@@ -1981,7 +2041,9 @@ function nextIndex(length, index, delta) {
 // the current one. A newcomer is an id not in knownIds, or one that got more
 // important since (paused media that starts playing, a reminder coming up).
 // Otherwise the focus stays on the same id; if that one is gone, it goes to
-// the most important activity.
+// the most important activity. With `onlyAlerts` (the popup is open), only a
+// newcomer that can't wait (urgent, or a timer / reminder going off) takes
+// it: the rest wait for their dot, without moving the card being read.
 function resolveFocus(s) {
   var list = s.list || []
   if (list.length === 0) return ""
@@ -1991,6 +2053,7 @@ function resolveFocus(s) {
       var a = list[i]
       var known = s.knownIds ? s.knownIds[a.id] : undefined
       if (known !== undefined && !(a.priority < known)) continue
+      if (s.onlyAlerts && !a.urgent && !a.done) continue
       if (current === -1 || a.priority <= list[current].priority) return a.id
     }
   }
@@ -2051,7 +2114,8 @@ function defaultPrefs() {
     mediaIgnore: "",        // players kept out of the Now Bar, comma separated
     animations: true,       // the popup unfolds from the pill, cards and sections slide in
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
-    maxWidth: 220,          // width of the text area: the pill always has this size
+    maxWidth: 220,          // width of the text area: the pill always has this size (or at most, with "fit")
+    pillWidth: "fixed",     // "fixed": always maxWidth; "fit": as wide as the text, up to maxWidth
     timerPresets: DEFAULT_PRESETS, // quick start timers, minutes
     pomodoroFocus: 25,
     pomodoroBreak: 5,
@@ -2080,6 +2144,7 @@ function normalizePrefs(input) {
   for (var k in d) if (typeof d[k] === "boolean") out[k] = typeof src[k] === "boolean" ? src[k] : d[k]
   out.whenEmpty = src.whenEmpty === "hide" || src.whenEmpty === "icon" ? src.whenEmpty : "brief"
   out.textMode = src.textMode === "ellipsis" ? "ellipsis" : "scroll"
+  out.pillWidth = src.pillWidth === "fit" ? "fit" : "fixed"
   out.weatherUnit = src.weatherUnit === "metric" || src.weatherUnit === "imperial" ? src.weatherUnit : "auto"
   out.maxWidth = clampInt(src.maxWidth, 80, 600, d.maxWidth)
   var presets = parsePresets(src.timerPresets === undefined ? d.timerPresets : src.timerPresets)
@@ -2168,6 +2233,9 @@ if (typeof module !== "undefined") {
     keepOrder: keepOrder,
     hiddenActivities: hiddenActivities,
     parseLocationFile: parseLocationFile,
+    weatherAge: weatherAge,
+    WEATHER_STALE_MS: WEATHER_STALE_MS,
+    parseUtcOffset: parseUtcOffset,
     wttrLocationQuery: wttrLocationQuery,
     parseGeocodingResults: parseGeocodingResults,
     normalizePomodoroStats: normalizePomodoroStats,

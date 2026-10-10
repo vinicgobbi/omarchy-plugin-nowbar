@@ -1089,6 +1089,10 @@ Item {
     if (micSource && micSource.audio) micSource.audio.muted = true
   }
 
+  function unmuteMic() {
+    if (micSource && micSource.audio) micSource.audio.muted = false
+  }
+
   // --- privacy: camera (/dev/video*) ------------------------------------------------
   // Who has a video device open, read from /proc/*/fd of this user's
   // processes (no root needed). Re-checked when inotify sees the device
@@ -1517,6 +1521,8 @@ Item {
 
   property string weatherRaw: ""
   property double weatherFetchedAt: 0
+  // The place weatherRaw is for (weatherQuery when it was fetched).
+  property string weatherRawQuery: ""
   property bool updateAvailable: false
   readonly property bool weatherEnabled: modules.weather
 
@@ -1527,10 +1533,14 @@ Item {
   readonly property int weatherSlot: Math.floor(root.now / 600000)
   readonly property var weather: {
     var _slot = weatherSlot
-    var w = weatherRaw ? Model.parseWttr(weatherRaw, Date.now(), { unit: prefs.weatherUnit, locale: Qt.locale().name }) : null
+    // The clock and the name go with the report they belong to: while the
+    // next place loads, the last report stays as it was.
+    var current = weatherRawQuery === weatherQuery
+    var offset = utcOffsetFor !== "" && utcOffsetFor === weatherRawQuery ? weatherUtcOffset : null
+    var w = weatherRaw ? Model.parseWttr(weatherRaw, Date.now(), { unit: prefs.weatherUnit, locale: Qt.locale().name, utcOffset: offset }) : null
     // A saved place goes by its own name (from coordinates, wttr.in may
     // answer with the nearest village), like in Omarchy's weather panel.
-    if (w && weatherLocation.name !== "") w.location = Model.clean(weatherLocation.name, 40)
+    if (w && current && weatherLocation.name !== "") w.location = Model.clean(weatherLocation.name, 40)
     return w
   }
 
@@ -1558,9 +1568,57 @@ Item {
   // Another place: fetch it now. The last report stays meanwhile, so the
   // card doesn't vanish (and take the focus with it) while it loads.
   onWeatherQueryChanged: {
-    weatherFetchedAt = 0
     refreshWeather()
+    refreshUtcOffset()
   }
+
+  // A saved place keeps its own clock: wttr.in's hours are local to it, and
+  // it may be in another time zone than this machine. Its offset from UTC
+  // comes from Open-Meteo (timezone=auto, like Omarchy's weather panel),
+  // asked again every 12 hours for daylight saving. Automatic (the IP's
+  // place) and a name without coordinates use this machine's clock.
+  property var weatherUtcOffset: null
+  property string utcOffsetFor: ""
+  property double utcOffsetAt: 0
+
+  function refreshUtcOffset() {
+    var loc = weatherLocation
+    if (!weatherEnabled || !(loc.latitude !== null && loc.longitude !== null)) {
+      weatherUtcOffset = null
+      utcOffsetFor = ""
+      return
+    }
+    if (utcOffsetFor === weatherQuery && Date.now() - utcOffsetAt < 12 * 3600000) return
+    if (utcOffsetProcess.running) return
+    if (utcOffsetFor !== weatherQuery) weatherUtcOffset = null
+    utcOffsetProcess.query = weatherQuery
+    utcOffsetProcess.command = ["curl", "-fsS", "--max-time", "8", "--max-filesize", "65536",
+      "https://api.open-meteo.com/v1/forecast?latitude=" + loc.latitude + "&longitude=" + loc.longitude + "&timezone=auto&forecast_days=1"]
+    utcOffsetProcess.running = true
+  }
+
+  Process {
+    id: utcOffsetProcess
+    property string query: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (utcOffsetProcess.query !== root.weatherQuery) return
+        var off = Model.parseUtcOffset(text)
+        if (off === null) return
+        root.weatherUtcOffset = off
+        root.utcOffsetFor = utcOffsetProcess.query
+        root.utcOffsetAt = Date.now()
+      }
+    }
+    // The place changed while asking: ask for the new one.
+    onExited: if (query !== root.weatherQuery) root.refreshUtcOffset()
+  }
+
+  // How old the report is: "Updated 9:02", or "Offline · updated 3 h ago"
+  // (then the rain alert stays quiet).
+  readonly property var weatherAge: Model.weatherAge(weatherFetchedAt, root.now)
+  readonly property bool weatherLoading: weatherProcess.running
 
   function useWeatherLocation(loc) {
     weatherLocationSaving = null
@@ -1671,6 +1729,7 @@ Item {
   // Older than 10 minutes: fetch again (when the card is shown).
   function refreshWeatherIfStale() {
     weatherLocationFile.reload()
+    root.now = Date.now()
     if (Date.now() - weatherFetchedAt > 10 * 60 * 1000) refreshWeather()
   }
 
@@ -1687,6 +1746,7 @@ Item {
         if (weatherProcess.query !== root.weatherQuery) return
         // Keep the last good report when offline or when wttr.in answers junk.
         if (Model.parseWttr(text, Date.now(), {}) === null) return
+        root.weatherRawQuery = weatherProcess.query
         root.weatherRaw = text
         root.weatherFetchedAt = Date.now()
       }
@@ -1756,7 +1816,8 @@ Item {
     repeat: true
     running: root.weatherEnabled
     triggeredOnStart: true
-    onTriggered: root.refreshWeather()
+    // Also moves `now`, so an old report shows as old even when nothing ticks.
+    onTriggered: { root.now = Date.now(); root.refreshWeather(); root.refreshUtcOffset() }
   }
 
   // Also re-reads the weather now and then without a tick running (the
@@ -1937,7 +1998,7 @@ Item {
     if (recorded) list.push(Model.recordedActivity(recorded))
     if (firedReminder) list.push(Model.firedReminderActivity(firedReminder))
     if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates))
-    if (weatherEnabled) list.push(Model.rainActivity(weather))
+    if (weatherEnabled) list.push(Model.rainActivity(weather, weatherAge.stale))
     if (modules.updates) list.push(Model.updatesActivity(shownUpdates, updatesChecking))
     for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })
@@ -1990,6 +2051,8 @@ Item {
       focusId: focusId,
       knownIds: knownIds,
       autoFocus: prefs.autoFocus,
+      // A popup is open (see holdOrder): only alerts move the card.
+      onlyAlerts: heldOrder.length > 0,
       manualUntil: manualUntil,
       now: Date.now()
     })
@@ -2160,6 +2223,8 @@ Item {
       PowerProfiles.profile = PowerProfile.PowerSaver
     } else if (activityId === "privacy" && actionId === "muteMic") {
       muteMic()
+    } else if (activityId === "privacy" && actionId === "unmuteMic") {
+      unmuteMic()
     } else if (activityId === "modes") {
       modeAction(actionId)
     } else if (a && a.module === "media") {
@@ -2256,7 +2321,8 @@ Item {
       focus: focusId,
       coverAccent: artAccent,
       coverBase: artBase,
-      weather: weather ? { temp: weather.temp, unit: weather.unit, desc: weather.desc, location: weather.location, query: weatherQuery } : null,
+      weather: weather ? { temp: weather.temp, unit: weather.unit, desc: weather.desc, location: weather.location, query: weatherQuery, utcOffset: weatherUtcOffset, age: weatherAge.text,
+        now: weather.hours.length ? weather.hours[0].label + " " + weather.hours[0].hour + "h" : "", night: weather.night } : null,
       activities: activities.map(function(a) {
         return { id: a.id, module: a.module, title: a.title, subtitle: a.subtitle, progress: a.progress }
       })

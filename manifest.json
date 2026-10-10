@@ -57,6 +57,7 @@
       "quickStartItems": "stopwatch,pomodoro,sleep",
       "textMode": "scroll",
       "maxWidth": 220,
+      "pillWidth": "fixed",
       "timerPresets": "1,5,10,25",
       "pomodoroFocus": 25,
       "pomodoroBreak": 5,
@@ -297,7 +298,18 @@
         "max": 600,
         "step": 20,
         "defaultValue": 220,
-        "description": "The pill always keeps this size."
+        "description": "The pill keeps this size (fixed), or grows up to it (fit text)."
+      },
+      {
+        "key": "pillWidth",
+        "type": "enum",
+        "label": "Pill width",
+        "description": "fixed: always the text width set; fit: as wide as the text, up to it.",
+        "options": [
+          "fixed",
+          "fit"
+        ],
+        "defaultValue": "fixed"
       },
       {
         "key": "timerPresets",

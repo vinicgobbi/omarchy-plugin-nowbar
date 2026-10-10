@@ -126,7 +126,15 @@ test("camera users: unique, cleaned, daemons hidden from names", () => {
 
 test("privacy activity combines camera and microphone", () => {
   assert.equal(M.privacyActivity({ micApps: [], cameraActive: false }), null)
-  assert.equal(M.privacyActivity({ micApps: ["Zoom"], micMuted: true, cameraActive: false }), null)
+  // Muted while Zoom still holds it: a quiet card with the way back.
+  const muted = M.privacyActivity({ micApps: ["Zoom"], micMuted: true, cameraActive: false })
+  assert.equal(muted.title, "Microphone muted")
+  assert.equal(muted.urgent, false)
+  assert.equal(muted.priority, M.PRIORITY.micMuted)
+  assert.deepEqual(muted.actions.map((x) => x.id), ["unmuteMic"])
+  const camMuted = M.privacyActivity({ micApps: ["Zoom"], micMuted: true, cameraActive: true, cameraApps: ["zoom"] })
+  assert.equal(camMuted.title, "Camera in use")
+  assert.deepEqual(camMuted.actions.map((x) => x.id), ["unmuteMic"])
   const mic = M.privacyActivity({ micApps: ["Zoom", "Zoom"], micMuted: false, cameraActive: false, cameraApps: [] })
   assert.equal(mic.title, "Microphone in use")
   assert.equal(mic.subtitle, "Zoom")
@@ -160,6 +168,8 @@ test("charging only while plugged in and charging", () => {
   const a = M.chargingActivity({ present: true, charging: true, onBattery: false, percentage: 0.634, timeToFull: 4800 })
   assert.equal(a.title, "Charging · 63%")
   assert.equal(a.subtitle, "Full in 1h 20m")
+  // Full with UPower still saying "charging": nothing to show.
+  assert.equal(M.chargingActivity({ present: true, charging: true, onBattery: false, percentage: 0.998 }), null)
 })
 
 test("media activity", () => {
@@ -881,4 +891,54 @@ test("weather location: Omarchy's file, wttr.in query, geocoding", () => {
   ])
   assert.deepEqual(M.parseGeocodingResults("{}"), [])
   assert.deepEqual(M.parseGeocodingResults("junk"), [])
+})
+
+test("resolveFocus: with the popup open only alerts take the card", () => {
+  const list = [{ id: "shot", priority: 25 }, { id: "media", priority: 60 }]
+  const base = { list, focusId: "media", knownIds: { media: 60 }, autoFocus: true, manualUntil: 0, now: 100, onlyAlerts: true }
+  assert.equal(M.resolveFocus(base), "media")
+  assert.equal(M.resolveFocus({ ...base, onlyAlerts: false }), "shot")
+  const urgent = [{ id: "privacy", priority: 10, urgent: true }, { id: "media", priority: 60 }]
+  assert.equal(M.resolveFocus({ ...base, list: urgent }), "privacy")
+  const done = [{ id: "reminderDone", priority: 44, done: true }, { id: "media", priority: 60 }]
+  assert.equal(M.resolveFocus({ ...base, list: done }), "reminderDone")
+})
+
+test("weather in the place's own time, past days dropped, age", () => {
+  const fs = require("node:fs")
+  const path = require("node:path")
+  const raw = fs.readFileSync(path.join(__dirname, "fixtures", "wttr-j1.json"), "utf8")
+  // 2026-10-06 15:10 UTC; the place is 3 h behind UTC: 12:10 there.
+  const now = Date.UTC(2026, 9, 6, 15, 10)
+  const w = M.parseWttr(raw, now, { utcOffset: -3 * 3600 })
+  assert.equal(w.hours[1].label, "15h")
+  assert.equal(w.night, false)
+  // 9 h ahead of UTC: 00:10 the next day there, so the 6th is past.
+  const ahead = M.parseWttr(raw, now, { utcOffset: 9 * 3600 })
+  assert.deepEqual(ahead.days.map((d) => d.name), ["Today", "Tomorrow"])
+  assert.equal(ahead.night, true)
+  assert.equal(ahead.hours[0].label, "Now")
+  // Every day past: nothing to show.
+  assert.equal(M.parseWttr(raw, Date.UTC(2026, 9, 12, 12), { utcOffset: 0 }), null)
+
+  assert.equal(M.parseUtcOffset('{"utc_offset_seconds":7200}'), 7200)
+  assert.equal(M.parseUtcOffset('{"utc_offset_seconds":99999}'), null)
+  assert.equal(M.parseUtcOffset("junk"), null)
+
+  const at = new Date(2026, 9, 6, 9, 2).getTime()
+  assert.deepEqual(M.weatherAge(0, at), { stale: false, text: "" })
+  assert.deepEqual(M.weatherAge(at, at + 60000), { stale: false, text: "Updated 9:02" })
+  assert.deepEqual(M.weatherAge(at, at + 3 * 3600000), { stale: true, text: "Offline · updated 3 h ago" })
+  assert.equal(M.weatherAge(at, at + 50 * 3600000).text, "Offline · updated 2 d ago")
+  // A stale report doesn't warn about rain.
+  const rainy = { raining: false, location: "X", hours: [{ hour: 15, rain: 80 }] }
+  assert.ok(M.rainActivity(rainy, false))
+  assert.equal(M.rainActivity(rainy, true), null)
+})
+
+test("Clear all reminders asks first", () => {
+  const r = [{ label: "a", at: 1000, minutes: 1, unit: "u1" }, { label: "b", at: 2000, minutes: 2, unit: "u2" }]
+  const all = M.remindersActivity(r, 0)
+  assert.equal(all.actions[1].confirm, "Clear all 2?")
+  assert.equal(M.remindersActivity(r.slice(0, 1), 0).actions[1].confirm, undefined)
 })

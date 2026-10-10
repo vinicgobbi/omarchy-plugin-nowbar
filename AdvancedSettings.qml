@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as QQC
 import qs.Ui
 import qs.Commons
 import "NowbarModel.js" as Model
@@ -151,12 +152,39 @@ Column {
     }
   }
 
+  // Same look as the shell's buttons' tooltips.
+  component Tip: QQC.ToolTip {
+    id: tipBox
+    delay: 500
+    padding: 0
+    background: BorderSurface {
+      color: Color.tooltip.background
+      borderSpec: Border.localOrSurfaceSpec("tooltip", "border", Color.tooltip.border, Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
+      radius: 0
+    }
+    contentItem: Text {
+      textFormat: Text.PlainText
+      text: tipBox.text
+      wrapMode: Text.WordWrap
+      width: Math.min(implicitWidth, Style.space(280))
+      color: Color.tooltip.text
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      leftPadding: Style.spacing.controlPaddingX
+      rightPadding: Style.spacing.controlPaddingX
+      topPadding: Style.spacing.controlPaddingY
+      bottomPadding: Style.spacing.controlPaddingY
+    }
+  }
+
   // Half-width "glyph Name [switch]" cell bound to one boolean preference.
+  // `tip`: what it is, on hover over the name.
   component Cell: Item {
     id: cell
     property string label: ""
     property string glyph: ""
     property string key: ""
+    property string tip: ""
 
     width: parent ? (parent.width - parent.columnSpacing) / 2 : 0
     height: Math.max(cellLabel.implicitHeight, cellSwitch.implicitHeight)
@@ -194,6 +222,20 @@ Column {
       foreground: root.foreground
       checked: root.prefs[cell.key] === true
       onToggled: root.changed(cell.key, !checked)
+    }
+
+    MouseArea {
+      id: cellHover
+      anchors.left: parent.left
+      anchors.right: cellSwitch.left
+      height: parent.height
+      hoverEnabled: true
+      acceptedButtons: Qt.NoButton
+    }
+
+    Tip {
+      visible: cell.tip !== "" && cellHover.containsMouse
+      text: cell.tip
     }
   }
 
@@ -423,12 +465,12 @@ Column {
       columnSpacing: Style.space(16)
       rowSpacing: Style.space(8)
 
-      Cell { glyph: "\u{f075a}"; label: "Media"; key: "moduleMedia" }
-      Cell { glyph: "\u{f13ab}"; label: "Timers"; key: "moduleTimer" }
-      Cell { glyph: "\u{f088c}"; label: "Reminders"; key: "moduleReminders" }
-      Cell { glyph: "\u{f044a}"; label: "Recording"; key: "moduleRecording" }
-      Cell { glyph: "\u{f036c}"; label: "Dictation"; key: "moduleDictation" }
-      Cell { glyph: "\u{f0100}"; label: "Camera/mic"; key: "modulePrivacy" }
+      Cell { glyph: "\u{f075a}"; label: "Media"; key: "moduleMedia"; tip: "What's playing in any player (MPRIS): cover, controls, volume" }
+      Cell { glyph: "\u{f13ab}"; label: "Timers"; key: "moduleTimer"; tip: "Timer, stopwatch, Pomodoro and the media sleep timer" }
+      Cell { glyph: "\u{f088c}"; label: "Reminders"; key: "moduleReminders"; tip: "Reminders set with omarchy-reminder: the next one, and when one goes off" }
+      Cell { glyph: "\u{f044a}"; label: "Recording"; key: "moduleRecording"; tip: "Screen recording (Omarchy's recorder): elapsed time, Stop, and the saved video" }
+      Cell { glyph: "\u{f036c}"; label: "Dictation"; key: "moduleDictation"; tip: "Voxtype dictation: listening / transcribing" }
+      Cell { glyph: "\u{f0100}"; label: "Camera/mic"; key: "modulePrivacy"; tip: "An app using the camera or the microphone, and which one" }
     }
 
     Section { text: "SYSTEM" }
@@ -439,13 +481,13 @@ Column {
       columnSpacing: Style.space(16)
       rowSpacing: Style.space(8)
 
-      Cell { glyph: "\u{f009b}"; label: "Modes/VPN"; key: "moduleModes" }
-      Cell { glyph: "\u{f0084}"; label: "Battery"; key: "moduleCharging" }
-      Cell { glyph: "\u{f00b1}"; label: "Bluetooth"; key: "moduleBluetooth" }
-      Cell { glyph: "\u{f0e51}"; label: "Screenshot"; key: "moduleScreenshot" }
-      Cell { glyph: "\u{f0599}"; label: "Weather"; key: "moduleWeather" }
-      Cell { glyph: "\u{f0996}"; label: "Scripts"; key: "modulePush" }
-      Cell { glyph: "\u{f06b0}"; label: "Updates"; key: "moduleUpdates" }
+      Cell { glyph: "\u{f009b}"; label: "Modes/VPN"; key: "moduleModes"; tip: "Do Not Disturb, stay awake, night light and VPN connections while they're on" }
+      Cell { glyph: "\u{f0084}"; label: "Battery"; key: "moduleCharging"; tip: "Charging (with time until full) and low battery" }
+      Cell { glyph: "\u{f00b1}"; label: "Bluetooth"; key: "moduleBluetooth"; tip: "A device that just connected, and one with low battery" }
+      Cell { glyph: "\u{f0e51}"; label: "Screenshot"; key: "moduleScreenshot"; tip: "A screenshot just taken: Edit / Copy / Open" }
+      Cell { glyph: "\u{f0599}"; label: "Weather"; key: "moduleWeather"; tip: "The weather card, and rain coming in the next hours" }
+      Cell { glyph: "\u{f0996}"; label: "Scripts"; key: "modulePush"; tip: "Activities sent by your scripts with nowbar push or nowbar-run" }
+      Cell { glyph: "\u{f06b0}"; label: "Updates"; key: "moduleUpdates"; tip: "Updates waiting for Omarchy, packages, AUR, Flatpak, plugins and themes" }
     }
 
     PanelSeparator { foreground: root.foreground }
@@ -544,12 +586,27 @@ Column {
     spacing: Style.space(10)
     visible: root.tab === "look"
 
-    Intro { text: "How the pill looks in the bar. It always keeps the same size." }
+    Intro { text: "How the pill looks in the bar." }
 
     Section { text: "PILL" }
 
     Option {
-      label: "Text width (px)"
+      label: "Width"
+      hint: root.prefs.pillWidth === "fit" ? "As wide as its text, up to the width below." : "Always the width below, whatever it shows."
+      ButtonGroup {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        options: [
+          { value: "fixed", label: "Fixed" },
+          { value: "fit", label: "Fit text" }
+        ]
+        value: root.prefs.pillWidth
+        onChanged: function(v) { root.changed("pillWidth", v) }
+      }
+    }
+
+    Option {
+      label: root.prefs.pillWidth === "fit" ? "Max text width (px)" : "Text width (px)"
       NumberField {
         foreground: root.foreground
         fontFamily: root.fontFamily
