@@ -90,6 +90,13 @@ Item {
     return timerState.state === "running"
   }
 
+  // What starting `kind` from the popup would throw away ("" if nothing):
+  // the popup asks before doing it. IPC starts it right away.
+  function startWarning(kind) {
+    var state = kind === "timer" ? timerState : (kind === "stopwatch" ? stopwatchState : (kind === "pomodoro" ? pomodoroState : null))
+    return Model.replaceWarning(kind, state, Date.now())
+  }
+
   function startStopwatch() {
     stopwatchState = Model.startStopwatch(Date.now())
     root.now = Date.now()
@@ -142,18 +149,26 @@ Item {
     Quickshell.execDetached(["omarchy-notification-send", "-g", glyph, "-u", "critical", headline, body])
   }
 
+  // A sound from the freedesktop theme ("Timer sound" option), unless Do Not
+  // Disturb is on. Without pw-play or the sound theme, nothing plays.
+  function playSound(name) {
+    if (!prefs.timerSound || modesState.dnd === true) return
+    Quickshell.execDetached(["pw-play", "/usr/share/sounds/freedesktop/stereo/" + name + ".oga"])
+  }
+
   // Runs on every tick (and after a restore): ends whatever ran out.
   function checkTimer() {
     var t = root.now
     var changed = false
     if (Model.timerFinished(timerState, t)) {
       notify("\u{f13ab}", "Timer finished", Model.presetLabel(timerState.durationMs / 1000) + " timer is up")
-      // "Time's up" for a moment, with Repeat / +1 min / OK, in the pill.
+      playSound("alarm-clock-elapsed")
+      // "Time's up", with Repeat / +1 min / OK, in the pill until OK.
       timerState = Model.doneTimer(timerState, t)
       focusId = "timer"
       changed = true
     }
-    if (Model.doneExpired(timerState, t)) {
+    if (Model.doneExpired(timerState, t, prefs.timerDoneMinutes)) {
       timerState = Model.idleTimer()
       changed = true
     }
@@ -164,6 +179,7 @@ Item {
       notify("\u{f04fe}", was === "focus" ? "Focus done" : "Break over",
         was === "focus" ? "Take a " + (pomodoroState.phase === "longBreak" ? "long " : "") + "break: " + Model.presetLabel(pomodoroState.durationMs / 1000)
           : "Back to focus: " + Model.presetLabel(pomodoroState.durationMs / 1000))
+      playSound("complete")
       changed = true
     }
     if (Model.timerFinished(sleepState, t)) {
@@ -775,6 +791,18 @@ Item {
     return true
   }
 
+  // Keyboard in the popup: seek by seconds on any seekable track (not only
+  // long ones, like the ±10 s buttons).
+  function nudgeSeek(activityId, seconds) {
+    var a = findActivity(activityId)
+    if (!a || a.module !== "media" || !a.seekable) return false
+    var p = playerForKey(a.target)
+    if (!p) return false
+    p.position = Math.max(0, Math.min(a.length - 1, p.position + seconds))
+    root.now = Date.now()
+    return true
+  }
+
   function setVolume(activityId, value) {
     var a = findActivity(activityId)
     if (!a || a.module !== "media" || a.volume < 0) return false
@@ -1059,6 +1087,10 @@ Item {
 
   function muteMic() {
     if (micSource && micSource.audio) micSource.audio.muted = true
+  }
+
+  function unmuteMic() {
+    if (micSource && micSource.audio) micSource.audio.muted = false
   }
 
   // --- privacy: camera (/dev/video*) ------------------------------------------------
@@ -1350,8 +1382,20 @@ Item {
       onBattery: UPower.onBattery,
       percentage: d.percentage,
       timeToFull: d.timeToFull,
-      timeToEmpty: d.timeToEmpty
+      timeToEmpty: d.timeToEmpty,
+      canPowerSave: hasPowerProfiles,
+      powerSaver: hasPowerProfiles && PowerProfiles.profile === PowerProfile.PowerSaver
     }
+  }
+
+  // power-profiles-daemon (what Omarchy switches profiles with): the low
+  // battery card offers "Power saver" only where it is.
+  property bool hasPowerProfiles: false
+
+  Process {
+    id: powerProfilesCheck
+    command: ["sh", "-c", "command -v powerprofilesctl >/dev/null 2>&1"]
+    onExited: function(exitCode) { root.hasPowerProfiles = exitCode === 0 }
   }
 
   // --- Bluetooth: a device that just connected, for a few seconds ---------------------
@@ -1477,6 +1521,8 @@ Item {
 
   property string weatherRaw: ""
   property double weatherFetchedAt: 0
+  // The place weatherRaw is for (weatherQuery when it was fetched).
+  property string weatherRawQuery: ""
   property bool updateAvailable: false
   readonly property bool weatherEnabled: modules.weather
 
@@ -1487,36 +1533,225 @@ Item {
   readonly property int weatherSlot: Math.floor(root.now / 600000)
   readonly property var weather: {
     var _slot = weatherSlot
-    return weatherRaw ? Model.parseWttr(weatherRaw, Date.now(), { unit: prefs.weatherUnit, locale: Qt.locale().name }) : null
+    // The clock and the name go with the report they belong to: while the
+    // next place loads, the last report stays as it was.
+    var current = weatherRawQuery === weatherQuery
+    var offset = utcOffsetFor !== "" && utcOffsetFor === weatherRawQuery ? weatherUtcOffset : null
+    var w = weatherRaw ? Model.parseWttr(weatherRaw, Date.now(), { unit: prefs.weatherUnit, locale: Qt.locale().name, utcOffset: offset }) : null
+    // A saved place goes by its own name (from coordinates, wttr.in may
+    // answer with the nearest village), like in Omarchy's weather panel.
+    if (w && current && weatherLocation.name !== "") w.location = Model.clean(weatherLocation.name, 40)
+    return w
   }
 
   function refreshWeather() {
-    if (!weatherEnabled || weatherProcess.running) return
+    if (!weatherEnabled) return
+    // Asked again mid-fetch (the place changed): once this one is done.
+    if (weatherProcess.running) { weatherAgain = true; return }
+    weatherProcess.query = weatherQuery
+    weatherProcess.command = ["sh", "-c", "curl -fsS --max-time 10 \"https://wttr.in/$1?format=j1\" 2>/dev/null | head -c 524288", "_", weatherQuery]
     weatherProcess.running = true
+  }
+  property bool weatherAgain: false
+
+  // --- the place: Omarchy's, shared with its weather panel ----------------------
+  // Read straight from its file (watched, so a change from Omarchy's panel
+  // shows up here too), written only through omarchy-weather-location.
+
+  readonly property string weatherLocationPath: Quickshell.env("HOME") + "/.local/state/omarchy/settings/weather.json"
+  property var weatherLocation: Model.parseLocationFile("")
+  readonly property string weatherQuery: Model.wttrLocationQuery(weatherLocation)
+  // The place being saved, until the file says so (or the save failed).
+  property var weatherLocationSaving: null
+  property bool hasWeatherLocationTool: false
+
+  // Another place: fetch it now. The last report stays meanwhile, so the
+  // card doesn't vanish (and take the focus with it) while it loads.
+  onWeatherQueryChanged: {
+    refreshWeather()
+    refreshUtcOffset()
+  }
+
+  // A saved place keeps its own clock: wttr.in's hours are local to it, and
+  // it may be in another time zone than this machine. Its offset from UTC
+  // comes from Open-Meteo (timezone=auto, like Omarchy's weather panel),
+  // asked again every 12 hours for daylight saving. Automatic (the IP's
+  // place) and a name without coordinates use this machine's clock.
+  property var weatherUtcOffset: null
+  property string utcOffsetFor: ""
+  property double utcOffsetAt: 0
+
+  function refreshUtcOffset() {
+    var loc = weatherLocation
+    if (!weatherEnabled || !(loc.latitude !== null && loc.longitude !== null)) {
+      weatherUtcOffset = null
+      utcOffsetFor = ""
+      return
+    }
+    if (utcOffsetFor === weatherQuery && Date.now() - utcOffsetAt < 12 * 3600000) return
+    if (utcOffsetProcess.running) return
+    if (utcOffsetFor !== weatherQuery) weatherUtcOffset = null
+    utcOffsetProcess.query = weatherQuery
+    utcOffsetProcess.command = ["curl", "-fsS", "--max-time", "8", "--max-filesize", "65536",
+      "https://api.open-meteo.com/v1/forecast?latitude=" + loc.latitude + "&longitude=" + loc.longitude + "&timezone=auto&forecast_days=1"]
+    utcOffsetProcess.running = true
+  }
+
+  Process {
+    id: utcOffsetProcess
+    property string query: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (utcOffsetProcess.query !== root.weatherQuery) return
+        var off = Model.parseUtcOffset(text)
+        if (off === null) return
+        root.weatherUtcOffset = off
+        root.utcOffsetFor = utcOffsetProcess.query
+        root.utcOffsetAt = Date.now()
+      }
+    }
+    // The place changed while asking: ask for the new one.
+    onExited: if (query !== root.weatherQuery) root.refreshUtcOffset()
+  }
+
+  // How old the report is: "Updated 9:02", or "Offline · updated 3 h ago"
+  // (then the rain alert stays quiet).
+  readonly property var weatherAge: Model.weatherAge(weatherFetchedAt, root.now)
+  readonly property bool weatherLoading: weatherProcess.running
+
+  function useWeatherLocation(loc) {
+    weatherLocationSaving = null
+    if (JSON.stringify(loc) !== JSON.stringify(weatherLocation)) weatherLocation = loc
+  }
+
+  FileView {
+    id: weatherLocationFile
+    path: root.weatherLocationPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.useWeatherLocation(Model.parseLocationFile(text()))
+    onLoadFailed: root.useWeatherLocation(Model.parseLocationFile(""))
+  }
+
+  // The watch can't see the file being created (it doesn't exist while on
+  // automatic) or come back after `--clear` deletes it, so it is read again
+  // now and then, and whenever the popup opens. It's a few bytes.
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.weatherEnabled
+    onTriggered: weatherLocationFile.reload()
+  }
+
+  Process {
+    id: weatherLocationToolCheck
+    command: ["sh", "-c", "command -v omarchy-weather-location >/dev/null 2>&1"]
+    onExited: function(exitCode) { root.hasWeatherLocationTool = exitCode === 0 }
+  }
+
+  // A place picked in the options (from the search), or null for automatic
+  // (a guess from the IP).
+  function setWeatherLocation(place) {
+    if (!hasWeatherLocationTool || weatherLocationSave.running) return false
+    if (place && place.name && Model.wttrLocationQuery({ name: "", latitude: place.latitude, longitude: place.longitude }) !== "") {
+      weatherLocationSave.command = ["omarchy-weather-location", "--set", Model.clean(place.name, 80), place.latitude + "," + place.longitude]
+      weatherLocationSaving = { name: Model.clean(place.name, 80), latitude: place.latitude, longitude: place.longitude }
+    } else {
+      weatherLocationSave.command = ["omarchy-weather-location", "--clear"]
+      weatherLocationSaving = { name: "", latitude: null, longitude: null }
+    }
+    weatherLocationSave.running = true
+    return true
+  }
+
+  Process {
+    id: weatherLocationSave
+    onExited: function(exitCode) {
+      // The watch reloads the file; read it anyway (a hand-made file may not
+      // have been watched yet), and give up the "saving" state on failure.
+      weatherLocationFile.reload()
+      if (exitCode !== 0) {
+        root.weatherLocationSaving = null
+        root.notify("\u{f0599}", "Weather location", "Couldn't save it (exit " + exitCode + ")")
+      }
+    }
+  }
+
+  // Search for a place by name (Open-Meteo's geocoding, the same as Omarchy's
+  // weather panel), debounced while typing. Only the newest search counts.
+  property string geocodeQuery: ""
+  property var geocodeResults: []
+  property bool geocodeBusy: false
+  property bool geocodeFailed: false
+
+  function searchWeatherLocation(text) {
+    geocodeQuery = String(text || "").trim().slice(0, 80)
+    geocodeFailed = false
+    if (geocodeQuery.length < 2) { geocodeDebounce.stop(); geocodeResults = []; geocodeBusy = false; return }
+    geocodeBusy = true
+    geocodeDebounce.restart()
+  }
+
+  Timer {
+    id: geocodeDebounce
+    interval: 350
+    onTriggered: root.startGeocode()
+  }
+
+  function startGeocode() {
+    if (geocodeProcess.running) { geocodeDebounce.restart(); return }
+    geocodeProcess.query = geocodeQuery
+    geocodeProcess.command = ["curl", "-fsS", "--max-time", "5", "--max-filesize", "262144",
+      "https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(geocodeQuery) + "&count=5&language=en&format=json"]
+    geocodeProcess.running = true
+  }
+
+  Process {
+    id: geocodeProcess
+    property string query: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (geocodeProcess.query !== root.geocodeQuery) return
+        root.geocodeResults = Model.parseGeocodingResults(text)
+      }
+    }
+    onExited: function(exitCode) {
+      if (query !== root.geocodeQuery) return
+      root.geocodeBusy = false
+      root.geocodeFailed = exitCode !== 0
+      if (exitCode !== 0) root.geocodeResults = []
+    }
   }
 
   // Older than 10 minutes: fetch again (when the card is shown).
   function refreshWeatherIfStale() {
+    weatherLocationFile.reload()
+    root.now = Date.now()
     if (Date.now() - weatherFetchedAt > 10 * 60 * 1000) refreshWeather()
   }
 
   Process {
     id: weatherProcess
-    // Same location rules as Omarchy's weather: the saved place if any, else
-    // wttr.in's guess from the IP. The report is capped at 512 KB.
-    command: ["sh", "-c",
-      "q=''; if [ -s \"$HOME/.local/state/omarchy/settings/weather.json\" ]; then "
-      + "l=$(omarchy-weather-location 2>/dev/null); [ -n \"$l\" ] && q=$(jq -rn --arg l \"$l\" '$l | @uri'); fi; "
-      + "curl -fsS --max-time 10 \"https://wttr.in/${q}?format=j1\" 2>/dev/null | head -c 524288"]
+    // Same place as Omarchy's weather (see weatherQuery): its coordinates or
+    // name, else wttr.in's guess from the IP. The query goes in as an argument,
+    // never into the script. The report is capped at 512 KB.
+    property string query: ""
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        // A report for a place that isn't the current one anymore.
+        if (weatherProcess.query !== root.weatherQuery) return
         // Keep the last good report when offline or when wttr.in answers junk.
         if (Model.parseWttr(text, Date.now(), {}) === null) return
+        root.weatherRawQuery = weatherProcess.query
         root.weatherRaw = text
         root.weatherFetchedAt = Date.now()
       }
     }
+    onExited: if (root.weatherAgain) { root.weatherAgain = false; root.refreshWeather() }
   }
 
   // --- replacing Omarchy's weather widget (opt-in, from a button) ------------------------
@@ -1581,7 +1816,8 @@ Item {
     repeat: true
     running: root.weatherEnabled
     triggeredOnStart: true
-    onTriggered: root.refreshWeather()
+    // Also moves `now`, so an old report shows as old even when nothing ticks.
+    onTriggered: { root.now = Date.now(); root.refreshWeather(); root.refreshUtcOffset() }
   }
 
   // Also re-reads the weather now and then without a tick running (the
@@ -1701,9 +1937,9 @@ Item {
   Process {
     id: updatesWatch
     command: ["sh", "-c",
-      "command -v inotifywait >/dev/null 2>&1 || exit 3; set --; "
-      + "for f in /var/log/pacman.log /var/lib/flatpak/.changed \"$HOME/.local/share/flatpak/.changed\"; do [ -e \"$f\" ] && set -- \"$@\" \"$f\"; done; "
-      + "[ $# -gt 0 ] || exit 4; exec setpriv --pdeathsig TERM inotifywait -mq -e modify,attrib,close_write --format x -- \"$@\""]
+      "command -v inotifywait >/dev/null 2>&1 || exit 3; touch \"$1\" 2>/dev/null; m=$1; set --; "
+      + "for f in /var/log/pacman.log /var/lib/flatpak/.changed \"$HOME/.local/share/flatpak/.changed\" \"$m\"; do [ -e \"$f\" ] && set -- \"$@\" \"$f\"; done; "
+      + "[ $# -gt 0 ] || exit 4; exec setpriv --pdeathsig TERM inotifywait -mq -e modify,attrib,close_write --format x -- \"$@\"", "_", root.updatesMarker]
     running: root.modules.updates && root.stateLoaded
     stdout: SplitParser {
       onRead: function(line) { updatesSettle.restart() }
@@ -1723,8 +1959,16 @@ Item {
     onTriggered: if (root.modules.updates && !updatesWatch.running) updatesWatch.running = true
   }
 
+  // Touched when the Update button's terminal is done (however it went), so
+  // the card is checked again right away: plugins, themes and flatpaks leave
+  // no trace in pacman's log.
+  readonly property string updatesMarker: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/vinicgobbi.nowbar.updated"
+
   function runUpdate() {
-    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", Model.updateCommand(shownUpdates.items)])
+    // The wrapper looks at the last status (130: cancelled), so hand back the
+    // update's own after touching the marker.
+    var cmd = Model.updateCommand(shownUpdates.items) + "; s=$?; touch '" + updatesMarker + "'; (exit $s)"
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", cmd])
   }
 
   // --- pushed live updates (IPC) ---------------------------------------------------
@@ -1754,7 +1998,7 @@ Item {
     if (recorded) list.push(Model.recordedActivity(recorded))
     if (firedReminder) list.push(Model.firedReminderActivity(firedReminder))
     if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates))
-    if (weatherEnabled) list.push(Model.rainActivity(weather))
+    if (weatherEnabled) list.push(Model.rainActivity(weather, weatherAge.stale))
     if (modules.updates) list.push(Model.updatesActivity(shownUpdates, updatesChecking))
     for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })
@@ -1764,7 +2008,26 @@ Item {
   // changes state (a new track, the timer paused...).
   property var dismissed: ({})
 
-  readonly property var activities: Model.visibleActivities(allActivities, prefs, dismissed)
+  // While a popup is open the carousel keeps its order (newcomers go last),
+  // so the dots don't move under the pointer. See holdOrder().
+  property var heldOrder: []
+  readonly property var activities: Model.keepOrder(Model.visibleActivities(allActivities, prefs, dismissed), heldOrder)
+  // Hidden by hand and still there: the popup offers to show them again.
+  readonly property var hiddenList: Model.hiddenActivities(allActivities, prefs, dismissed)
+
+  function holdOrder(on) {
+    heldOrder = on ? activities.map(function(a) { return a.id }) : []
+  }
+
+  // Brings back everything hidden by hand, focused on the most important.
+  function showHidden() {
+    var first = hiddenList.length ? hiddenList[0].id : ""
+    if (!first) return false
+    dismissed = ({})
+    focusId = first
+    manualUntil = Date.now() + 8000
+    return true
+  }
 
   property string focusId: ""
   property var knownIds: ({})
@@ -1788,6 +2051,8 @@ Item {
       focusId: focusId,
       knownIds: knownIds,
       autoFocus: prefs.autoFocus,
+      // A popup is open (see holdOrder): only alerts move the card.
+      onlyAlerts: heldOrder.length > 0,
       manualUntil: manualUntil,
       now: Date.now()
     })
@@ -1954,8 +2219,12 @@ Item {
     } else if (activityId === "recording" && actionId === "stop") {
       Quickshell.execDetached(["omarchy-capture-screenrecording", "--stop-recording"])
       recordingFollowUp.restart()
+    } else if (activityId === "battery" && actionId === "powerSaver") {
+      PowerProfiles.profile = PowerProfile.PowerSaver
     } else if (activityId === "privacy" && actionId === "muteMic") {
       muteMic()
+    } else if (activityId === "privacy" && actionId === "unmuteMic") {
+      unmuteMic()
     } else if (activityId === "modes") {
       modeAction(actionId)
     } else if (a && a.module === "media") {
@@ -1994,7 +2263,9 @@ Item {
 
   // One clock for everything that counts: timer, stopwatch, recording,
   // reminders, pushes with a TTL, and the media position.
-  readonly property bool needsTick: timerState.state === "running" || timerState.state === "done"
+  // "Time's up" only while it glows, or counts down to going away.
+  readonly property bool needsTick: timerState.state === "running"
+    || (timerState.state === "done" && (prefs.timerDoneMinutes > 0 || Model.doneAlerting(timerState, now)))
     || recorded !== null
     || stopwatchState.state === "running"
     || recording.active
@@ -2031,6 +2302,8 @@ Item {
     checkWeatherWidget()
     checkIndicators()
     voxtypeCheck.running = true
+    powerProfilesCheck.running = true
+    weatherLocationToolCheck.running = true
     syncLastPlaying()
     initArtCache()
   }
@@ -2048,7 +2321,8 @@ Item {
       focus: focusId,
       coverAccent: artAccent,
       coverBase: artBase,
-      weather: weather ? { temp: weather.temp, unit: weather.unit, desc: weather.desc, location: weather.location } : null,
+      weather: weather ? { temp: weather.temp, unit: weather.unit, desc: weather.desc, location: weather.location, query: weatherQuery, utcOffset: weatherUtcOffset, age: weatherAge.text,
+        now: weather.hours.length ? weather.hours[0].label + " " + weather.hours[0].hour + "h" : "", night: weather.night } : null,
       activities: activities.map(function(a) {
         return { id: a.id, module: a.module, title: a.title, subtitle: a.subtitle, progress: a.progress }
       })
@@ -2061,12 +2335,12 @@ Item {
   IpcHandler {
     target: "nowbar"
 
-    // Open the popup on the options: settings [activities|look|quick|weather|updates]
+    // Open the popup on the options: settings [activities|look|popup|weather|updates]
     function settings(tab: string): string {
       var t = String(tab || "")
-      if (t === "timers") t = "quick"   // the tab's old name
-      if (t !== "" && ["activities", "look", "quick", "weather", "updates"].indexOf(t) === -1)
-        return "unknown tab: use activities, look, quick, weather or updates"
+      if (t === "timers" || t === "quick") t = "popup"   // the tab's old names
+      if (t !== "" && ["activities", "look", "popup", "weather", "updates"].indexOf(t) === -1)
+        return "unknown tab: use activities, look, popup, weather or updates"
       root.settingsRequested(t)
       if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
       return "ok"
@@ -2137,5 +2411,7 @@ Item {
       return "ok"
     }
     function remove(id: string): string { return root.removePush(String(id)) ? "ok" : "not found" }
+    // Show again what was hidden by hand.
+    function unhide(): string { return root.showHidden() ? "ok" : "none" }
   }
 }

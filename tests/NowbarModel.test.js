@@ -126,7 +126,15 @@ test("camera users: unique, cleaned, daemons hidden from names", () => {
 
 test("privacy activity combines camera and microphone", () => {
   assert.equal(M.privacyActivity({ micApps: [], cameraActive: false }), null)
-  assert.equal(M.privacyActivity({ micApps: ["Zoom"], micMuted: true, cameraActive: false }), null)
+  // Muted while Zoom still holds it: a quiet card with the way back.
+  const muted = M.privacyActivity({ micApps: ["Zoom"], micMuted: true, cameraActive: false })
+  assert.equal(muted.title, "Microphone muted")
+  assert.equal(muted.urgent, false)
+  assert.equal(muted.priority, M.PRIORITY.micMuted)
+  assert.deepEqual(muted.actions.map((x) => x.id), ["unmuteMic"])
+  const camMuted = M.privacyActivity({ micApps: ["Zoom"], micMuted: true, cameraActive: true, cameraApps: ["zoom"] })
+  assert.equal(camMuted.title, "Camera in use")
+  assert.deepEqual(camMuted.actions.map((x) => x.id), ["unmuteMic"])
   const mic = M.privacyActivity({ micApps: ["Zoom", "Zoom"], micMuted: false, cameraActive: false, cameraApps: [] })
   assert.equal(mic.title, "Microphone in use")
   assert.equal(mic.subtitle, "Zoom")
@@ -151,6 +159,7 @@ test("modes", () => {
   const two = M.modesActivity({ dnd: true, stayAwake: true, nightlight: false })
   assert.equal(two.title, "2 modes on")
   assert.deepEqual(two.actions.map((a) => a.id), ["dnd", "stayAwake"])
+  assert.deepEqual(two.actions.map((a) => a.label), ["Turn off DND", "Turn off Stay awake"])
 })
 
 test("charging only while plugged in and charging", () => {
@@ -159,6 +168,8 @@ test("charging only while plugged in and charging", () => {
   const a = M.chargingActivity({ present: true, charging: true, onBattery: false, percentage: 0.634, timeToFull: 4800 })
   assert.equal(a.title, "Charging · 63%")
   assert.equal(a.subtitle, "Full in 1h 20m")
+  // Full with UPower still saying "charging": nothing to show.
+  assert.equal(M.chargingActivity({ present: true, charging: true, onBattery: false, percentage: 0.998 }), null)
 })
 
 test("media activity", () => {
@@ -381,6 +392,10 @@ test("low battery", () => {
   assert.equal(a.urgent, true)
   assert.equal(a.subtitle, "40m left")
   assert.notEqual(a.signature, M.batteryActivity({ present: true, onBattery: true, percentage: 0.07 }).signature)
+  assert.deepEqual(a.actions, [])
+  const b = { present: true, onBattery: true, percentage: 0.12, canPowerSave: true }
+  assert.deepEqual(M.batteryActivity(b).actions.map(x => x.id), ["powerSaver"])
+  assert.deepEqual(M.batteryActivity(Object.assign({ powerSaver: true }, b)).actions, [])
 })
 
 test("one media activity per player, with seek and volume data", () => {
@@ -593,7 +608,7 @@ test("updatesActivity sums up by source", () => {
 test("updates prefs, schedule and interval labels", () => {
   const p = M.normalizePrefs({})
   assert.equal(p.modules.updates, true)
-  assert.deepEqual(p.updateSourceList, ["omarchy", "pacman", "aur", "flatpak"])
+  assert.deepEqual(p.updateSourceList, ["omarchy", "pacman", "aur", "flatpak", "plugins", "themes"])
   assert.equal(p.updateInterval, 180)
   assert.equal(p.updateOnStartup, true)
   assert.deepEqual(M.normalizePrefs({ updateSources: "flatpak,nope,pacman" }).updateSourceList, ["pacman", "flatpak"])
@@ -622,6 +637,8 @@ test("mergeUpdates keeps what a failed source listed; updateCommand", () => {
   assert.equal(M.updateCommand([{ source: "flatpak" }]), "flatpak update")
   assert.equal(M.updateCommand([{ source: "aur" }, { source: "flatpak" }]), "omarchy-update && flatpak update")
   assert.equal(M.updateCommand([]), "omarchy-update")
+  assert.equal(M.updateCommand([{ source: "plugins" }]), "omarchy plugin update")
+  assert.equal(M.updateCommand([{ source: "themes" }, { source: "pacman" }, { source: "plugins" }]), "omarchy-update && omarchy plugin update && omarchy theme update")
 })
 
 test("newUpdates counts what a check found that wasn't waiting before", () => {
@@ -727,10 +744,48 @@ test("timer: time's up card, ending flag", () => {
   const a = M.timerActivity(d, 300500)
   assert.equal(a.title, "Time's up")
   assert.equal(a.done, true)
+  assert.match(a.subtitle, /ended at \d{1,2}:\d{2}$/)
   assert.deepEqual(a.actions.map(x => x.id), ["repeat", "add", "ok"])
-  assert.equal(M.doneExpired(d, 300000 + M.TIMER_DONE_MS - 1), false)
-  assert.equal(M.doneExpired(d, 300000 + M.TIMER_DONE_MS), true)
+  // Glows for a minute, then stays without moving.
+  assert.equal(M.timerActivity(d, 300000 + M.TIMER_ALERT_MS).done, false)
+  // Waits for OK unless told otherwise.
+  assert.equal(M.doneExpired(d, 300000 + 864e5, 0), false)
+  assert.equal(M.doneExpired(d, 300000 + 5 * 60000 - 1, 5), false)
+  assert.equal(M.doneExpired(d, 300000 + 5 * 60000, 5), true)
   assert.equal(M.normalizeTimer(d).state, "idle")
+})
+
+test("replacing something going on asks first", () => {
+  assert.equal(M.replaceWarning("timer", M.idleTimer(), 0), "")
+  assert.equal(M.replaceWarning("timer", M.doneTimer(M.startTimer(60, 0), 60000), 60000), "")
+  assert.equal(M.replaceWarning("timer", M.startTimer(300, 0), 60000), "Replace the timer (4:00 left)?")
+  assert.equal(M.replaceWarning("stopwatch", M.startStopwatch(0), 65000), "Restart the stopwatch (1:05)?")
+  const cfg = M.pomodoroConfig(M.normalizePrefs({}))
+  assert.equal(M.replaceWarning("pomodoro", M.startPomodoro(cfg, 0), 0), "Restart the Pomodoro (focus)?")
+  assert.equal(M.replaceWarning("pomodoro", M.idlePomodoro(), 0), "")
+})
+
+test("Quick start field hint", () => {
+  const now = new Date(2026, 9, 10, 14, 30).getTime()
+  assert.deepEqual(M.timerArgHint("", now), { seconds: 0, hint: "" })
+  assert.deepEqual(M.timerArgHint("12m", now), { seconds: 720, hint: "12 min · ends at 14:42" })
+  assert.equal(M.timerArgHint("15:00", now).hint, "30 min · ends at 15:00")
+  assert.equal(M.timerArgHint("soon", now).seconds, 0)
+  assert.match(M.timerArgHint("soon", now).hint, /^Not a duration/)
+  assert.equal(M.timerArgHint("999h", now).seconds, 0)
+})
+
+test("order kept while the popup is open; hidden activities", () => {
+  const list = [{ id: "a", priority: 10 }, { id: "b", priority: 20 }, { id: "new", priority: 5 }]
+  assert.deepEqual(M.keepOrder(list, ["b", "a"]).map(x => x.id), ["b", "a", "new"])
+  assert.equal(M.keepOrder(list, []), list)
+  const acts = [{ id: "timer", module: "timer", priority: 40, signature: "running:1" },
+                { id: "x", module: "media", priority: 60, signature: "p:1" }]
+  const prefs = M.normalizePrefs({})
+  assert.deepEqual(M.hiddenActivities(acts, prefs, { timer: "running:1" }).map(x => x.id), ["timer"])
+  // Changed since: it's back, so not hidden.
+  assert.deepEqual(M.hiddenActivities(acts, prefs, { timer: "paused:1" }), [])
+  assert.deepEqual(M.hiddenActivities(acts, M.normalizePrefs({ moduleTimer: false }), { timer: "running:1" }), [])
 })
 
 test("pomodoro: focus blocks counted per day", () => {
@@ -796,4 +851,94 @@ test("rain alert: likely soon or in the next slot, not while raining", () => {
   assert.equal(a.subtitle, "75% chance · Here")
   assert.equal(a.signature, "rain:15")
   assert.equal(M.rainActivity(null), null)
+})
+
+test("updates card with plugins and themes", () => {
+  const r = M.parseUpdates("plugins\tNow Bar\ta99077b\t0cbd80c\nthemes\tlunar-quest\t1111111\t2222222\nthemes\tsword-art\t3333333\t4444444\nerror\tplugins\tsome could not be checked")
+  assert.equal(r.items.length, 3)
+  assert.deepEqual(r.errors, ["plugins"])
+  const a = M.updatesActivity(M.normalizeUpdates({ ...r, checkedAt: 0 }), false)
+  assert.equal(a.subtitle, "1 Plugin · 2 Themes")
+  assert.ok(a.details[0].includes("Now Bar  ·  a99077b → 0cbd80c"))
+  assert.ok(a.details.some(d => d.includes("Couldn't check some plugins")))
+  assert.deepEqual(M.parseAvailableSources("plugins\nthemes\n"), ["plugins", "themes"])
+})
+
+test("weather location: Omarchy's file, wttr.in query, geocoding", () => {
+  assert.deepEqual(M.parseLocationFile(""), { name: "", latitude: null, longitude: null })
+  assert.deepEqual(M.parseLocationFile("[1]"), { name: "", latitude: null, longitude: null })
+  assert.deepEqual(M.parseLocationFile('{"name":"Malibu"}'), { name: "Malibu", latitude: null, longitude: null })
+  const full = M.parseLocationFile('{"name":"Iconha","latitude":-20.79,"longitude":-40.81}')
+  assert.deepEqual(full, { name: "Iconha", latitude: -20.79, longitude: -40.81 })
+  // Out of range coordinates are dropped, the name is kept.
+  assert.equal(M.parseLocationFile('{"name":"X","latitude":200,"longitude":0}').latitude, null)
+  assert.equal(M.parseLocationFile('{"name":"a\\nb"}').name, "a b")
+
+  assert.equal(M.wttrLocationQuery(full), "-20.79,-40.81")
+  assert.equal(M.wttrLocationQuery({ name: "São Paulo" }), "S%C3%A3o%20Paulo")
+  assert.equal(M.wttrLocationQuery({ name: "  " }), "")
+  assert.equal(M.wttrLocationQuery(null), "")
+
+  const geo = JSON.stringify({ results: [
+    { name: "Iconha", admin1: "Espírito Santo", country: "Brazil", latitude: -20.79167, longitude: -40.81083 },
+    { name: "No coords" },
+    { name: "Far", latitude: 95, longitude: 0 },
+    { name: "Paris", country: "France", latitude: 48.85, longitude: 2.35 }
+  ] })
+  assert.deepEqual(M.parseGeocodingResults(geo), [
+    { name: "Iconha", region: "Espírito Santo, Brazil", latitude: -20.7917, longitude: -40.8108 },
+    { name: "Paris", region: "France", latitude: 48.85, longitude: 2.35 }
+  ])
+  assert.deepEqual(M.parseGeocodingResults("{}"), [])
+  assert.deepEqual(M.parseGeocodingResults("junk"), [])
+})
+
+test("resolveFocus: with the popup open only alerts take the card", () => {
+  const list = [{ id: "shot", priority: 25 }, { id: "media", priority: 60 }]
+  const base = { list, focusId: "media", knownIds: { media: 60 }, autoFocus: true, manualUntil: 0, now: 100, onlyAlerts: true }
+  assert.equal(M.resolveFocus(base), "media")
+  assert.equal(M.resolveFocus({ ...base, onlyAlerts: false }), "shot")
+  const urgent = [{ id: "privacy", priority: 10, urgent: true }, { id: "media", priority: 60 }]
+  assert.equal(M.resolveFocus({ ...base, list: urgent }), "privacy")
+  const done = [{ id: "reminderDone", priority: 44, done: true }, { id: "media", priority: 60 }]
+  assert.equal(M.resolveFocus({ ...base, list: done }), "reminderDone")
+})
+
+test("weather in the place's own time, past days dropped, age", () => {
+  const fs = require("node:fs")
+  const path = require("node:path")
+  const raw = fs.readFileSync(path.join(__dirname, "fixtures", "wttr-j1.json"), "utf8")
+  // 2026-10-06 15:10 UTC; the place is 3 h behind UTC: 12:10 there.
+  const now = Date.UTC(2026, 9, 6, 15, 10)
+  const w = M.parseWttr(raw, now, { utcOffset: -3 * 3600 })
+  assert.equal(w.hours[1].label, "15h")
+  assert.equal(w.night, false)
+  // 9 h ahead of UTC: 00:10 the next day there, so the 6th is past.
+  const ahead = M.parseWttr(raw, now, { utcOffset: 9 * 3600 })
+  assert.deepEqual(ahead.days.map((d) => d.name), ["Today", "Tomorrow"])
+  assert.equal(ahead.night, true)
+  assert.equal(ahead.hours[0].label, "Now")
+  // Every day past: nothing to show.
+  assert.equal(M.parseWttr(raw, Date.UTC(2026, 9, 12, 12), { utcOffset: 0 }), null)
+
+  assert.equal(M.parseUtcOffset('{"utc_offset_seconds":7200}'), 7200)
+  assert.equal(M.parseUtcOffset('{"utc_offset_seconds":99999}'), null)
+  assert.equal(M.parseUtcOffset("junk"), null)
+
+  const at = new Date(2026, 9, 6, 9, 2).getTime()
+  assert.deepEqual(M.weatherAge(0, at), { stale: false, text: "" })
+  assert.deepEqual(M.weatherAge(at, at + 60000), { stale: false, text: "Updated 9:02" })
+  assert.deepEqual(M.weatherAge(at, at + 3 * 3600000), { stale: true, text: "Offline · updated 3 h ago" })
+  assert.equal(M.weatherAge(at, at + 50 * 3600000).text, "Offline · updated 2 d ago")
+  // A stale report doesn't warn about rain.
+  const rainy = { raining: false, location: "X", hours: [{ hour: 15, rain: 80 }] }
+  assert.ok(M.rainActivity(rainy, false))
+  assert.equal(M.rainActivity(rainy, true), null)
+})
+
+test("Clear all reminders asks first", () => {
+  const r = [{ label: "a", at: 1000, minutes: 1, unit: "u1" }, { label: "b", at: 2000, minutes: 2, unit: "u2" }]
+  const all = M.remindersActivity(r, 0)
+  assert.equal(all.actions[1].confirm, "Clear all 2?")
+  assert.equal(M.remindersActivity(r.slice(0, 1), 0).actions[1].confirm, undefined)
 })

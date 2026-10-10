@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as QQC
 import qs.Ui
 import qs.Commons
 import "NowbarModel.js" as Model
@@ -11,8 +12,8 @@ import "NowbarModel.js" as Model
 // One tab at a time, so it stays short:
 //   Activities  what can show up, and whether new ones take the pill
 //   Look        what the pill shows and the dynamic colors
-//   Quick       the popup's Quick toggles and Quick start (and Omarchy's
-//               indicators widget, which the Quick toggles replace)
+//   Popup       the popup's Quick toggles and Quick start (and Omarchy's
+//               indicators widget, which the Quick toggles replace), timers
 //   Weather     temperature unit and taking over Omarchy's weather widget
 //   Updates     which package sources are checked, and how often
 Column {
@@ -22,12 +23,12 @@ Column {
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
 
-  // "activities" | "look" | "quick" | "weather" | "updates"
+  // "activities" | "look" | "popup" | "weather" | "updates"
   property string tab: "activities"
   readonly property var tabs: [
     { value: "activities", label: "Activities" },
     { value: "look", label: "Look" },
-    { value: "quick", label: "Quick" },
+    { value: "popup", label: "Popup" },
     { value: "weather", label: "Weather" },
     { value: "updates", label: "Updates" }
   ]
@@ -40,7 +41,7 @@ Column {
   }
 
   // True while typing in a text field: the popup's key shortcuts step aside.
-  readonly property bool editing: presetsField.activeFocus
+  readonly property bool editing: presetsField.activeFocus || locationField.activeFocus
 
   // "replaced" / "native" / "" (unknown) — see bin/nowbar-weather-widget and
   // Service.qml's setIndicators.
@@ -66,6 +67,29 @@ Column {
   signal indicatorsRequested(bool replace)
   signal resetRequested()
   signal backRequested()
+  // Weather location (Service.qml): search by name, pick one (null:
+  // automatic), and hand the keyboard back to the popup when done.
+  signal locationSearch(string text)
+  signal locationPicked(var place)
+  signal keysReleased()
+
+  // Omarchy's saved place ({ name, latitude, longitude }; no name: automatic),
+  // the one being saved, and what wttr.in placed the IP in.
+  property var weatherLocation: ({ name: "", latitude: null, longitude: null })
+  property var weatherLocationSaving: null
+  property string detectedPlace: ""
+  property bool locationEditable: false
+  property var locationResults: []
+  property bool locationSearching: false
+  property bool locationSearchFailed: false
+  property int locationIndex: 0
+  onLocationResultsChanged: locationIndex = 0
+
+  function pickLocation(place) {
+    root.locationPicked(place)
+    locationField.text = ""
+    root.keysReleased()
+  }
 
   spacing: Style.space(10)
 
@@ -102,7 +126,7 @@ Column {
         width: parent.width
         visible: opt.hint !== ""
         text: opt.hint
-        color: Qt.darker(root.foreground, 1.5)
+        color: Util.alpha(root.foreground, 0.62)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
@@ -128,12 +152,39 @@ Column {
     }
   }
 
+  // Same look as the shell's buttons' tooltips.
+  component Tip: QQC.ToolTip {
+    id: tipBox
+    delay: 500
+    padding: 0
+    background: BorderSurface {
+      color: Color.tooltip.background
+      borderSpec: Border.localOrSurfaceSpec("tooltip", "border", Color.tooltip.border, Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
+      radius: 0
+    }
+    contentItem: Text {
+      textFormat: Text.PlainText
+      text: tipBox.text
+      wrapMode: Text.WordWrap
+      width: Math.min(implicitWidth, Style.space(280))
+      color: Color.tooltip.text
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      leftPadding: Style.spacing.controlPaddingX
+      rightPadding: Style.spacing.controlPaddingX
+      topPadding: Style.spacing.controlPaddingY
+      bottomPadding: Style.spacing.controlPaddingY
+    }
+  }
+
   // Half-width "glyph Name [switch]" cell bound to one boolean preference.
+  // `tip`: what it is, on hover over the name.
   component Cell: Item {
     id: cell
     property string label: ""
     property string glyph: ""
     property string key: ""
+    property string tip: ""
 
     width: parent ? (parent.width - parent.columnSpacing) / 2 : 0
     height: Math.max(cellLabel.implicitHeight, cellSwitch.implicitHeight)
@@ -145,7 +196,7 @@ Column {
       width: Style.space(20)
       textFormat: Text.PlainText
       text: cell.glyph
-      color: root.prefs[cell.key] === true ? root.foreground : Qt.darker(root.foreground, 1.8)
+      color: root.prefs[cell.key] === true ? root.foreground : Util.alpha(root.foreground, 0.5)
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
     }
@@ -158,7 +209,7 @@ Column {
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       text: cell.label
-      color: root.prefs[cell.key] === true ? root.foreground : Qt.darker(root.foreground, 1.5)
+      color: root.prefs[cell.key] === true ? root.foreground : Util.alpha(root.foreground, 0.62)
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
       elide: Text.ElideRight
@@ -171,6 +222,20 @@ Column {
       foreground: root.foreground
       checked: root.prefs[cell.key] === true
       onToggled: root.changed(cell.key, !checked)
+    }
+
+    MouseArea {
+      id: cellHover
+      anchors.left: parent.left
+      anchors.right: cellSwitch.left
+      height: parent.height
+      hoverEnabled: true
+      acceptedButtons: Qt.NoButton
+    }
+
+    Tip {
+      visible: cell.tip !== "" && cellHover.containsMouse
+      text: cell.tip
     }
   }
 
@@ -198,7 +263,7 @@ Column {
       width: Style.space(20)
       textFormat: Text.PlainText
       text: lc.glyph
-      color: lc.on ? root.foreground : Qt.darker(root.foreground, 1.8)
+      color: lc.on ? root.foreground : Util.alpha(root.foreground, 0.5)
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
     }
@@ -211,7 +276,7 @@ Column {
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       text: lc.label
-      color: lc.on ? root.foreground : Qt.darker(root.foreground, 1.5)
+      color: lc.on ? root.foreground : Util.alpha(root.foreground, 0.62)
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
       elide: Text.ElideRight
@@ -233,7 +298,7 @@ Column {
     width: parent ? parent.width : 0
     textFormat: Text.PlainText
     wrapMode: Text.WordWrap
-    color: Qt.darker(root.foreground, 1.4)
+    color: Util.alpha(root.foreground, 0.7)
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
   }
@@ -292,7 +357,7 @@ Column {
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         text: swap.swapState === "replaced" ? swap.replacedText : swap.nativeText
-        color: Qt.darker(root.foreground, 1.3)
+        color: Util.alpha(root.foreground, 0.75)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -303,7 +368,7 @@ Column {
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         text: "\u{f0026}  " + swap.warning
-        color: Qt.darker(root.foreground, 1.5)
+        color: Util.alpha(root.foreground, 0.62)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -351,12 +416,26 @@ Column {
       font.bold: true
     }
 
+    // Every tab at once (hidden players, timers...): a second click within a
+    // few seconds does it.
     Button {
+      id: resetButton
+      property bool armed: false
       anchors.right: parent.right
-      text: "Reset"
-      foreground: Qt.darker(root.foreground, 1.4)
-      tooltipText: "Restore the default options (all tabs)"
-      onClicked: root.resetRequested()
+      text: armed ? "Reset all?" : "Reset"
+      foreground: armed ? Color.urgent : Util.alpha(root.foreground, 0.7)
+      tooltipText: armed ? "Click again to restore every option (all tabs)" : "Restore the default options (all tabs)"
+      onClicked: {
+        if (!armed) { armed = true; resetDisarm.restart(); return }
+        armed = false
+        root.resetRequested()
+      }
+
+      Timer {
+        id: resetDisarm
+        interval: 4000
+        onTriggered: resetButton.armed = false
+      }
     }
   }
 
@@ -386,12 +465,12 @@ Column {
       columnSpacing: Style.space(16)
       rowSpacing: Style.space(8)
 
-      Cell { glyph: "\u{f075a}"; label: "Media"; key: "moduleMedia" }
-      Cell { glyph: "\u{f13ab}"; label: "Timers"; key: "moduleTimer" }
-      Cell { glyph: "\u{f088c}"; label: "Reminders"; key: "moduleReminders" }
-      Cell { glyph: "\u{f044a}"; label: "Recording"; key: "moduleRecording" }
-      Cell { glyph: "\u{f036c}"; label: "Dictation"; key: "moduleDictation" }
-      Cell { glyph: "\u{f0100}"; label: "Camera/mic"; key: "modulePrivacy" }
+      Cell { glyph: "\u{f075a}"; label: "Media"; key: "moduleMedia"; tip: "What's playing in any player (MPRIS): cover, controls, volume" }
+      Cell { glyph: "\u{f13ab}"; label: "Timers"; key: "moduleTimer"; tip: "Timer, stopwatch, Pomodoro and the media sleep timer" }
+      Cell { glyph: "\u{f088c}"; label: "Reminders"; key: "moduleReminders"; tip: "Reminders set with omarchy-reminder: the next one, and when one goes off" }
+      Cell { glyph: "\u{f044a}"; label: "Recording"; key: "moduleRecording"; tip: "Screen recording (Omarchy's recorder): elapsed time, Stop, and the saved video" }
+      Cell { glyph: "\u{f036c}"; label: "Dictation"; key: "moduleDictation"; tip: "Voxtype dictation: listening / transcribing" }
+      Cell { glyph: "\u{f0100}"; label: "Camera/mic"; key: "modulePrivacy"; tip: "An app using the camera or the microphone, and which one" }
     }
 
     Section { text: "SYSTEM" }
@@ -402,13 +481,13 @@ Column {
       columnSpacing: Style.space(16)
       rowSpacing: Style.space(8)
 
-      Cell { glyph: "\u{f009b}"; label: "Modes/VPN"; key: "moduleModes" }
-      Cell { glyph: "\u{f0084}"; label: "Battery"; key: "moduleCharging" }
-      Cell { glyph: "\u{f00b1}"; label: "Bluetooth"; key: "moduleBluetooth" }
-      Cell { glyph: "\u{f0e51}"; label: "Screenshot"; key: "moduleScreenshot" }
-      Cell { glyph: "\u{f0599}"; label: "Weather"; key: "moduleWeather" }
-      Cell { glyph: "\u{f0996}"; label: "Scripts"; key: "modulePush" }
-      Cell { glyph: "\u{f06b0}"; label: "Updates"; key: "moduleUpdates" }
+      Cell { glyph: "\u{f009b}"; label: "Modes/VPN"; key: "moduleModes"; tip: "Do Not Disturb, stay awake, night light and VPN connections while they're on" }
+      Cell { glyph: "\u{f0084}"; label: "Battery"; key: "moduleCharging"; tip: "Charging (with time until full) and low battery" }
+      Cell { glyph: "\u{f00b1}"; label: "Bluetooth"; key: "moduleBluetooth"; tip: "A device that just connected, and one with low battery" }
+      Cell { glyph: "\u{f0e51}"; label: "Screenshot"; key: "moduleScreenshot"; tip: "A screenshot just taken: Edit / Copy / Open" }
+      Cell { glyph: "\u{f0599}"; label: "Weather"; key: "moduleWeather"; tip: "The weather card, and rain coming in the next hours" }
+      Cell { glyph: "\u{f0996}"; label: "Scripts"; key: "modulePush"; tip: "Activities sent by your scripts with nowbar push or nowbar-run" }
+      Cell { glyph: "\u{f06b0}"; label: "Updates"; key: "moduleUpdates"; tip: "Updates waiting for Omarchy, packages, AUR, Flatpak, plugins and themes" }
     }
 
     PanelSeparator { foreground: root.foreground }
@@ -468,7 +547,7 @@ Column {
             width: Style.space(20)
             textFormat: Text.PlainText
             text: "\u{f075a}"
-            color: pc.shown ? root.foreground : Qt.darker(root.foreground, 1.8)
+            color: pc.shown ? root.foreground : Util.alpha(root.foreground, 0.5)
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
@@ -481,7 +560,7 @@ Column {
             anchors.rightMargin: Style.space(6)
             anchors.verticalCenter: parent.verticalCenter
             text: pc.modelData
-            color: pc.shown ? root.foreground : Qt.darker(root.foreground, 1.5)
+            color: pc.shown ? root.foreground : Util.alpha(root.foreground, 0.62)
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
             elide: Text.ElideRight
@@ -507,12 +586,27 @@ Column {
     spacing: Style.space(10)
     visible: root.tab === "look"
 
-    Intro { text: "How the pill looks in the bar. It always keeps the same size." }
+    Intro { text: "How the pill looks in the bar." }
 
     Section { text: "PILL" }
 
     Option {
-      label: "Text width (px)"
+      label: "Width"
+      hint: root.prefs.pillWidth === "fit" ? "As wide as its text, up to the width below." : "Always the width below, whatever it shows."
+      ButtonGroup {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        options: [
+          { value: "fixed", label: "Fixed" },
+          { value: "fit", label: "Fit text" }
+        ]
+        value: root.prefs.pillWidth
+        onChanged: function(v) { root.changed("pillWidth", v) }
+      }
+    }
+
+    Option {
+      label: root.prefs.pillWidth === "fit" ? "Max text width (px)" : "Text width (px)"
       NumberField {
         foreground: root.foreground
         fontFamily: root.fontFamily
@@ -575,12 +669,12 @@ Column {
     }
   }
 
-  // --- Quick -------------------------------------------------------------------------
+  // --- Popup -------------------------------------------------------------------------
 
   Column {
     width: parent.width
     spacing: Style.space(10)
-    visible: root.tab === "quick"
+    visible: root.tab === "popup"
 
     Intro { text: "The two rows at the bottom of the popup. Keys there: 1\u20136 start a timer, s the stopwatch, p a Pomodoro." }
 
@@ -656,6 +750,46 @@ Column {
       ListCell { glyph: "\u{f04b2}"; label: "Sleep"; itemId: "sleep"; listKey: "quickStartItems"; list: root.prefs.quickStartExtras; allowed: Model.QUICK_START_EXTRAS; active: root.prefs.showQuickStart }
     }
 
+    Option {
+      label: "Sleep timer (min)"
+      hint: "How long the Sleep button waits before pausing the media."
+      opacity: root.prefs.showQuickStart && root.prefs.quickStartExtras.indexOf("sleep") !== -1 ? 1 : 0.45
+      NumberField {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        value: root.prefs.sleepMinutes
+        from: 1
+        to: 720
+        stepSize: 5
+        onModified: function(v) { root.changed("sleepMinutes", v) }
+      }
+    }
+
+    Section { text: "WHEN A TIMER ENDS" }
+
+    SwitchOption {
+      key: "timerSound"
+      label: "Sound"
+      hint: "A timer or a Pomodoro block ending plays a sound (not with Do Not Disturb on)."
+    }
+
+    Option {
+      label: "Time's up stays"
+      hint: "How long a finished timer keeps the pill, with Repeat / +1 min / OK."
+      ButtonGroup {
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        options: [
+          { value: "0", label: "Until OK" },
+          { value: "1", label: "1m" },
+          { value: "5", label: "5m" },
+          { value: "30", label: "30m" }
+        ]
+        value: String(root.prefs.timerDoneMinutes)
+        onChanged: function(v) { root.changed("timerDoneMinutes", parseInt(v, 10)) }
+      }
+    }
+
     Section { text: "POMODORO" }
 
     Option {
@@ -712,7 +846,100 @@ Column {
     spacing: Style.space(10)
     visible: root.tab === "weather"
 
-    Intro { text: "The weather card: wttr.in, for the location saved in Omarchy (or a guess from your IP)." }
+    Intro { text: "The weather card: wttr.in, for the place below." }
+
+    Section { text: "LOCATION" }
+
+    // What it uses now: the saved place, or automatic and where the IP is.
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
+      readonly property var shown: root.weatherLocationSaving !== null ? root.weatherLocationSaving : root.weatherLocation
+      text: root.weatherLocationSaving !== null
+        ? "\u{f034e}  Saving " + (shown.name !== "" ? shown.name : "automatic") + "…"
+        : (shown.name !== ""
+          ? "\u{f034e}  " + shown.name + (shown.latitude !== null ? "  (" + shown.latitude + ", " + shown.longitude + ")" : "")
+          : "\u{f034e}  Automatic: " + (root.detectedPlace !== "" ? root.detectedPlace + ", a guess from your IP" : "a guess from your IP"))
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+    }
+
+    TextField {
+      id: locationField
+      width: parent.width
+      visible: root.locationEditable
+      foreground: root.foreground
+      font.family: root.fontFamily
+      placeholderText: "Search a city to use instead"
+      onTextChanged: root.locationSearch(text)
+      // ↑/↓ choose among the places found, Enter takes it, Esc gives up.
+      Keys.onDownPressed: root.locationIndex = Math.min(root.locationResults.length - 1, root.locationIndex + 1)
+      Keys.onUpPressed: root.locationIndex = Math.max(0, root.locationIndex - 1)
+      Keys.onEscapePressed: { text = ""; root.keysReleased() }
+      onAccepted: if (root.locationResults.length > 0) root.pickLocation(root.locationResults[root.locationIndex])
+    }
+
+    Text {
+      width: parent.width
+      visible: root.locationEditable && locationField.text.trim().length >= 2
+        && (root.locationSearching || root.locationSearchFailed || root.locationResults.length === 0)
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
+      text: root.locationSearching ? "Searching…"
+        : (root.locationSearchFailed ? "Couldn't search (offline?)" : "No place found with that name")
+      color: root.locationSearchFailed ? Color.urgent : Util.alpha(root.foreground, 0.62)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    Column {
+      width: parent.width
+      spacing: Style.space(4)
+      visible: root.locationEditable && locationField.text.trim().length >= 2 && root.locationResults.length > 0
+
+      Repeater {
+        model: root.locationResults
+
+        Button {
+          required property var modelData
+          required property int index
+          width: parent.width
+          leftAlign: true
+          iconText: "\u{f034e}"
+          text: modelData.name + (modelData.region ? "  ·  " + modelData.region : "")
+          foreground: root.foreground
+          selected: index === root.locationIndex
+          tooltipText: modelData.latitude + ", " + modelData.longitude
+          onClicked: root.pickLocation(modelData)
+        }
+      }
+    }
+
+    Button {
+      visible: root.locationEditable && root.weatherLocation.name !== "" && root.weatherLocationSaving === null
+      iconText: "\u{f01a4}"
+      text: "Use automatic location"
+      foreground: root.foreground
+      bordered: true
+      tooltipText: "Forget the saved place and let wttr.in guess from your IP"
+      onClicked: root.pickLocation(null)
+    }
+
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
+      text: root.locationEditable
+        ? "\u{f0026}  Shared with Omarchy's weather panel: changing it here changes it there too."
+        : "Changing the place needs omarchy-weather-location (a newer Omarchy)."
+      color: Util.alpha(root.foreground, 0.62)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    PanelSeparator { foreground: root.foreground }
 
     Option {
       label: "Temperature"
@@ -754,7 +981,7 @@ Column {
     visible: root.tab === "updates"
 
     Intro {
-      text: "Updates waiting show up as a card, which takes the pill when something new is found (like any new activity). Checking only reads: no password asked. The card's Update button opens a terminal with Omarchy's updater (and flatpak's, when installed), which asks for your password there."
+      text: "Updates waiting show up as a card, which takes the pill when something new is found (like any new activity). Checking only reads: no password asked. The card's Update button opens a terminal with Omarchy's updater (plus flatpak, plugins and themes when they have updates), which asks for your password there."
     }
 
     Section { text: "CHECK" }
@@ -769,6 +996,8 @@ Column {
       ListCell { glyph: "\u{f08c7}"; label: "Official"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "pacman"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("pacman") !== -1 }
       ListCell { glyph: "\u{f0487}"; label: "AUR"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "aur"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("aur") !== -1 }
       ListCell { glyph: "\u{f01a7}"; label: "Flatpak"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "flatpak"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("flatpak") !== -1 }
+      ListCell { glyph: "\u{f0431}"; label: "Plugins"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "plugins"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("plugins") !== -1 }
+      ListCell { glyph: "\u{f03d8}"; label: "Themes"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "themes"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("themes") !== -1 }
     }
 
     Section { text: "HOW OFTEN" }

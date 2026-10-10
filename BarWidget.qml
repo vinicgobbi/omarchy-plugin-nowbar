@@ -93,7 +93,9 @@ Panel {
   }
   onOpenedChanged: {
     unfold(opened)
-    if (!opened) { settingsOpen = false; return }
+    // The carousel keeps its order while it is on screen.
+    if (service) service.holdOrder(opened)
+    if (!opened) { settingsOpen = false; pendingStart = null; return }
     if (Date.now() - settingsRequestedAt < 2000) settingsOpen = true
     if (service) service.refreshWeatherIfStale()
   }
@@ -101,15 +103,88 @@ Panel {
   // Back to the popup's own keys (after typing a timer).
   function forceKeyFocus() { keyCatcher.forceActiveFocus() }
 
+  // Starting a timer, the stopwatch or a Pomodoro from the popup while one is
+  // already going would throw it away (a stray "1" over a 25 min timer): the
+  // first press only asks, the same press again within a few seconds does it.
+  // { kind, seconds, warning }
+  property var pendingStart: null
+
+  function requestStart(kind, seconds) {
+    if (!service) return
+    var warning = service.startWarning(kind)
+    var again = pendingStart !== null && pendingStart.kind === kind && pendingStart.seconds === seconds
+    if (warning !== "" && !again) {
+      pendingStart = { kind: kind, seconds: seconds, warning: warning }
+      pendingStartTimer.restart()
+      return
+    }
+    pendingStart = null
+    if (kind === "timer") service.startTimer(seconds)
+    else if (kind === "stopwatch") service.startStopwatch()
+    else if (kind === "pomodoro") service.startPomodoro()
+  }
+
+  Timer {
+    id: pendingStartTimer
+    interval: 5000
+    onTriggered: root.pendingStart = null
+  }
+
+  // Keyboard on a media card: ↑/↓ volume, [ / ] 10 s back / forward.
+  function mediaVolumeStep(delta) {
+    if (!isMedia || focused.volume < 0 || !service) return
+    service.setVolume(focused.id, Math.round((focused.volume + delta) * 100) / 100)
+  }
+
+  // Same look as the shell's buttons' tooltips.
+  component Tip: QQC.ToolTip {
+    id: tipBox
+    delay: 400
+    padding: 0
+    background: BorderSurface {
+      color: Color.tooltip.background
+      borderSpec: Border.localOrSurfaceSpec("tooltip", "border", Color.tooltip.border, Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
+      radius: 0
+    }
+    contentItem: Text {
+      textFormat: Text.PlainText
+      text: tipBox.text
+      color: Color.tooltip.text
+      font.family: root.family
+      font.pixelSize: Style.font.bodySmall
+      leftPadding: Style.spacing.controlPaddingX
+      rightPadding: Style.spacing.controlPaddingX
+      topPadding: Style.spacing.controlPaddingY
+      bottomPadding: Style.spacing.controlPaddingY
+    }
+  }
+
   // Runs one of the focused card's actions. One that opens an app (Update,
   // Edit, Open) closes the popup first: the window it opens takes the focus,
   // and a popup left open over it would keep the keyboard (and, while a
   // password prompt is up, could get stuck open until the app is done).
+  //
+  // One with `confirm` (Clear all reminders) only asks on the first click; the
+  // same button again within a few seconds does it.
+  property string armedAction: ""
+
   function runAction(action) {
     if (!service || !focused || !action) return
     var id = focused.id
+    if (action.confirm && armedAction !== id + "/" + action.id) {
+      armedAction = id + "/" + action.id
+      armedActionTimer.restart()
+      return
+    }
+    armedAction = ""
     if (action.opensApp) close()
     service.act(id, action.id)
+  }
+
+  Timer {
+    id: armedActionTimer
+    interval: 4000
+    onTriggered: root.armedAction = ""
   }
 
   readonly property bool isMedia: focused !== null && focused.module === "media"
@@ -210,7 +285,7 @@ Panel {
       visible: text !== ""
       textFormat: Text.PlainText
       text: parent.subtitle
-      color: Qt.darker(root.popupFg, 1.35)
+      color: Util.alpha(root.popupFg, 0.72)
       font.family: root.family
       font.pixelSize: Style.font.bodySmall
       elide: Text.ElideRight
@@ -221,7 +296,7 @@ Panel {
       visible: text !== ""
       textFormat: Text.PlainText
       text: parent.album
-      color: Qt.darker(root.popupFg, 1.6)
+      color: Util.alpha(root.popupFg, 0.58)
       font.family: root.family
       font.pixelSize: Style.font.caption
       elide: Text.ElideRight
@@ -299,28 +374,9 @@ Panel {
       onClicked: root.mediaKey(mk.actionId)
     }
 
-    // Same look as the shell's buttons' tooltips.
-    QQC.ToolTip {
+    Tip {
       visible: mk.tip !== "" && mkArea.containsMouse
       text: mk.tip
-      delay: 400
-      padding: 0
-      background: BorderSurface {
-        color: Color.tooltip.background
-        borderSpec: Border.localOrSurfaceSpec("tooltip", "border", Color.tooltip.border, Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
-        radius: 0
-      }
-      contentItem: Text {
-        textFormat: Text.PlainText
-        text: mk.tip
-        color: Color.tooltip.text
-        font.family: root.family
-        font.pixelSize: Style.font.bodySmall
-        leftPadding: Style.spacing.controlPaddingX
-        rightPadding: Style.spacing.controlPaddingX
-        topPadding: Style.spacing.controlPaddingY
-        bottomPadding: Style.spacing.controlPaddingY
-      }
     }
   }
 
@@ -885,7 +941,8 @@ Panel {
           textFormat: Text.PlainText
           text: pill.hasActivity ? root.pillItem.icon : "\u{f0996}"
           color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : (root.pillCharging ? root.chargeGreen : root.fg)
-          opacity: pill.hasActivity ? 1 : 0.6
+          // Paused media: the note, dimmed.
+          opacity: !pill.hasActivity || root.pillItem.module === "media" && !root.pillItem.playing ? 0.55 : 1
           font.family: root.family
           font.pixelSize: Style.font.body
         }
@@ -935,14 +992,21 @@ Panel {
         id: textClip
         visible: !root.vertical
         anchors.verticalCenter: parent.verticalCenter
-        width: pill.textMax
+        // "Fit": as wide as the text, up to the width set; else always that.
+        width: root.prefs.pillWidth === "fit" ? Math.min(pill.textMax, Math.ceil(fullWidth)) : pill.textMax
+        Behavior on width {
+          enabled: root.motion
+          NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+        }
         height: measure.implicitHeight
         clip: true
 
         readonly property string label: pill.hasActivity ? root.pillItem.pillText : "Nothing going on"
         readonly property real gap: Style.space(28)
         readonly property real fullWidth: measure.implicitWidth
-        readonly property bool overflows: fullWidth > width
+        // Against the limit, not the width: in "fit" the width is still
+        // growing to the text for a moment.
+        readonly property bool overflows: fullWidth > pill.textMax
         readonly property bool scrolling: root.prefs.textMode === "scroll" && overflows && !root.vertical
         // Briefly off when the text changes, so the marquee starts over
         // (restart() would break the `running` binding).
@@ -1030,7 +1094,7 @@ Panel {
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
           text: root.count > 1 && root.pillItem !== null ? (root.focusIndex + 1) + "/" + root.count : ""
-          color: Qt.darker(root.fg, 1.5)
+          color: Util.alpha(root.fg, 0.62)
           font.family: root.family
           font.pixelSize: Style.font.caption
         }
@@ -1208,7 +1272,9 @@ Panel {
         blocked: (root.settingsOpen && settingsView.editing) || customTimer.activeFocus
 
         onMoveRequested: function(dx, dy) {
-          if (!root.settingsOpen && dx !== 0 && root.service) root.service.step(dx)
+          if (root.settingsOpen || !root.service) return
+          if (dx !== 0) root.service.step(dx)
+          else if (dy !== 0) root.mediaVolumeStep(dy < 0 ? 0.05 : -0.05)
         }
         onTabRequested: function(direction) {
           if (root.settingsOpen) settingsView.cycleTab(direction)
@@ -1220,15 +1286,23 @@ Panel {
         onDeleteRequested: {
           if (!root.settingsOpen && root.focused && root.service) root.service.dismiss(root.focused.id)
         }
-        onCloseRequested: { if (root.settingsOpen) root.settingsOpen = false; else root.close() }
+        // Esc first drops a pending "Replace the timer?".
+        onCloseRequested: {
+          if (root.pendingStart !== null) root.pendingStart = null
+          else if (root.settingsOpen) root.settingsOpen = false
+          else root.close()
+        }
         onTextKey: function(t) {
           if (t === "q" || t === "Q") { if (root.settingsOpen) root.settingsOpen = false; else root.close(); return }
           if (t === "c" || t === "C") { root.settingsOpen = !root.settingsOpen; return }
-          if (root.settingsOpen || !root.service || !root.quickStartShown) return
+          if (root.settingsOpen || !root.service) return
+          if (t === "u" || t === "U") { root.service.showHidden(); return }
+          if (root.isMedia && (t === "[" || t === "]")) { root.service.nudgeSeek(root.focused.id, t === "[" ? -10 : 10); return }
+          if (!root.quickStartShown) return
           var n = parseInt(t, 10)
-          if (n >= 1 && n <= root.presets.length) root.service.startTimer(root.presets[n - 1])
-          else if ((t === "s" || t === "S") && root.prefs.quickStartExtras.indexOf("stopwatch") !== -1) root.service.startStopwatch()
-          else if ((t === "p" || t === "P") && root.prefs.quickStartExtras.indexOf("pomodoro") !== -1) root.service.startPomodoro()
+          if (n >= 1 && n <= root.presets.length) root.requestStart("timer", root.presets[n - 1])
+          else if ((t === "s" || t === "S") && root.prefs.quickStartExtras.indexOf("stopwatch") !== -1) root.requestStart("stopwatch", 0)
+          else if ((t === "p" || t === "P") && root.prefs.quickStartExtras.indexOf("pomodoro") !== -1) root.requestStart("pomodoro", 0)
         }
 
         Flickable {
@@ -1258,6 +1332,16 @@ Panel {
             onIndicatorsRequested: function(replace) { if (root.service) root.service.setIndicators(replace) }
             onWeatherWidgetRequested: function(replace) { if (root.service) root.service.setWeatherWidget(replace) }
             onBackRequested: root.settingsOpen = false
+            weatherLocation: root.service ? root.service.weatherLocation : ({ name: "", latitude: null, longitude: null })
+            weatherLocationSaving: root.service ? root.service.weatherLocationSaving : null
+            detectedPlace: root.service && root.service.weather ? root.service.weather.location : ""
+            locationEditable: root.service ? root.service.hasWeatherLocationTool : false
+            locationResults: root.service ? root.service.geocodeResults : []
+            locationSearching: root.service ? root.service.geocodeBusy : false
+            locationSearchFailed: root.service ? root.service.geocodeFailed : false
+            onLocationSearch: function(text) { if (root.service) root.service.searchWeatherLocation(text) }
+            onLocationPicked: function(place) { if (root.service) root.service.setWeatherLocation(place) }
+            onKeysReleased: root.forceKeyFocus()
           }
         }
 
@@ -1305,11 +1389,23 @@ Panel {
                     required property var modelData
                     required property int index
                     readonly property bool current: index === root.focusIndex
+                    // Came in while the popup is open: it waits here, lit,
+                    // instead of taking the card being read.
+                    readonly property bool fresh: !current && root.service !== null && root.service.heldOrder.length > 0
+                      && root.service.heldOrder.indexOf(modelData.id) === -1
                     anchors.verticalCenter: parent.verticalCenter
                     width: current ? Style.space(18) : Style.space(7)
                     height: Style.space(7)
                     radius: height / 2
-                    color: current ? root.accentFor(modelData) : Util.alpha(root.popupFg, 0.3)
+                    color: current || fresh ? root.accentFor(modelData) : Util.alpha(root.popupFg, 0.3)
+
+                    SequentialAnimation on opacity {
+                      running: parent.fresh && root.motion
+                      loops: Animation.Infinite
+                      onRunningChanged: if (!running) parent.opacity = 1
+                      NumberAnimation { to: 0.35; duration: 600; easing.type: Easing.InOutSine }
+                      NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutSine }
+                    }
 
                     Behavior on width {
                       enabled: root.motion
@@ -1318,10 +1414,18 @@ Panel {
 
 
                     MouseArea {
+                      id: dotArea
                       anchors.fill: parent
                       anchors.margins: -Style.space(4)
+                      hoverEnabled: true
                       cursorShape: Qt.PointingHandCursor
                       onClicked: if (root.service) root.service.focusOn(parent.modelData.id)
+                    }
+
+                    // Which activity each dot is, without clicking through them.
+                    Tip {
+                      visible: dotArea.containsMouse
+                      text: (parent.fresh ? "New: " : "") + parent.modelData.title
                     }
                   }
                 }
@@ -1377,6 +1481,12 @@ Panel {
                 visible: root.isWeather && !!root.focused.weather
                 weather: root.isWeather ? root.focused.weather : null
                 extraLines: root.isWeather ? root.focused.details : []
+                ageText: root.service ? root.service.weatherAge.text : ""
+                stale: root.service ? root.service.weatherAge.stale : false
+                loading: root.service ? root.service.weatherLoading : false
+                onRefreshRequested: if (root.service) root.service.refreshWeather()
+                // The place: straight to where it is chosen.
+                onPlaceClicked: { settingsView.tab = "weather"; root.settingsOpen = true }
                 foreground: root.popupFg
                 accent: root.accentFor(root.focused)
                 fontFamily: root.family
@@ -1510,7 +1620,7 @@ Panel {
                   visible: root.isMedia
                   anchors.top: parent.top
                   iconText: "\u{f0209}"
-                  foreground: Qt.darker(root.popupFg, 1.2)
+                  foreground: Util.alpha(root.popupFg, 0.85)
                   tooltipText: "Hide until it changes (x / right click)"
                   onClicked: if (root.service && root.focused) root.service.dismiss(root.focused.id)
                 }
@@ -1605,6 +1715,29 @@ Panel {
                   }
                   onCanceled: progressBar.dragging = false
                 }
+
+                // The time under the pointer, before clicking (while dragging,
+                // the elapsed time below follows instead).
+                Rectangle {
+                  readonly property real at: seekArea.valueAt(seekArea.mouseX) * (root.focused ? root.focused.length : 0)
+                  visible: progressBar.seekable && seekArea.containsMouse && !progressBar.dragging && root.isMedia && root.focused.length > 0
+                  width: hoverTime.implicitWidth + Style.space(10)
+                  height: hoverTime.implicitHeight + Style.space(4)
+                  radius: height / 2
+                  x: Math.max(0, Math.min(progressBar.width - width, seekArea.mouseX - width / 2))
+                  y: -height - Style.space(2)
+                  color: Color.tooltip.background
+
+                  Text {
+                    id: hoverTime
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: Model.formatDuration(parent.at * 1000)
+                    color: Color.tooltip.text
+                    font.family: root.family
+                    font.pixelSize: Style.font.caption
+                  }
+                }
               }
 
               // 1:51 ................................ -1:20 (follows a drag).
@@ -1621,7 +1754,7 @@ Panel {
                   anchors.left: parent.left
                   textFormat: Text.PlainText
                   text: Model.formatDuration(parent.at * 1000)
-                  color: Qt.darker(root.popupFg, 1.3)
+                  color: Util.alpha(root.popupFg, 0.75)
                   font.family: root.family
                   font.pixelSize: Style.font.caption
                 }
@@ -1630,7 +1763,7 @@ Panel {
                   anchors.right: parent.right
                   textFormat: Text.PlainText
                   text: "-" + Model.formatDuration(Math.max(0, (root.focused ? root.focused.length : 0) - parent.at) * 1000)
-                  color: Qt.darker(root.popupFg, 1.3)
+                  color: Util.alpha(root.popupFg, 0.75)
                   font.family: root.family
                   font.pixelSize: Style.font.caption
                 }
@@ -1649,7 +1782,7 @@ Panel {
                     width: parent.width
                     textFormat: Text.PlainText
                     text: modelData
-                    color: Qt.darker(root.popupFg, 1.2)
+                    color: Util.alpha(root.popupFg, 0.85)
                     font.family: root.family
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
@@ -1669,11 +1802,11 @@ Panel {
                   spacing: Style.space(10)
 
                   MediaKey { actionId: "shuffle"; on: root.isMedia && root.focused.shuffle === true; tip: "Shuffle" }
-                  MediaKey { actionId: "back10"; tip: "Back 10 s" }
+                  MediaKey { actionId: "back10"; tip: "Back 10 s ([)" }
                   MediaKey { actionId: "previous"; tip: "Previous" }
                   MediaKey { actionId: "playPause"; primary: true; tip: "Play / pause (Enter, middle click)" }
                   MediaKey { actionId: "next"; tip: "Next" }
-                  MediaKey { actionId: "forward10"; tip: "Forward 10 s" }
+                  MediaKey { actionId: "forward10"; tip: "Forward 10 s (])" }
                   MediaKey {
                     actionId: "loop"
                     on: root.isMedia && root.focused.loop !== "" && root.focused.loop !== "none"
@@ -1735,9 +1868,18 @@ Panel {
                     onPositionChanged: function(mouse) { if (volumeRow.dragging) set(mouse.x) }
                     onReleased: volumeRow.dragging = false
                     onCanceled: volumeRow.dragging = false
+                    // 5% per mouse wheel notch (120); a touchpad's many small
+                    // deltas add up to the same, instead of 5% each. Quick
+                    // steps build on the last one, not on the volume the
+                    // player hasn't reported back yet.
+                    property real wheelLevel: 0
+                    property double wheelAt: 0
                     onWheel: function(wheel) {
-                      if (!root.service || !root.focused) return
-                      root.service.setVolume(root.focused.id, volumeRow.level + (wheel.angleDelta.y > 0 ? 0.05 : -0.05))
+                      if (!root.service || !root.focused || wheel.angleDelta.y === 0) return
+                      var base = Date.now() - wheelAt < 800 ? wheelLevel : volumeRow.level
+                      wheelLevel = Math.max(0, Math.min(1, base + wheel.angleDelta.y / 120 * 0.05))
+                      wheelAt = Date.now()
+                      root.service.setVolume(root.focused.id, wheelLevel)
                     }
                   }
                 }
@@ -1749,7 +1891,7 @@ Panel {
                   horizontalAlignment: Text.AlignRight
                   textFormat: Text.PlainText
                   text: Math.round(volumeRow.level * 100) + "%"
-                  color: Qt.darker(root.popupFg, 1.3)
+                  color: Util.alpha(root.popupFg, 0.75)
                   font.family: root.family
                   font.pixelSize: Style.font.caption
                 }
@@ -1766,12 +1908,13 @@ Panel {
                   Button {
                     required property var modelData
                     required property int index
+                    readonly property bool armed: root.focused !== null && root.armedAction === root.focused.id + "/" + modelData.id
                     iconText: modelData.icon
-                    text: modelData.label
-                    foreground: root.popupFg
+                    text: armed ? modelData.confirm : modelData.label
+                    foreground: armed ? Color.urgent : root.popupFg
                     accent: root.accentFor(root.focused)
                     selected: index === 0
-                    tooltipText: index === 0 ? "Enter / middle click" : ""
+                    tooltipText: armed ? "Click again to do it" : (index === 0 ? "Enter / middle click" : "")
                     onClicked: root.runAction(modelData)
                   }
                 }
@@ -1815,11 +1958,24 @@ Panel {
                 textFormat: Text.PlainText
                 wrapMode: Text.WordWrap
                 text: "Media, timers, reminders, screen recording, camera/mic use and more show up here while they are active."
-                color: Qt.darker(root.popupFg, 1.4)
+                color: Util.alpha(root.popupFg, 0.7)
                 font.family: root.family
                 font.pixelSize: Style.font.caption
               }
             }
+          }
+
+          // Hidden by hand (x, right click): never gone for good.
+          Button {
+            readonly property int hiddenCount: root.service ? root.service.hiddenList.length : 0
+            visible: hiddenCount > 0
+            iconText: "\u{f0208}"
+            text: "Show " + hiddenCount + " hidden"
+            foreground: Util.alpha(root.popupFg, 0.75)
+            tooltipText: (root.service ? root.service.hiddenList.map(function(a) { return a.title }).join(", ") : "") + " (u)"
+            onClicked: if (root.service) root.service.showHidden()
+            opacity: root.stage(1)
+            transform: Translate { x: root.enterShiftX(1); y: root.enterShiftY(1) }
           }
 
           PanelSeparator {
@@ -1850,9 +2006,11 @@ Panel {
                 { id: "dnd", icon: "\u{f009b}", label: "DND", tip: "Do Not Disturb" },
                 { id: "nightlight", icon: "\u{f050e}", label: "Night", tip: "Night light" },
                 { id: "stayAwake", icon: "\u{f0176}", label: "Awake", tip: "Stay awake (no idle lock or screensaver)" },
-                { id: "record", icon: "\u{f0ec2}", label: "Record", tip: "Screen recording: start (opens the menu) or stop" },
-                { id: "reminder", icon: "\u{f088c}", label: "Remind", tip: "Set a reminder" },
-                { id: "dictation", icon: "\u{f036c}", label: "Dictate", tip: "Dictation (voxtype) settings" }
+                // "↗": opens something else (and closes the popup) instead of
+                // switching on and off right here.
+                { id: "record", icon: "\u{f0ec2}", label: "Record ↗", onLabel: "Stop rec", tip: "Screen recording: opens the recording menu", onTip: "Stop the screen recording" },
+                { id: "reminder", icon: "\u{f088c}", label: "Remind ↗", tip: "Set a reminder: opens Omarchy's reminder panel" },
+                { id: "dictation", icon: "\u{f036c}", label: "Dictate ↗", tip: "Dictation: opens voxtype's settings" }
               ]
 
               Button {
@@ -1861,11 +2019,11 @@ Panel {
                 visible: root.prefs.quickToggles.indexOf(modelData.id) !== -1
                   && (modelData.id !== "dictation" || (root.service !== null && root.service.hasVoxtype))
                 iconText: modelData.icon
-                text: modelData.label
+                text: on && modelData.onLabel ? modelData.onLabel : modelData.label
                 foreground: root.popupFg
                 accent: modelData.id === "record" && on ? Color.urgent : Color.accent
                 selected: on
-                tooltipText: modelData.tip + (on ? " (on)" : "")
+                tooltipText: on && modelData.onTip ? modelData.onTip : modelData.tip + (on ? " (on)" : "")
                 onClicked: {
                   if (!root.service) return
                   // Recording, reminders and dictation open their own UI.
@@ -1880,7 +2038,7 @@ Panel {
             visible: root.quickTogglesShown && root.service !== null && root.service.indicatorsState === "native"
             iconText: "\u{f009b}"
             text: "Use instead of Omarchy's indicators"
-            foreground: Qt.darker(root.popupFg, 1.2)
+            foreground: Util.alpha(root.popupFg, 0.85)
             tooltipText: "Turns Omarchy's indicators widget off; these toggles do the same (undo in the options)"
             onClicked: root.service.setIndicators(true)
             opacity: root.stage(2)
@@ -1920,7 +2078,7 @@ Panel {
                 text: Model.presetLabel(modelData)
                 foreground: root.popupFg
                 tooltipText: "Start a " + Model.presetLabel(modelData) + " timer (" + (index + 1) + ")"
-                onClicked: if (root.service) root.service.startTimer(modelData)
+                onClicked: root.requestStart("timer", modelData)
               }
             }
 
@@ -1930,7 +2088,7 @@ Panel {
               text: "Stopwatch"
               foreground: root.popupFg
               tooltipText: "Start the stopwatch (s)"
-              onClicked: if (root.service) root.service.startStopwatch()
+              onClicked: root.requestStart("stopwatch", 0)
             }
 
             Button {
@@ -1939,17 +2097,29 @@ Panel {
               text: "Pomodoro"
               foreground: root.popupFg
               tooltipText: "Focus " + root.prefs.pomodoroFocus + " min, break " + root.prefs.pomodoroBreak + " min (p)"
-              onClicked: if (root.service) root.service.startPomodoro()
+              onClicked: root.requestStart("pomodoro", 0)
             }
 
             Button {
               visible: root.prefs.moduleMedia && root.prefs.quickStartExtras.indexOf("sleep") !== -1
               iconText: "\u{f04b2}"
-              text: "Sleep 30 min"
+              text: "Sleep " + Model.presetLabel(root.prefs.sleepMinutes * 60)
               foreground: root.popupFg
-              tooltipText: "Pause the media in 30 minutes"
-              onClicked: if (root.service) root.service.startSleep(1800)
+              tooltipText: "Pause the media in " + Model.presetLabel(root.prefs.sleepMinutes * 60) + " (length in the options)"
+              onClicked: if (root.service) root.service.startSleep(root.prefs.sleepMinutes * 60)
             }
+          }
+
+          // "Replace the timer (18:32 left)?": the same press again does it.
+          Text {
+            width: parent.width
+            visible: root.quickStartShown && root.pendingStart !== null
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            text: root.pendingStart ? root.pendingStart.warning + "  Press again to replace, Esc to keep it." : ""
+            color: Color.urgent
+            font.family: root.family
+            font.pixelSize: Style.font.caption
           }
 
           // Any timer: "12m", "1h30m", "90" (seconds), or a time ("14:30").
@@ -1966,11 +2136,16 @@ Panel {
               foreground: root.popupFg
               font.family: root.family
               placeholderText: "Timer: 12m, 1h30m or 14:30"
-              readonly property int seconds: Model.parseTimerArg(text, Date.now())
+              // Read `now` so "ends at" follows the clock while it sits there.
+              readonly property var parsed: Model.timerArgHint(text, root.service ? root.service.now : Date.now())
+              readonly property int seconds: parsed.seconds
               onAccepted: start()
               function start() {
                 if (seconds <= 0 || !root.service) return
-                root.service.startTimer(seconds)
+                root.requestStart("timer", seconds)
+                // While it asks, the text and the keyboard stay here, so the
+                // same Enter again replaces (and doesn't reach the card).
+                if (root.pendingStart !== null) return
                 text = ""
                 root.forceKeyFocus()
               }
@@ -1983,9 +2158,21 @@ Panel {
               foreground: root.popupFg
               enabled: customTimer.seconds > 0
               opacity: enabled ? 1 : 0.4
-              tooltipText: customTimer.seconds > 0 ? "Start a " + Model.formatDuration(customTimer.seconds * 1000) + " timer (Enter)" : "Type a duration or a time"
+              tooltipText: customTimer.seconds > 0 ? "Start a " + Model.presetLabel(customTimer.seconds) + " timer (Enter)" : "Type a duration or a time"
               onClicked: customTimer.start()
             }
+          }
+
+          // What the field will do: "12 min · ends at 14:42", or how to write it.
+          Text {
+            width: parent.width
+            visible: root.quickStartShown && customTimer.parsed.hint !== ""
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            text: customTimer.parsed.hint
+            color: customTimer.seconds > 0 ? Util.alpha(root.popupFg, 0.65) : Color.urgent
+            font.family: root.family
+            font.pixelSize: Style.font.caption
           }
         }
       }

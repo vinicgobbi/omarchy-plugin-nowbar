@@ -3,16 +3,18 @@
 # Lists the updates waiting, for the Now Bar's Updates card. Run by the
 # service now and then (see the Updates tab of the options), or by hand:
 #
-#   nowbar-updates omarchy pacman aur flatpak
+#   nowbar-updates omarchy pacman aur flatpak plugins themes
 #   nowbar-updates --available     # the sources this system can check
 #
 # One line per update, tab separated: <source> <name> <installed> <new>
 # A source that couldn't be checked prints: error <source> <message>
 # Omarchy, official packages (checkupdates, from pacman-contrib) and the AUR
-# (yay) come with every Omarchy install; Flatpak only if you installed it.
-# A source whose tool is missing is left out, never reported as failing.
+# (yay) come with every Omarchy install; Flatpak only if you installed it;
+# plugins and themes when some were installed from git. A source whose tool
+# (or anything to check) is missing is left out, never reported as failing.
 # Only reads: checkupdates syncs a temporary copy of the package databases,
-# so nothing here needs sudo or touches the system's own.
+# and plugins/themes are compared with `git ls-remote`, which writes nothing;
+# nothing here needs sudo or touches the system's own.
 
 set -uo pipefail
 
@@ -32,15 +34,100 @@ tool_for() {
     pacman) echo checkupdates ;;
     aur) echo yay ;;
     flatpak) echo flatpak ;;
+    plugins | themes) echo git ;;
+  esac
+}
+
+plugins_dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"
+
+# Git-managed plugins, as `omarchy plugin update` sees them: folders with a
+# .git (hidden ones, like backups, aren't).
+plugin_repos() {
+  local dir
+  for dir in "$plugins_dir"/*/; do
+    [[ -d $dir/.git ]] && printf '%s\n' "${dir%/}"
+  done
+}
+
+# Themes installed from git, as `omarchy theme update` sees them.
+theme_repos() {
+  has omarchy-theme-extras || return 0
+  omarchy-theme-extras 2>/dev/null || true
+}
+
+# Something to check for this source on this system.
+present() {
+  case $1 in
+    plugins) [[ -n $(plugin_repos) ]] ;;
+    themes) [[ -n $(theme_repos) ]] ;;
+    *) return 0 ;;
   esac
 }
 
 if [[ ${1:-} == "--available" ]]; then
-  for source in omarchy pacman aur flatpak; do
-    has "$(tool_for "$source")" && echo "$source"
+  for source in omarchy pacman aur flatpak plugins themes; do
+    has "$(tool_for "$source")" && present "$source" && echo "$source"
   done
   exit 0
 fi
+
+# Never ask for anything: no password prompts, no SSH key passphrases, no
+# askpass windows. A repo that would need one counts as "couldn't check".
+export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never SSH_ASKPASS_REQUIRE=never
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}"
+
+# The commit the remote has for `ref` (on `remote`), or nothing.
+remote_commit() {
+  timeout 20 git -C "$1" ls-remote --quiet "$2" "$3" 2>/dev/null | awk 'NR == 1 { print $1 }'
+}
+
+# Prints "<local> <remote>" when the remote has commits this checkout lacks.
+# A remote commit already in the local history (a checkout ahead of it, with
+# its own commits) isn't an update.
+behind() {
+  local dir=$1 remote=$2 ref=$3 head theirs
+  head=$(git -C "$dir" rev-parse --verify --quiet HEAD) || return 2
+  theirs=$(remote_commit "$dir" "$remote" "$ref")
+  [[ -n $theirs ]] || return 2
+  [[ $theirs == "$head" ]] && return 1
+  git -C "$dir" merge-base --is-ancestor "$theirs" HEAD 2>/dev/null && return 1
+  printf '%s %s\n' "${head:0:7}" "${theirs:0:7}"
+}
+
+check_plugins() {
+  local dir id name pair failed=0
+  while IFS= read -r dir; do
+    [[ -n $dir ]] || continue
+    id=$(basename "$dir")
+    # The same comparison `omarchy plugin update` makes: HEAD vs origin's HEAD.
+    pair=$(behind "$dir" origin HEAD)
+    case $? in
+      0)
+        name=$(jq -r '.name // empty' "$dir/manifest.json" 2>/dev/null | head -c 60)
+        printf 'plugins\t%s\t%s\t%s\n' "${name:-$id}" "${pair% *}" "${pair#* }"
+        ;;
+      2) failed=1 ;;
+    esac
+  done < <(plugin_repos)
+  if (( failed )); then printf 'error\tplugins\tsome plugins could not be checked\n'; fi
+}
+
+check_themes() {
+  local dir upstream remote branch pair failed=0
+  while IFS= read -r dir; do
+    [[ -n $dir ]] || continue
+    # What `git pull` would follow; a theme without one is left alone.
+    upstream=$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) || continue
+    remote=${upstream%%/*}
+    branch=${upstream#*/}
+    pair=$(behind "$dir" "$remote" "refs/heads/$branch")
+    case $? in
+      0) printf 'themes\t%s\t%s\t%s\n' "$(basename "$dir")" "${pair% *}" "${pair#* }" ;;
+      2) failed=1 ;;
+    esac
+  done < <(theme_repos)
+  if (( failed )); then printf 'error\tthemes\tsome themes could not be checked\n'; fi
+}
 
 check_omarchy() {
   local out
@@ -93,5 +180,7 @@ for source in "$@"; do
     pacman) check_pacman ;;
     aur) check_aur ;;
     flatpak) check_flatpak ;;
+    plugins) check_plugins ;;
+    themes) check_themes ;;
   esac
 done | head -c 262144

@@ -59,8 +59,9 @@ omarchy-shell nowbar status
 - `Service.qml` — reads every source (MPRIS, PipeWire, UPower,
   `omarchy-reminder`, `gpu-screen-recorder`, `omarchy-voxtype-status`,
   `/dev/video*` users, the shell's DND/idle/night light IPC, `nmcli` and
-  `tailscale`, Bluetooth, the screenshots folder, wttr.in (`?format=j1`) and
-  `omarchy-update-available`), keeps
+  `tailscale`, Bluetooth, the screenshots folder, wttr.in (`?format=j1`, for
+  the place in Omarchy's `weather.json`), Open-Meteo's geocoding (only while
+  searching for a place in the options) and `omarchy-update-available`), keeps
   the list of activities and the focus, saves the timer/stopwatch/Pomodoro/sleep timer to
   `~/.local/state/vinicgobbi.nowbar/state.json`, and owns the `nowbar`
   IPC target

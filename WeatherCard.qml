@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Ui
 import qs.Commons
 
 // The weather card in the popup: the Now Brief, laid out for a glance.
@@ -8,6 +9,7 @@ import qs.Commons
 //   Now  15h  18h  21h ...   (icon, temperature, rain chance)
 //   Today      ☀   17° ▕━━━━━━━▏ 32°
 //   Tomorrow   🌧   19°   ▕━━━━━━━▏ 33°
+//   Updated 9:02                                   ⟳
 // Everything comes from NowbarModel.parseWttr(); this only draws it.
 Column {
   id: root
@@ -17,9 +19,18 @@ Column {
   property color foreground: Color.foreground
   property color accent: Color.accent
   property string fontFamily: Style.font.family
+  // "Updated 9:02" / "Offline · updated 3 h ago" (Model.weatherAge), and
+  // whether a fetch is on its way.
+  property string ageText: ""
+  property bool stale: false
+  property bool loading: false
+
+  signal refreshRequested()
+  // The place name was clicked: the options' Location.
+  signal placeClicked()
 
   readonly property var w: weather || ({ hours: [], days: [] })
-  readonly property color dim: Qt.darker(foreground, 1.4)
+  readonly property color dim: Util.alpha(foreground, 0.7)
 
   spacing: Style.space(12)
 
@@ -94,11 +105,23 @@ Column {
         textFormat: Text.PlainText
         text: root.w.location ? "\u{f034e} " + root.w.location : ""
         visible: text !== ""
-        color: root.foreground
+        color: placeArea.containsMouse ? root.accent : root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         font.bold: true
+        font.underline: placeArea.containsMouse
         elide: Text.ElideLeft
+
+        MouseArea {
+          id: placeArea
+          // Only over the words, not the whole right-aligned line.
+          anchors.right: parent.right
+          width: Math.min(parent.width, parent.contentWidth)
+          height: parent.height
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.placeClicked()
+        }
       }
 
       Text {
@@ -386,6 +409,40 @@ Column {
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
       elide: Text.ElideRight
+    }
+  }
+
+  // --- how fresh it is ----------------------------------------------------------
+
+  Item {
+    width: root.width
+    height: Math.max(ageLine.implicitHeight, refreshButton.implicitHeight)
+    visible: root.ageText !== ""
+
+    Text {
+      id: ageLine
+      anchors.left: parent.left
+      anchors.right: refreshButton.left
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      text: (root.stale ? "\u{f0026}  " : "") + (root.loading ? "Updating\u2026" : root.ageText)
+      color: root.stale && !root.loading ? Color.urgent : root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      elide: Text.ElideRight
+    }
+
+    Button {
+      id: refreshButton
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      iconText: "\u{f0450}"
+      iconSpinning: root.loading
+      text: root.stale ? "Refresh" : ""
+      foreground: root.dim
+      enabled: !root.loading
+      tooltipText: "Fetch the weather now"
+      onClicked: root.refreshRequested()
     }
   }
 }

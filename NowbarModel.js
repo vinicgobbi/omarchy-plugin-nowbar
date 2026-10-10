@@ -89,6 +89,17 @@ function parseTimerArg(arg, now) {
   return 0
 }
 
+// What the Quick start field will do with `text`, shown under it as you type:
+// { seconds, hint }. seconds is 0 when it isn't a duration or a time.
+function timerArgHint(text, now) {
+  var t = String(text === undefined || text === null ? "" : text).trim()
+  if (t === "") return { seconds: 0, hint: "" }
+  var seconds = parseTimerArg(t, now)
+  if (!(seconds > 0) || seconds * 1000 > MAX_TIMER_MS)
+    return { seconds: 0, hint: "Not a duration: try 12m, 1h30m, 90 (seconds) or 14:30" }
+  return { seconds: seconds, hint: presetLabel(seconds) + " \u00b7 ends at " + clockAt(now + seconds * 1000) }
+}
+
 // Quick start timers, as minutes separated by commas ("1,5,10,25"). Returns
 // seconds, at most 6 entries, each 1 min to 24 h. Empty means no timers;
 // text with nothing usable in it falls back to the default.
@@ -133,6 +144,7 @@ var PRIORITY = {
   reminder: 75,
   charging: 80,
   pushLow: 85,
+  micMuted: 88,
   modes: 90,
   mediaPaused: 95,
   brief: 99
@@ -146,8 +158,10 @@ var REMINDER_SOON_SECONDS = 5 * 60
 
 var MAX_TIMER_MS = 24 * 3600 * 1000
 var MAX_LAPS = 99
-// A finished timer stays this long as "Time's up", with Repeat / +1 min / OK.
-var TIMER_DONE_MS = 30000
+// A finished timer stays as "Time's up", with Repeat / +1 min / OK, until
+// OK (or as long as the "Time's up stays" option says); the pill glows for
+// this long, then stays without moving.
+var TIMER_ALERT_MS = 60000
 // The last seconds of a countdown: the pill pulses.
 var ENDING_MS = 10000
 
@@ -155,9 +169,22 @@ function doneTimer(t, now) {
   return { state: "done", durationMs: t.durationMs, endsAt: 0, remainingMs: 0, doneAt: now }
 }
 
-// The "Time's up" card is over.
-function doneExpired(t, now) {
-  return !!t && t.state === "done" && now - t.doneAt >= TIMER_DONE_MS
+// The "Time's up" card is over: `keepMinutes` after it went off (0: never,
+// it waits for OK).
+function doneExpired(t, now, keepMinutes) {
+  if (!t || t.state !== "done" || !(keepMinutes > 0)) return false
+  return now - t.doneAt >= keepMinutes * 60000
+}
+
+// Whether "Time's up" still glows (its first minute).
+function doneAlerting(t, now) {
+  return !!t && t.state === "done" && now - t.doneAt < TIMER_ALERT_MS
+}
+
+// "14:05", local time.
+function clockAt(ms) {
+  var d = new Date(ms)
+  return d.getHours() + ":" + pad2(d.getMinutes())
 }
 
 function idleTimer() {
@@ -277,9 +304,9 @@ function timerActivity(t, now) {
       priority: PRIORITY.timer,
       icon: "\u{f0e1b}",
       urgent: false,
-      done: true,
+      done: doneAlerting(t, now),
       title: "Time's up",
-      subtitle: "Timer \u00b7 " + presetLabel(t.durationMs / 1000),
+      subtitle: "Timer \u00b7 " + presetLabel(t.durationMs / 1000) + " \u00b7 ended at " + clockAt(t.doneAt),
       pillText: "Time's up",
       progress: 1,
       details: [],
@@ -340,6 +367,17 @@ function stopwatchActivity(s, now) {
       : [{ id: "resume", label: "Resume", icon: "\u{f040a}" }, { id: "reset", label: "Reset", icon: "\u{f099b}" }],
     signature: s.state
   }
+}
+
+// Starting `kind` ("timer", "stopwatch", "pomodoro") from the popup while
+// one is already going would throw it away: the question to ask first, or ""
+// when there's nothing to lose. `state` is that kind's state.
+function replaceWarning(kind, state, now) {
+  if (!state || state.state === "idle" || state.state === "done") return ""
+  if (kind === "timer") return "Replace the timer (" + formatCountdown(timerRemaining(state, now)) + " left)?"
+  if (kind === "stopwatch") return "Restart the stopwatch (" + formatDuration(stopwatchElapsed(state, now)) + ")?"
+  if (kind === "pomodoro") return "Restart the Pomodoro (" + (PHASE_LABEL[state.phase] || "Focus").toLowerCase() + ")?"
+  return ""
 }
 
 // --- pomodoro -------------------------------------------------------------------
@@ -540,7 +578,9 @@ function remindersActivity(reminders, now) {
     details: details,
     actions: [
       { id: "postpone", label: "+5 min", icon: "\u{f0415}" },
-      { id: "clear", label: pending.length > 1 ? "Clear all" : "Clear", icon: "\u{f0156}" }
+      // Every reminder, not just this one: the popup asks before.
+      pending.length > 1 ? { id: "clear", label: "Clear all", icon: "\u{f0156}", confirm: "Clear all " + pending.length + "?" }
+        : { id: "clear", label: "Clear", icon: "\u{f0156}" }
     ],
     signature: next.unit + ":" + pending.length
   }
@@ -683,16 +723,36 @@ function uniqueNames(names) {
 // p = { micApps: [names], micMuted, cameraActive, cameraApps: [names] }
 function privacyActivity(p) {
   if (!p) return null
-  var mic = (p.micApps || []).length > 0 && !p.micMuted
+  var micUsed = (p.micApps || []).length > 0
+  var mic = micUsed && !p.micMuted
   var cam = !!p.cameraActive
-  if (!mic && !cam) return null
   var micApps = uniqueNames(p.micApps)
   var camApps = uniqueNames(p.cameraApps)
+  // Muted while an app still holds it: nothing to warn about, but the way
+  // back stays here (muting from this card would otherwise lose it).
+  if (!mic && !cam && micUsed) {
+    return {
+      id: "privacy",
+      module: "privacy",
+      priority: PRIORITY.micMuted,
+      icon: "\u{f036d}",
+      urgent: false,
+      title: "Microphone muted",
+      subtitle: micApps.join(", "),
+      pillText: "Mic muted",
+      progress: -1,
+      details: [],
+      actions: [{ id: "unmuteMic", label: "Unmute", icon: "\u{f036c}" }],
+      signature: "muted:" + micApps.join(",")
+    }
+  }
+  if (!mic && !cam) return null
   var what = mic && cam ? "Camera and microphone in use" : (cam ? "Camera in use" : "Microphone in use")
   var apps = uniqueNames((cam ? camApps : []).concat(mic ? micApps : []))
   var details = []
   if (cam) details.push("\u{f0100}  Camera: " + (camApps.length ? camApps.join(", ") : "unknown app"))
   if (mic) details.push("\u{f036c}  Microphone: " + (micApps.length ? micApps.join(", ") : "unknown app"))
+  else if (micUsed) details.push("\u{f036d}  Microphone: muted")
   return {
     id: "privacy",
     module: "privacy",
@@ -704,7 +764,8 @@ function privacyActivity(p) {
     pillText: cam && mic ? "Cam + mic" : (cam ? "Camera" : "Mic"),
     progress: -1,
     details: details,
-    actions: mic ? [{ id: "muteMic", label: "Mute mic", icon: "\u{f036d}" }] : [],
+    actions: mic ? [{ id: "muteMic", label: "Mute mic", icon: "\u{f036d}" }]
+      : (micUsed ? [{ id: "unmuteMic", label: "Unmute mic", icon: "\u{f036c}" }] : []),
     signature: (cam ? "c" : "") + (mic ? "m" : "") + ":" + apps.join(",")
   }
 }
@@ -758,9 +819,9 @@ function modesActivity(m) {
   var on = []
   var actions = []
   var details = []
-  if (m.dnd) { on.push("Do Not Disturb"); actions.push({ id: "dnd", label: "DND off", icon: "\u{f009b}" }) }
-  if (m.stayAwake) { on.push("Stay awake"); actions.push({ id: "stayAwake", label: "Stay awake off", icon: "\u{f0176}" }) }
-  if (m.nightlight) { on.push("Night light"); actions.push({ id: "nightlight", label: "Night light off", icon: "\u{f0594}" }) }
+  if (m.dnd) { on.push("Do Not Disturb"); actions.push({ id: "dnd", label: "Turn off DND", icon: "\u{f009b}" }) }
+  if (m.stayAwake) { on.push("Stay awake"); actions.push({ id: "stayAwake", label: "Turn off Stay awake", icon: "\u{f0176}" }) }
+  if (m.nightlight) { on.push("Night light"); actions.push({ id: "nightlight", label: "Turn off Night light", icon: "\u{f0594}" }) }
   for (var i = 0; i < vpns.length; i++) {
     on.push(vpns.length === 1 ? "VPN " + vpns[i].name : vpns[i].name)
     details.push("\u{f0582}  VPN: " + vpns[i].name)
@@ -789,6 +850,8 @@ function modesActivity(m) {
 function chargingActivity(b) {
   if (!b || !b.present || b.onBattery || !b.charging) return null
   var pct = Math.round(Math.max(0, Math.min(1, num(b.percentage, 0))) * 100)
+  // Full, with UPower still saying "charging" (charge limits do that).
+  if (pct >= 100) return null
   var eta = num(b.timeToFull, 0) > 0 ? "Full in " + formatEta(b.timeToFull) : "Charging"
   return {
     id: "charging",
@@ -826,7 +889,8 @@ function batteryActivity(b) {
     pillText: pct + "% \u00b7 " + (num(b.timeToEmpty, 0) > 0 ? formatEta(b.timeToEmpty) : "low"),
     progress: frac,
     details: [],
-    actions: [],
+    // Only where power-profiles-daemon is, and not already saving.
+    actions: b.canPowerSave && !b.powerSaver ? [{ id: "powerSaver", label: "Power saver", icon: "\u{f032a}" }] : [],
     // Shows up again (after a dismiss) at each 5% step down.
     signature: "low:" + Math.ceil(pct / 5)
   }
@@ -892,7 +956,9 @@ function mediaActivity(m) {
     album: album,
     volume: m.volumeSupported ? Math.max(0, Math.min(1, num(m.volume, 0))) : -1,
     priority: m.playing ? PRIORITY.mediaPlaying : PRIORITY.mediaPaused,
-    icon: m.playing ? "\u{f075a}" : "\u{f03e4}",
+    // The note either way: a pause glyph on a paused card reads like a
+    // button. Paused, the pill dims it.
+    icon: "\u{f075a}",
     urgent: false,
     title: title,
     subtitle: [artist, player].filter(function(x) { return x }).join(" · "),
@@ -1365,10 +1431,17 @@ function recordedActivity(r) {
 // --- updates waiting (bin/nowbar-updates, now and then) ----------------------------
 
 // Omarchy, official packages (checkupdates) and the AUR (yay) come with every
-// Omarchy install; Flatpak only when installed. Only the sources this system
-// can check (`nowbar-updates --available`) are offered or checked.
-var UPDATE_SOURCES = ["omarchy", "pacman", "aur", "flatpak"]
-var UPDATE_SOURCE_LABELS = { omarchy: "Omarchy", pacman: "Official", aur: "AUR", flatpak: "Flatpak" }
+// Omarchy install; Flatpak only when installed; plugins and themes when some
+// came from git. Only the sources this system can check (`nowbar-updates
+// --available`) are offered or checked.
+var UPDATE_SOURCES = ["omarchy", "pacman", "aur", "flatpak", "plugins", "themes"]
+var UPDATE_SOURCE_LABELS = { omarchy: "Omarchy", pacman: "Official", aur: "AUR", flatpak: "Flatpak", plugins: "Plugin", themes: "Theme" }
+
+// "3 Official", "1 Plugin", "2 Themes".
+function sourceCount(src, n) {
+  var label = UPDATE_SOURCE_LABELS[src]
+  return n + " " + label + (n !== 1 && (src === "plugins" || src === "themes") ? "s" : "")
+}
 // Minutes; the Updates tab's presets. Any other value is a custom interval.
 var UPDATE_INTERVALS = [30, 60, 180, 360, 720, 1440]
 var MAX_UPDATES = 2000
@@ -1450,19 +1523,20 @@ function updatesFor(state, sources) {
   }
 }
 
-// What the Update button runs in a terminal: Omarchy's updater for system
-// and AUR packages, flatpak's for flatpaks. Fixed commands, nothing from
-// the package lists goes in.
+// What the Update button runs in a terminal, for what is waiting: Omarchy's
+// updater for system and AUR packages, flatpak's for flatpaks, `omarchy
+// plugin update` for plugins (it shows each one's changes and asks first),
+// `omarchy theme update` for themes. Fixed commands, nothing from the lists
+// goes in; each runs only if the one before it went fine.
 function updateCommand(items) {
-  var system = false
-  var flatpak = false
-  for (var i = 0; i < (items || []).length; i++) {
-    if (items[i].source === "flatpak") flatpak = true
-    else system = true
-  }
+  var has = {}
+  for (var i = 0; i < (items || []).length; i++) has[items[i].source] = true
   var parts = []
-  if (system || !flatpak) parts.push("omarchy-update")
-  if (flatpak) parts.push("flatpak update")
+  if (has.omarchy || has.pacman || has.aur) parts.push("omarchy-update")
+  if (has.flatpak) parts.push("flatpak update")
+  if (has.plugins) parts.push("omarchy plugin update")
+  if (has.themes) parts.push("omarchy theme update")
+  if (parts.length === 0) parts.push("omarchy-update")
   return parts.join(" && ")
 }
 
@@ -1481,6 +1555,9 @@ function intervalLabel(minutes) {
 
 function updateLine(u) {
   if (u.source === "omarchy") return "\u{f06b0}  " + (u.to || "Omarchy update")
+  // Plugins and themes: the commits, short.
+  if (u.source === "plugins" || u.source === "themes")
+    return (u.source === "plugins" ? "\u{f0431}  " : "\u{f03d8}  ") + u.name + (u.from && u.to ? "  ·  " + u.from + " → " + u.to : "")
   var change = u.from && u.to && u.from !== u.to ? u.from + " → " + u.to : (u.to ? u.to + " (new build)" : "")
   return u.name + (change ? "  ·  " + change : "")
 }
@@ -1496,14 +1573,16 @@ function updatesActivity(state, checking) {
   for (var j = 0; j < UPDATE_SOURCES.length; j++) {
     var src = UPDATE_SOURCES[j]
     if (!counts[src]) continue
-    parts.push(src === "omarchy" ? "Omarchy" : counts[src] + " " + UPDATE_SOURCE_LABELS[src])
+    parts.push(src === "omarchy" ? "Omarchy" : sourceCount(src, counts[src]))
   }
   // Omarchy first, then the rest in the order they came.
   var sorted = items.filter(function(u) { return u.source === "omarchy" }).concat(items.filter(function(u) { return u.source !== "omarchy" }))
   var details = sorted.slice(0, 6).map(updateLine)
   if (items.length > 6) details.push("…and " + (items.length - 6) + " more")
   if (state.errors && state.errors.length) {
-    details.push("\u{f0026}  Couldn't check " + state.errors.map(function(e) { return UPDATE_SOURCE_LABELS[e] }).join(", "))
+    details.push("\u{f0026}  Couldn't check " + state.errors.map(function(e) {
+      return e === "plugins" ? "some plugins" : (e === "themes" ? "some themes" : UPDATE_SOURCE_LABELS[e])
+    }).join(", "))
   }
   if (state.checkedAt > 0) {
     var d = new Date(state.checkedAt)
@@ -1595,6 +1674,84 @@ function clockLabel(minutes) {
   return minutes < 0 ? "" : Math.floor(minutes / 60) + ":" + pad2(minutes % 60)
 }
 
+// --- weather location ------------------------------------------------------------
+// The place is Omarchy's own (~/.local/state/omarchy/settings/weather.json,
+// written by omarchy-weather-location), shared with its weather panel:
+// {"name", "latitude", "longitude"}. Missing, blank or broken means a guess
+// from the IP. Adapted from Omarchy's weather panel (MIT, see above).
+
+function parseLocationFile(raw) {
+  var unset = { name: "", latitude: null, longitude: null }
+  try {
+    var data = JSON.parse(String(raw || ""))
+    if (!data || typeof data !== "object" || Array.isArray(data)) return unset
+    var lat = parseFloat(data.latitude)
+    var lon = parseFloat(data.longitude)
+    var coords = validCoords(lat, lon)
+    return {
+      name: typeof data.name === "string" ? clean(data.name, 80) : "",
+      latitude: coords ? lat : null,
+      longitude: coords ? lon : null
+    }
+  } catch (e) {
+    return unset
+  }
+}
+
+function validCoords(lat, lon) {
+  return typeof lat === "number" && typeof lon === "number" && isFinite(lat) && isFinite(lon)
+    && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+}
+
+// Open-Meteo's answer for a place (timezone=auto) -> its offset from UTC in
+// seconds, or null.
+function parseUtcOffset(raw) {
+  try {
+    var v = (JSON.parse(String(raw || "{}")) || {}).utc_offset_seconds
+    return typeof v === "number" && isFinite(v) && Math.abs(v) <= 14 * 3600 && v % 60 === 0 ? v : null
+  } catch (e) {
+    return null
+  }
+}
+
+// The wttr.in path for a place: its coordinates when known (a name alone can
+// land on another town with the same name), else the encoded name; "" asks
+// wttr.in to guess from the IP.
+function wttrLocationQuery(loc) {
+  if (!loc) return ""
+  if (validCoords(loc.latitude, loc.longitude)) return loc.latitude + "," + loc.longitude
+  var name = String(loc.name || "").trim()
+  return name === "" ? "" : encodeURIComponent(name)
+}
+
+// Open-Meteo's geocoding answer -> up to 5 places to pick from:
+// { name, region ("Espírito Santo, Brazil"), latitude, longitude }.
+function parseGeocodingResults(raw) {
+  try {
+    var results = (JSON.parse(String(raw || "{}")) || {}).results
+    if (!Array.isArray(results)) return []
+    var out = []
+    for (var i = 0; i < results.length && out.length < 5; i++) {
+      var r = results[i]
+      if (!r || typeof r.name !== "string") continue
+      var lat = parseFloat(r.latitude)
+      var lon = parseFloat(r.longitude)
+      if (!validCoords(lat, lon)) continue
+      var name = clean(r.name, 80)
+      if (!name) continue
+      out.push({
+        name: name,
+        region: [r.admin1, r.country].filter(function(x) { return typeof x === "string" && x.trim() }).map(function(x) { return clean(x, 60) }).join(", "),
+        latitude: Math.round(lat * 1e4) / 1e4,
+        longitude: Math.round(lon * 1e4) / 1e4
+      })
+    }
+    return out
+  } catch (e) {
+    return []
+  }
+}
+
 // °C or °F: an explicit choice, else the country of the forecast, else the
 // locale. Same rules as Omarchy's weather panel (MIT, see above).
 function useImperial(unit, localeName, country) {
@@ -1623,8 +1780,21 @@ function isRainCode(code) {
 // slot; hidden, it stays hidden for that slot.
 var RAIN_LIKELY = 60
 
-function rainActivity(w) {
-  if (!w || w.raining || !Array.isArray(w.hours) || w.hours.length === 0) return null
+// A weather report older than this is shown as such ("Offline · updated 3 h
+// ago"), and doesn't warn about rain anymore.
+var WEATHER_STALE_MS = 3600000
+
+// The line at the bottom of the weather card: { stale, text }.
+function weatherAge(fetchedAt, now) {
+  if (!(fetchedAt > 0)) return { stale: false, text: "" }
+  var age = Math.max(0, now - fetchedAt)
+  if (age < WEATHER_STALE_MS) return { stale: false, text: "Updated " + clockAt(fetchedAt) }
+  var h = Math.floor(age / 3600000)
+  return { stale: true, text: "Offline \u00b7 updated " + (h >= 24 ? Math.floor(h / 24) + " d" : h + " h") + " ago" }
+}
+
+function rainActivity(w, stale) {
+  if (!w || stale || w.raining || !Array.isArray(w.hours) || w.hours.length === 0) return null
   for (var i = 0; i < Math.min(2, w.hours.length); i++) {
     var h = w.hours[i]
     if (h.rain < RAIN_LIKELY) continue
@@ -1666,8 +1836,18 @@ function parseWttr(text, now, opts) {
   var t = temp(cur.temp_C, cur.temp_F)
   if (t === null) return null
 
-  var d = new Date(now)
-  var nowMin = d.getHours() * 60 + d.getMinutes()
+  // The place's own clock: wttr.in's hours and dates are local to it. With
+  // `utcOffset` (seconds, for a saved place in another time zone) it is
+  // worked out from UTC; else this machine's clock is the place's.
+  var off = typeof o.utcOffset === "number" && isFinite(o.utcOffset) ? o.utcOffset : null
+  var d = off !== null ? new Date(now + off * 1000) : new Date(now)
+  var nowMin = off !== null ? d.getUTCHours() * 60 + d.getUTCMinutes() : d.getHours() * 60 + d.getMinutes()
+  var today = off !== null
+    ? d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate())
+    : d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+  // A report fetched before midnight (offline since): its first days are past.
+  days = days.filter(function(x) { return !(typeof x.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x.date) && x.date < today) })
+  if (days.length === 0) return null
   var astro = days[0].astronomy && days[0].astronomy[0] ? days[0].astronomy[0] : {}
   var sunrise = clockMinutes(astro.sunrise)
   var sunset = clockMinutes(astro.sunset)
@@ -1817,6 +1997,32 @@ function pruneDismissed(dismissed, list) {
   return changed ? next : dismissed
 }
 
+// The same list in the order `ids` had (while the popup is open, so the dots
+// don't move under the pointer); ones not in `ids` come after, by priority.
+function keepOrder(list, ids) {
+  if (!ids || ids.length === 0) return list
+  var rank = {}
+  for (var i = 0; i < ids.length; i++) rank[ids[i]] = i
+  var kept = []
+  var rest = []
+  for (var j = 0; j < (list || []).length; j++) (rank[list[j].id] !== undefined ? kept : rest).push(list[j])
+  kept.sort(function(a, b) { return rank[a.id] - rank[b.id] })
+  return kept.concat(rest)
+}
+
+// Activities hidden by hand that would show up otherwise (module on, same
+// state as when hidden).
+function hiddenActivities(list, prefs, dismissed) {
+  var out = []
+  for (var i = 0; i < (list || []).length; i++) {
+    var a = list[i]
+    if (!a || !dismissed || dismissed[a.id] === undefined || dismissed[a.id] !== a.signature) continue
+    if (prefs && prefs.modules && prefs.modules[a.module] === false) continue
+    out.push(a)
+  }
+  return sortActivities(out)
+}
+
 function indexOfId(list, id) {
   for (var i = 0; i < (list || []).length; i++) if (list[i].id === id) return i
   return -1
@@ -1835,7 +2041,9 @@ function nextIndex(length, index, delta) {
 // the current one. A newcomer is an id not in knownIds, or one that got more
 // important since (paused media that starts playing, a reminder coming up).
 // Otherwise the focus stays on the same id; if that one is gone, it goes to
-// the most important activity.
+// the most important activity. With `onlyAlerts` (the popup is open), only a
+// newcomer that can't wait (urgent, or a timer / reminder going off) takes
+// it: the rest wait for their dot, without moving the card being read.
 function resolveFocus(s) {
   var list = s.list || []
   if (list.length === 0) return ""
@@ -1845,6 +2053,7 @@ function resolveFocus(s) {
       var a = list[i]
       var known = s.knownIds ? s.knownIds[a.id] : undefined
       if (known !== undefined && !(a.priority < known)) continue
+      if (s.onlyAlerts && !a.urgent && !a.done) continue
       if (current === -1 || a.priority <= list[current].priority) return a.id
     }
   }
@@ -1905,12 +2114,16 @@ function defaultPrefs() {
     mediaIgnore: "",        // players kept out of the Now Bar, comma separated
     animations: true,       // the popup unfolds from the pill, cards and sections slide in
     textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
-    maxWidth: 220,          // width of the text area: the pill always has this size
+    maxWidth: 220,          // width of the text area: the pill always has this size (or at most, with "fit")
+    pillWidth: "fixed",     // "fixed": always maxWidth; "fit": as wide as the text, up to maxWidth
     timerPresets: DEFAULT_PRESETS, // quick start timers, minutes
     pomodoroFocus: 25,
     pomodoroBreak: 5,
     pomodoroLongBreak: 15,
-    pomodoroDnd: false      // Do Not Disturb during focus blocks
+    pomodoroDnd: false,     // Do Not Disturb during focus blocks
+    sleepMinutes: 30,       // the Quick start sleep timer
+    timerSound: true,       // a sound when a timer or a Pomodoro block ends (not with Do Not Disturb)
+    timerDoneMinutes: 0     // "Time's up" goes away after this long (0: waits for OK)
   }
 }
 
@@ -1931,6 +2144,7 @@ function normalizePrefs(input) {
   for (var k in d) if (typeof d[k] === "boolean") out[k] = typeof src[k] === "boolean" ? src[k] : d[k]
   out.whenEmpty = src.whenEmpty === "hide" || src.whenEmpty === "icon" ? src.whenEmpty : "brief"
   out.textMode = src.textMode === "ellipsis" ? "ellipsis" : "scroll"
+  out.pillWidth = src.pillWidth === "fit" ? "fit" : "fixed"
   out.weatherUnit = src.weatherUnit === "metric" || src.weatherUnit === "imperial" ? src.weatherUnit : "auto"
   out.maxWidth = clampInt(src.maxWidth, 80, 600, d.maxWidth)
   var presets = parsePresets(src.timerPresets === undefined ? d.timerPresets : src.timerPresets)
@@ -1939,6 +2153,8 @@ function normalizePrefs(input) {
   out.pomodoroFocus = clampInt(src.pomodoroFocus, 1, 180, d.pomodoroFocus)
   out.pomodoroBreak = clampInt(src.pomodoroBreak, 1, 60, d.pomodoroBreak)
   out.pomodoroLongBreak = clampInt(src.pomodoroLongBreak, 1, 120, d.pomodoroLongBreak)
+  out.sleepMinutes = clampInt(src.sleepMinutes, 1, 720, d.sleepMinutes)
+  out.timerDoneMinutes = clampInt(src.timerDoneMinutes, 0, 1440, d.timerDoneMinutes)
   out.quickToggles = parseIdList(src.quickToggleItems, QUICK_TOGGLES)
   out.quickToggleItems = out.quickToggles.join(",")
   out.quickStartExtras = parseIdList(src.quickStartItems, QUICK_START_EXTRAS)
@@ -2009,7 +2225,19 @@ if (typeof module !== "undefined") {
     nextLoop: nextLoop,
     doneTimer: doneTimer,
     doneExpired: doneExpired,
-    TIMER_DONE_MS: TIMER_DONE_MS,
+    doneAlerting: doneAlerting,
+    TIMER_ALERT_MS: TIMER_ALERT_MS,
+    clockAt: clockAt,
+    timerArgHint: timerArgHint,
+    replaceWarning: replaceWarning,
+    keepOrder: keepOrder,
+    hiddenActivities: hiddenActivities,
+    parseLocationFile: parseLocationFile,
+    weatherAge: weatherAge,
+    WEATHER_STALE_MS: WEATHER_STALE_MS,
+    parseUtcOffset: parseUtcOffset,
+    wttrLocationQuery: wttrLocationQuery,
+    parseGeocodingResults: parseGeocodingResults,
     normalizePomodoroStats: normalizePomodoroStats,
     countFocusDone: countFocusDone,
     validReminderUnit: validReminderUnit,
