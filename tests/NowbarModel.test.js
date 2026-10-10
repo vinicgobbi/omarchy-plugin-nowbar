@@ -593,7 +593,7 @@ test("updatesActivity sums up by source", () => {
 test("updates prefs, schedule and interval labels", () => {
   const p = M.normalizePrefs({})
   assert.equal(p.modules.updates, true)
-  assert.deepEqual(p.updateSourceList, ["omarchy", "pacman", "aur", "flatpak"])
+  assert.deepEqual(p.updateSourceList, ["omarchy", "pacman", "aur", "flatpak", "plugins", "themes"])
   assert.equal(p.updateInterval, 180)
   assert.equal(p.updateOnStartup, true)
   assert.deepEqual(M.normalizePrefs({ updateSources: "flatpak,nope,pacman" }).updateSourceList, ["pacman", "flatpak"])
@@ -622,6 +622,8 @@ test("mergeUpdates keeps what a failed source listed; updateCommand", () => {
   assert.equal(M.updateCommand([{ source: "flatpak" }]), "flatpak update")
   assert.equal(M.updateCommand([{ source: "aur" }, { source: "flatpak" }]), "omarchy-update && flatpak update")
   assert.equal(M.updateCommand([]), "omarchy-update")
+  assert.equal(M.updateCommand([{ source: "plugins" }]), "omarchy plugin update")
+  assert.equal(M.updateCommand([{ source: "themes" }, { source: "pacman" }, { source: "plugins" }]), "omarchy-update && omarchy plugin update && omarchy theme update")
 })
 
 test("newUpdates counts what a check found that wasn't waiting before", () => {
@@ -796,4 +798,15 @@ test("rain alert: likely soon or in the next slot, not while raining", () => {
   assert.equal(a.subtitle, "75% chance · Here")
   assert.equal(a.signature, "rain:15")
   assert.equal(M.rainActivity(null), null)
+})
+
+test("updates card with plugins and themes", () => {
+  const r = M.parseUpdates("plugins\tNow Bar\ta99077b\t0cbd80c\nthemes\tlunar-quest\t1111111\t2222222\nthemes\tsword-art\t3333333\t4444444\nerror\tplugins\tsome could not be checked")
+  assert.equal(r.items.length, 3)
+  assert.deepEqual(r.errors, ["plugins"])
+  const a = M.updatesActivity(M.normalizeUpdates({ ...r, checkedAt: 0 }), false)
+  assert.equal(a.subtitle, "1 Plugin · 2 Themes")
+  assert.ok(a.details[0].includes("Now Bar  ·  a99077b → 0cbd80c"))
+  assert.ok(a.details.some(d => d.includes("Couldn't check some plugins")))
+  assert.deepEqual(M.parseAvailableSources("plugins\nthemes\n"), ["plugins", "themes"])
 })

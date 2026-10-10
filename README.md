@@ -44,8 +44,9 @@ activities, and click it for the details and controls.
   nothing else is going on, it is what the pill shows. It can replace
   Omarchy's weather widget.
 - **Updates waiting:** Omarchy, official packages and the AUR (plus Flatpak,
-  if you installed it) are checked now and then (every 3 hours by default, any interval you like, and
-  once after the computer starts). When something new is found, a card takes
+  if you installed it, and the plugins and themes you installed from git)
+  are checked now and then (every 3 hours by default, any interval you like,
+  and once after the computer starts). When something new is found, a card takes
   the pill like any new activity (unless something more important is on),
   with an **Update** button.
 - **Media keys:** the Now Bar takes over Omarchy's media controls (play/pause,
@@ -70,7 +71,7 @@ activities, and click it for the details and controls.
 | Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s (headphones: "Use for audio"); a connected device at 15% or less, until charged | Quickshell Bluetooth, `wpctl` |
 | Screenshot toolbar      | A screenshot just saved: thumbnail, Edit / Copy / Open, for 15 s | The screenshots folder                  |
 | Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off); "Rain likely around 15:00" as its own activity | wttr.in, `omarchy-update-available` |
-| Software update         | Updates waiting, by source, with the main packages; Update / Check now | `omarchy-update-available`, `checkupdates`, `yay` (all in Omarchy); `flatpak` if installed |
+| Software update         | Updates waiting, by source, with the main packages, plugins and themes; Update / Check now | `omarchy-update-available`, `checkupdates`, `yay`, `git` (all in Omarchy); `flatpak` if installed |
 | Live Updates (Android)  | Anything a script sends with `nowbar push`, or a command run with `nowbar-run` | IPC                         |
 
 Not ported, since the desktop has no source for them: phone calls,
@@ -93,9 +94,11 @@ No install step needs `sudo`, polkit or the keyring.
 
 > [!NOTE]
 > The **Update** button on the Updates card opens a terminal running
-> `omarchy-update` (and `flatpak update` when Flatpaks are waiting). That
+> `omarchy-update`, then `flatpak update`, `omarchy plugin update` and
+> `omarchy theme update` for whatever of those has updates waiting. Omarchy's
 > updater asks for your password in the terminal, like it does when you run
-> it yourself, and asks before changing anything. Checking for updates never
+> it yourself, and asks before changing anything; the plugin updater shows
+> each plugin's changes and asks before applying them. Checking for updates never
 > needs a password. The popup closes when you click Update, so the terminal
 > gets the keyboard for the password.
 
@@ -375,7 +378,8 @@ options, one tab at a time (Tab / Shift+Tab to switch):
 - **Weather:** °C, °F or automatic, and replacing (or restoring) Omarchy's
   weather widget.
 - **Updates:** which sources are checked (Omarchy, official, AUR, and
-  Flatpak when it is installed; a source whose tool is missing isn't listed),
+  Flatpak, plugins and themes when there are some to check; a source whose
+  tool is missing isn't listed),
   how often (30 min to 1 day, or any number of minutes from 5 to 7 days), and
   whether to check once after the computer starts.
 
@@ -402,11 +406,18 @@ The same options are in the widget's settings. **Reset** restores them all.
   reading older than 10). Turning the "Weather" activity off stops it.
 - **Updates** are checked by `bin/nowbar-updates`, which only reads:
   `checkupdates` syncs a temporary copy of the package databases, never the
-  system's. The interval counts from the last check, kept in `state.json`, so
+  system's, and plugins and themes are compared with their remotes through
+  `git ls-remote`, which writes nothing (plugins the way `omarchy plugin
+  update` does, against `origin`'s HEAD; themes against the branch `git pull`
+  follows). A checkout with commits of its own past the remote isn't counted;
+  one that can't be reached (offline, private, gone) is reported without
+  hiding the rest, and git is never allowed to ask for a password. The interval counts from the last check, kept in `state.json`, so
   restarting the shell doesn't reset it. "Check at startup" runs once per boot,
   about a minute after login. With `inotify-tools`, updating by any means
   (the Update button, a terminal) is noticed in pacman's log and Flatpak's
-  `.changed` stamp, and the card is checked again so it goes away by itself.
+  `.changed` stamp, and the Update button's terminal leaves a mark when it
+  is done (plugins and themes leave no other trace); the card is checked
+  again so it goes away by itself.
   A source that can't be checked (offline, a held lock) keeps what it listed
   before, and the card says so.
 - **Timers, stopwatch, Pomodoro and sleep timer** are kept in

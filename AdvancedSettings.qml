@@ -754,7 +754,7 @@ Column {
     visible: root.tab === "updates"
 
     Intro {
-      text: "Updates waiting show up as a card, which takes the pill when something new is found (like any new activity). Checking only reads: no password asked. The card's Update button opens a terminal with Omarchy's updater (and flatpak's, when installed), which asks for your password there."
+      text: "Updates waiting show up as a card, which takes the pill when something new is found (like any new activity). Checking only reads: no password asked. The card's Update button opens a terminal with Omarchy's updater (plus flatpak, plugins and themes when they have updates), which asks for your password there."
     }
 
     Section { text: "CHECK" }
@@ -769,6 +769,8 @@ Column {
       ListCell { glyph: "\u{f08c7}"; label: "Official"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "pacman"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("pacman") !== -1 }
       ListCell { glyph: "\u{f0487}"; label: "AUR"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "aur"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("aur") !== -1 }
       ListCell { glyph: "\u{f01a7}"; label: "Flatpak"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "flatpak"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("flatpak") !== -1 }
+      ListCell { glyph: "\u{f0431}"; label: "Plugins"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "plugins"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("plugins") !== -1 }
+      ListCell { glyph: "\u{f03d8}"; label: "Themes"; listKey: "updateSources"; list: root.prefs.updateSourceList || []; allowed: Model.UPDATE_SOURCES; itemId: "themes"; active: root.prefs.moduleUpdates === true; visible: root.updateSourcesAvailable.indexOf("themes") !== -1 }
     }
 
     Section { text: "HOW OFTEN" }

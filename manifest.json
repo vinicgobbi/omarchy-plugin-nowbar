@@ -39,7 +39,7 @@
       "moduleScreenshot": true,
       "moduleWeather": true,
       "moduleUpdates": true,
-      "updateSources": "omarchy,pacman,aur,flatpak",
+      "updateSources": "omarchy,pacman,aur,flatpak,plugins,themes",
       "updateInterval": 180,
       "updateOnStartup": true,
       "weatherUnit": "auto",
@@ -155,8 +155,8 @@
         "key": "updateSources",
         "type": "string",
         "label": "Update sources",
-        "description": "Comma separated: omarchy, pacman (official packages), aur (yay) and flatpak. The first three come with Omarchy; flatpak is checked only if installed. Empty: none.",
-        "defaultValue": "omarchy,pacman,aur,flatpak"
+        "description": "Comma separated: omarchy, pacman (official packages), aur (yay), flatpak, plugins and themes. The first three come with Omarchy; flatpak is checked only if installed, plugins and themes only those installed from git. Empty: none.",
+        "defaultValue": "omarchy,pacman,aur,flatpak,plugins,themes"
       },
       {
         "key": "updateInterval",

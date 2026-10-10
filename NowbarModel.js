@@ -1365,10 +1365,17 @@ function recordedActivity(r) {
 // --- updates waiting (bin/nowbar-updates, now and then) ----------------------------
 
 // Omarchy, official packages (checkupdates) and the AUR (yay) come with every
-// Omarchy install; Flatpak only when installed. Only the sources this system
-// can check (`nowbar-updates --available`) are offered or checked.
-var UPDATE_SOURCES = ["omarchy", "pacman", "aur", "flatpak"]
-var UPDATE_SOURCE_LABELS = { omarchy: "Omarchy", pacman: "Official", aur: "AUR", flatpak: "Flatpak" }
+// Omarchy install; Flatpak only when installed; plugins and themes when some
+// came from git. Only the sources this system can check (`nowbar-updates
+// --available`) are offered or checked.
+var UPDATE_SOURCES = ["omarchy", "pacman", "aur", "flatpak", "plugins", "themes"]
+var UPDATE_SOURCE_LABELS = { omarchy: "Omarchy", pacman: "Official", aur: "AUR", flatpak: "Flatpak", plugins: "Plugin", themes: "Theme" }
+
+// "3 Official", "1 Plugin", "2 Themes".
+function sourceCount(src, n) {
+  var label = UPDATE_SOURCE_LABELS[src]
+  return n + " " + label + (n !== 1 && (src === "plugins" || src === "themes") ? "s" : "")
+}
 // Minutes; the Updates tab's presets. Any other value is a custom interval.
 var UPDATE_INTERVALS = [30, 60, 180, 360, 720, 1440]
 var MAX_UPDATES = 2000
@@ -1450,19 +1457,20 @@ function updatesFor(state, sources) {
   }
 }
 
-// What the Update button runs in a terminal: Omarchy's updater for system
-// and AUR packages, flatpak's for flatpaks. Fixed commands, nothing from
-// the package lists goes in.
+// What the Update button runs in a terminal, for what is waiting: Omarchy's
+// updater for system and AUR packages, flatpak's for flatpaks, `omarchy
+// plugin update` for plugins (it shows each one's changes and asks first),
+// `omarchy theme update` for themes. Fixed commands, nothing from the lists
+// goes in; each runs only if the one before it went fine.
 function updateCommand(items) {
-  var system = false
-  var flatpak = false
-  for (var i = 0; i < (items || []).length; i++) {
-    if (items[i].source === "flatpak") flatpak = true
-    else system = true
-  }
+  var has = {}
+  for (var i = 0; i < (items || []).length; i++) has[items[i].source] = true
   var parts = []
-  if (system || !flatpak) parts.push("omarchy-update")
-  if (flatpak) parts.push("flatpak update")
+  if (has.omarchy || has.pacman || has.aur) parts.push("omarchy-update")
+  if (has.flatpak) parts.push("flatpak update")
+  if (has.plugins) parts.push("omarchy plugin update")
+  if (has.themes) parts.push("omarchy theme update")
+  if (parts.length === 0) parts.push("omarchy-update")
   return parts.join(" && ")
 }
 
@@ -1481,6 +1489,9 @@ function intervalLabel(minutes) {
 
 function updateLine(u) {
   if (u.source === "omarchy") return "\u{f06b0}  " + (u.to || "Omarchy update")
+  // Plugins and themes: the commits, short.
+  if (u.source === "plugins" || u.source === "themes")
+    return (u.source === "plugins" ? "\u{f0431}  " : "\u{f03d8}  ") + u.name + (u.from && u.to ? "  ·  " + u.from + " → " + u.to : "")
   var change = u.from && u.to && u.from !== u.to ? u.from + " → " + u.to : (u.to ? u.to + " (new build)" : "")
   return u.name + (change ? "  ·  " + change : "")
 }
@@ -1496,14 +1507,16 @@ function updatesActivity(state, checking) {
   for (var j = 0; j < UPDATE_SOURCES.length; j++) {
     var src = UPDATE_SOURCES[j]
     if (!counts[src]) continue
-    parts.push(src === "omarchy" ? "Omarchy" : counts[src] + " " + UPDATE_SOURCE_LABELS[src])
+    parts.push(src === "omarchy" ? "Omarchy" : sourceCount(src, counts[src]))
   }
   // Omarchy first, then the rest in the order they came.
   var sorted = items.filter(function(u) { return u.source === "omarchy" }).concat(items.filter(function(u) { return u.source !== "omarchy" }))
   var details = sorted.slice(0, 6).map(updateLine)
   if (items.length > 6) details.push("…and " + (items.length - 6) + " more")
   if (state.errors && state.errors.length) {
-    details.push("\u{f0026}  Couldn't check " + state.errors.map(function(e) { return UPDATE_SOURCE_LABELS[e] }).join(", "))
+    details.push("\u{f0026}  Couldn't check " + state.errors.map(function(e) {
+      return e === "plugins" ? "some plugins" : (e === "themes" ? "some themes" : UPDATE_SOURCE_LABELS[e])
+    }).join(", "))
   }
   if (state.checkedAt > 0) {
     var d = new Date(state.checkedAt)

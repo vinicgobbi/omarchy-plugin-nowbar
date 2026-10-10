@@ -1701,9 +1701,9 @@ Item {
   Process {
     id: updatesWatch
     command: ["sh", "-c",
-      "command -v inotifywait >/dev/null 2>&1 || exit 3; set --; "
-      + "for f in /var/log/pacman.log /var/lib/flatpak/.changed \"$HOME/.local/share/flatpak/.changed\"; do [ -e \"$f\" ] && set -- \"$@\" \"$f\"; done; "
-      + "[ $# -gt 0 ] || exit 4; exec setpriv --pdeathsig TERM inotifywait -mq -e modify,attrib,close_write --format x -- \"$@\""]
+      "command -v inotifywait >/dev/null 2>&1 || exit 3; touch \"$1\" 2>/dev/null; m=$1; set --; "
+      + "for f in /var/log/pacman.log /var/lib/flatpak/.changed \"$HOME/.local/share/flatpak/.changed\" \"$m\"; do [ -e \"$f\" ] && set -- \"$@\" \"$f\"; done; "
+      + "[ $# -gt 0 ] || exit 4; exec setpriv --pdeathsig TERM inotifywait -mq -e modify,attrib,close_write --format x -- \"$@\"", "_", root.updatesMarker]
     running: root.modules.updates && root.stateLoaded
     stdout: SplitParser {
       onRead: function(line) { updatesSettle.restart() }
@@ -1723,8 +1723,16 @@ Item {
     onTriggered: if (root.modules.updates && !updatesWatch.running) updatesWatch.running = true
   }
 
+  // Touched when the Update button's terminal is done (however it went), so
+  // the card is checked again right away: plugins, themes and flatpaks leave
+  // no trace in pacman's log.
+  readonly property string updatesMarker: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/vinicgobbi.nowbar.updated"
+
   function runUpdate() {
-    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", Model.updateCommand(shownUpdates.items)])
+    // The wrapper looks at the last status (130: cancelled), so hand back the
+    // update's own after touching the marker.
+    var cmd = Model.updateCommand(shownUpdates.items) + "; s=$?; touch '" + updatesMarker + "'; (exit $s)"
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", cmd])
   }
 
   // --- pushed live updates (IPC) ---------------------------------------------------
