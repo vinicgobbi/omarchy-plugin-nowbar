@@ -488,37 +488,6 @@ Panel {
     }
   }
 
-  // An app's colored icon painted in one color, its light and dark kept as more
-  // or less of it. (Not "<icon>-symbolic": the icon lookup can say one exists and
-  // hand back an empty image, with no way to tell from here.)
-  component AppGlyph: Item {
-    id: glyph
-    property url source: ""
-    property color color: root.fg
-
-    Image {
-      id: glyphImage
-      anchors.fill: parent
-      visible: false
-      source: glyph.source
-      fillMode: Image.PreserveAspectFit
-      asynchronous: true
-      sourceSize.width: Math.ceil(glyph.width * 2)
-      sourceSize.height: Math.ceil(glyph.height * 2)
-    }
-
-    MultiEffect {
-      anchors.fill: parent
-      source: glyphImage
-      autoPaddingEnabled: false
-      // Light body, details still there: more brightness alone blows them out.
-      brightness: 0.25
-      contrast: 0.8
-      colorization: 1
-      colorizationColor: glyph.color
-    }
-  }
-
   // Text on an accent-filled circle: dark on light colors, light on dark.
   function onAccent(c) {
     return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 0.6 ? Qt.rgba(0.07, 0.07, 0.08, 1) : Qt.rgba(1, 1, 1, 1)
@@ -879,35 +848,6 @@ Panel {
     }
   }
 
-  // Three bars bouncing at their own pace: something is playing.
-  component Equalizer: Row {
-    id: eq
-    property color color: root.fg
-    property bool running: false
-    spacing: Style.space(2)
-
-    Repeater {
-      model: [{ rest: 0.55, period: 460 }, { rest: 1.0, period: 340 }, { rest: 0.4, period: 560 }]
-
-      Rectangle {
-        required property var modelData
-        property real level: modelData.rest
-        anchors.bottom: parent.bottom
-        width: Math.max(2, Style.space(3))
-        height: Math.max(width, eq.height * level)
-        radius: width / 2
-        color: eq.color
-
-        SequentialAnimation on level {
-          running: eq.running
-          loops: Animation.Infinite
-          NumberAnimation { to: 1.0; duration: modelData.period; easing.type: Easing.InOutSine }
-          NumberAnimation { to: 0.25; duration: modelData.period * 1.2; easing.type: Easing.InOutSine }
-        }
-      }
-    }
-  }
-
   // One cover image: sharp, or blurred (cut to `mask`) for the backdrop.
   component CoverLayer: Item {
     id: cl
@@ -1174,16 +1114,14 @@ Panel {
       anchors.centerIn: parent
       spacing: Style.space(6)
 
-      // Media: the player's app in one color (three little bars dancing, or
-      // the note when paused, if the app isn't found); anything else: its icon.
+      // Media: the player's logo, or the note for a player without one; anything
+      // else: its icon.
       Item {
         id: iconSlot
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(16)
         height: pillIcon.implicitHeight
-        readonly property bool media: pill.hasActivity && root.pillItem.module === "media"
-        readonly property bool appShown: media && root.mediaApp !== null
-        readonly property bool playing: media && !appShown && root.pillItem.playing === true
+        readonly property string logo: pill.hasActivity && root.pillItem.module === "media" ? root.pillItem.appGlyph : ""
         // Timer, Pomodoro, sleep timer: a little ring that fills up.
         readonly property bool countdown: pill.hasActivity && root.pillItem.module === "timer" && root.pillItem.progress >= 0
         readonly property bool recordingNow: pill.hasActivity && root.pillItem.id === "recording"
@@ -1191,26 +1129,16 @@ Panel {
         Text {
           id: pillIcon
           anchors.fill: parent
-          visible: !parent.appShown && !parent.playing && !parent.countdown && !parent.recordingNow
+          visible: !parent.countdown && !parent.recordingNow
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
           textFormat: Text.PlainText
-          text: pill.hasActivity ? root.pillItem.icon : "\u{f0996}"
+          text: parent.logo !== "" ? parent.logo : (pill.hasActivity ? root.pillItem.icon : "\u{f0996}")
           color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : (root.pillCharging ? root.chargeGreen : root.pillFg)
           // Paused media: the note, dimmed.
           opacity: !pill.hasActivity || root.pillItem.module === "media" && !root.pillItem.playing ? 0.55 : 1
           font.family: root.family
           font.pixelSize: Style.font.body
-        }
-
-        AppGlyph {
-          anchors.centerIn: parent
-          visible: parent.appShown
-          width: Style.space(15)
-          height: width
-          source: root.mediaApp ? root.mediaApp.icon : ""
-          color: root.pillFg
-          opacity: parent.media && root.pillItem.playing ? 1 : 0.55
         }
 
         Ring {
@@ -1239,14 +1167,6 @@ Panel {
             NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
             NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
           }
-        }
-
-        Equalizer {
-          anchors.centerIn: parent
-          visible: parent.playing
-          height: Style.space(11)
-          color: root.pillFillColor !== "" ? root.pillFg : root.accentFor(root.pillItem)
-          running: parent.playing && root.motion
         }
       }
 

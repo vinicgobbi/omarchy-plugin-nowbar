@@ -916,6 +916,32 @@ function mediaId(key) {
   return "media:" + String(key || "player").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80)
 }
 
+// The player's logo in the icon font: sharp at any size and in one color, like
+// the bar's other icons. "" for a player not listed.
+var PLAYER_GLYPHS = [
+  [/spotify/, "\uf1bc"],
+  [/firefox/, "\u{f0239}"],
+  [/chromium/, "\ue743"],
+  [/chrome/, "\uf268"],
+  [/microsoft[- ]edge|msedge/, "\u{f01e9}"],
+  [/\bopera\b/, "\uf26a"],
+  [/\bvlc\b/, "\u{f057c}"],
+  [/youtube|freetube/, "\u{f05c3}"],
+  [/discord|vesktop/, "\u{f066f}"],
+  [/telegram/, "\uf2c6"],
+  [/soundcloud/, "\uf1be"],
+  [/twitch/, "\uf1e8"],
+  [/\bkodi\b/, "\u{f0314}"]
+]
+
+function playerGlyph(entry, name) {
+  var text = (String(entry || "") + " " + String(name || "")).toLowerCase()
+  for (var i = 0; i < PLAYER_GLYPHS.length; i++) {
+    if (PLAYER_GLYPHS[i][0].test(text)) return PLAYER_GLYPHS[i][1]
+  }
+  return ""
+}
+
 function mediaActivity(m) {
   if (!m || !(m.title || m.artist)) return null
   var title = clean(m.title || m.player || "Media")
@@ -966,6 +992,7 @@ function mediaActivity(m) {
     artist: artist,
     playerName: player,
     desktopEntry: clean(m.desktopEntry, 120),
+    appGlyph: playerGlyph(m.desktopEntry, m.player),
     progress: len > 0 && len < 1e9 ? Math.max(0, Math.min(1, pos / len)) : -1,
     // The times are shown on both sides of the bar instead.
     details: album && album !== title ? [album] : [],
@@ -2547,6 +2574,7 @@ if (typeof module !== "undefined") {
     parseIdList: parseIdList,
     toggleIdList: toggleIdList,
     rainNote: rainNote,
+    playerGlyph: playerGlyph,
     SETTINGS_PAGES: SETTINGS_PAGES,
     settingsPage: settingsPage,
     settingsSummary: settingsSummary,

@@ -32,7 +32,7 @@ activities, and click it for the details and controls.
   bar while it plays and sink when it pauses; below it are the elapsed and
   remaining time, shuffle, previous, play/pause, next, repeat and the volume,
   plus 10 s back / forward on long podcasts and videos. A new track slides in.
-  The pill shows just the song, with the app's icon in one color.
+  The pill shows just the song, with the player's logo.
 - **Charging glows blue to green:** while plugged in, the pill fills up to
   the charge with a blue-to-green gradient and a wave of light running
   through it, and the popup takes the same colors, at any percentage.

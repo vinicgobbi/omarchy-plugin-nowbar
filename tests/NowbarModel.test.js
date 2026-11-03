@@ -884,6 +884,22 @@ test("media card fields, and the pill with the song alone", () => {
   assert.equal(M.mediaActivity({ key: "p", title: "Song" }).desktopEntry, "")
 })
 
+test("playerGlyph: the logo from the desktop entry or the player's name", () => {
+  const spotify = M.playerGlyph("spotify", "")
+  assert.notEqual(spotify, "")
+  assert.equal(M.playerGlyph("com.spotify.Client", "Spotify"), spotify)
+  assert.equal(M.playerGlyph("", "Spotify"), spotify)
+  assert.notEqual(M.playerGlyph("firefox", "Mozilla Firefox"), spotify)
+  assert.notEqual(M.playerGlyph("chromium", ""), M.playerGlyph("google-chrome", ""))
+  assert.equal(M.playerGlyph("mpv", "mpv"), "")
+  assert.equal(M.playerGlyph("", ""), "")
+  assert.equal(M.playerGlyph(null, undefined), "")
+  // Not just anything with those letters in it.
+  assert.equal(M.playerGlyph("operator", "knowledge"), "")
+  assert.equal(M.mediaActivity({ key: "p", title: "S", desktopEntry: "spotify" }).appGlyph, spotify)
+  assert.equal(M.mediaActivity({ key: "p", title: "S" }).appGlyph, "")
+})
+
 test("canDismiss: never the weather, nor the camera and microphone", () => {
   assert.equal(M.canDismiss({ module: "media" }), true)
   assert.equal(M.canDismiss({ module: "privacy" }), false)
