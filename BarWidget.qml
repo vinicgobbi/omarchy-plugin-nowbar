@@ -510,7 +510,9 @@ Panel {
       anchors.fill: parent
       source: glyphImage
       autoPaddingEnabled: false
-      brightness: 0.4
+      // Light body, details still there: more brightness alone blows them out.
+      brightness: 0.25
+      contrast: 0.8
       colorization: 1
       colorizationColor: glyph.color
     }
