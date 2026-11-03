@@ -911,6 +911,32 @@ test("preferPlaying: a paused player gives way to one playing", () => {
   assert.equal(M.preferPlaying([], "", true, false), "")
 })
 
+test("wheelStep: one step per notch or per swipe", () => {
+  const run = events => {
+    let state = null
+    const steps = []
+    for (const [delta, at] of events) {
+      const r = M.wheelStep(state, delta, at)
+      state = r.state
+      if (r.step) steps.push(r.step)
+    }
+    return steps
+  }
+  // A mouse wheel: every notch counts, however quick, up is back.
+  assert.deepEqual(run([[-120, 1000], [-120, 1040], [120, 1080]]), [1, 1, -1])
+  // A long touchpad swipe with inertia is one step.
+  const swipe = []
+  for (let i = 0; i < 100; i++) swipe.push([-30, 1000 + i * 16])
+  assert.deepEqual(run(swipe), [1])
+  // Stopped and swiped again: another step.
+  assert.deepEqual(run([...swipe, [-60, 3000], [-60, 3016]]), [1, 1])
+  // Turning around counts at once.
+  assert.deepEqual(run([[-60, 1000], [-60, 1016], [60, 1032], [60, 1048]]), [1, -1])
+  // Bits left from long ago don't add up.
+  assert.deepEqual(run([[-90, 1000], [-90, 2000]]), [])
+  assert.deepEqual(run([[0, 1000]]), [])
+})
+
 test("updates card with plugins and themes", () => {
   const r = M.parseUpdates("plugins\tNow Bar\ta99077b\t0cbd80c\nthemes\tlunar-quest\t1111111\t2222222\nthemes\tsword-art\t3333333\t4444444\nerror\tplugins\tsome could not be checked")
   assert.equal(r.items.length, 3)

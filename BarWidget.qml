@@ -540,15 +540,14 @@ Panel {
     return Color.accent
   }
 
-  // A notch of a mouse wheel is 120; touchpads send many small deltas, so
-  // they are added up until they make one notch.
-  property real wheelAccum: 0
+  // One step per notch of a mouse wheel or per swipe of a touchpad.
+  property var wheelState: null
   function wheelStep(delta) {
     if (!service) return
-    wheelAccum += delta
-    if (Math.abs(wheelAccum) < 120) return
-    service.step(wheelAccum > 0 ? -1 : 1)
-    wheelAccum = 0
+    var r = Model.wheelStep(wheelState, delta, Date.now())
+    wheelState = r.state
+    if (r.step === 0) return
+    service.step(r.step)
     lastWheelAt = Date.now()
   }
   // A switch made by scrolling doesn't get the "something new" bump.

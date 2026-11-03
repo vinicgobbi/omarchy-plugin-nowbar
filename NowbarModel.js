@@ -2092,6 +2092,40 @@ function preferPlaying(list, focusId, autoFocus, holding) {
   return focusId
 }
 
+// Scrolling over the pill: one step per notch of a mouse wheel (a whole notch
+// in one event) or per swipe of a touchpad. A swipe's small deltas add up to
+// a notch, then the rest of it (and its inertia) is ignored until it stops or
+// turns around. { state, step }: step is what to move by (-1, 0, 1).
+var WHEEL_NOTCH = 120
+var WHEEL_IDLE_MS = 300
+var WHEEL_QUIET_MS = 250
+
+function wheelStep(state, delta, now) {
+  var s = state || { acc: 0, dir: 0, last: 0, quietUntil: 0 }
+  var d = num(delta, 0)
+  if (d === 0) return { state: s, step: 0 }
+  var dir = d > 0 ? 1 : -1
+  var flipped = s.dir !== 0 && s.dir !== dir
+  var acc = flipped || now - s.last > WHEEL_IDLE_MS ? 0 : s.acc
+  var quietUntil = flipped ? 0 : s.quietUntil
+  var step = 0
+  if (Math.abs(d) >= WHEEL_NOTCH) {
+    acc = 0
+    step = -dir
+  } else if (now < quietUntil) {
+    acc = 0
+    quietUntil = now + WHEEL_QUIET_MS
+  } else {
+    acc += d
+    if (Math.abs(acc) >= WHEEL_NOTCH) {
+      acc = 0
+      step = -dir
+      quietUntil = now + WHEEL_QUIET_MS
+    }
+  }
+  return { state: { acc: acc, dir: dir, last: now, quietUntil: quietUntil }, step: step }
+}
+
 // --- bar widget preferences -----------------------------------------------------------
 
 var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
@@ -2357,5 +2391,6 @@ if (typeof module !== "undefined") {
     canDismiss: canDismiss,
     rememberKnown: rememberKnown,
     preferPlaying: preferPlaying,
+    wheelStep: wheelStep,
   }
 }
