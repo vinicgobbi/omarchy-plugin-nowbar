@@ -166,7 +166,7 @@ media keys.
 | Left click    | Open/close the popup                                            |
 | Scroll        | Next / previous activity                                        |
 | Middle click  | Main action of the activity (pause the timer, play/pause, stop...) |
-| Right click   | Hide the activity until it changes (a new track, the timer paused...); **Show hidden** in the popup brings it back |
+| Right click   | Hide the activity until it changes (a new track, the timer paused...); **Show hidden** in the popup brings it back. The camera/mic card can't be hidden |
 
 ### Popup keys
 
@@ -177,7 +177,7 @@ media keys.
 | Enter / Space    | Main action                                      |
 | ↑ / ↓ (k / j)    | Media card: volume up / down                     |
 | [ / ]            | Media card: 10 s back / forward                  |
-| x                | Hide the activity until it changes               |
+| x                | Hide the activity until it changes (not the camera/mic card) |
 | u                | Show the hidden activities again                 |
 | 1 – 6            | Start that Quick start timer                     |
 | s                | Start the stopwatch                              |
@@ -388,7 +388,7 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `focus <id or module>`    | Focus an activity: `timer`, `media`, `privacy`, `build`...      |
 | `primary`                 | Main action of the focused activity                             |
 | `act <activity> <action>` | Any action, e.g. `act timer cancel`, `act media next` (`media` is the focused player) |
-| `dismiss`                 | Hide the focused activity until it changes (not the camera/mic card: only a click hides it) |
+| `dismiss`                 | Hide the focused activity until it changes (not the camera/mic card, which nothing hides) |
 | `unhide`                  | Show again everything hidden by hand                            |
 | `timer <duration>`        | Start a timer: `90` (seconds), `25m`, `1h30m`, or until `14:30` |
 | `stopwatch`               | Start the stopwatch                                             |

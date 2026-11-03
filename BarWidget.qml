@@ -1922,7 +1922,7 @@ Panel {
 
                 // Pushed activities already have Dismiss as their action.
                 Button {
-                  visible: root.focused !== null && root.focused.module !== "push" && !root.focused.ambient
+                  visible: Model.canDismiss(root.focused) && root.focused.module !== "push"
                   iconText: "\u{f0209}"
                   foreground: root.popupFg
                   tooltipText: "Hide until it changes (x / right click)"

@@ -871,6 +871,13 @@ test("rain never holds the pill against music", () => {
   assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: weather.priority }, autoFocus: true, manualUntil: 0, now: 1 }), media.id)
 })
 
+test("canDismiss: never the weather, nor the camera and microphone", () => {
+  assert.equal(M.canDismiss({ module: "media" }), true)
+  assert.equal(M.canDismiss({ module: "privacy" }), false)
+  assert.equal(M.canDismiss({ module: "weather", ambient: true }), false)
+  assert.equal(M.canDismiss(null), false)
+})
+
 test("rememberKnown: a newcomer during a hold keeps its turn", () => {
   const list = [{ id: "new", priority: 60 }, { id: "cur", priority: 65 }]
   const held = M.rememberKnown(list, { cur: 65 }, "cur", true)

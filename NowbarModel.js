@@ -2050,6 +2050,13 @@ function resolveFocus(s) {
   return current === -1 ? list[0].id : s.focusId
 }
 
+// Whether an activity can be hidden by hand. The weather is ambient, and the
+// camera/microphone card only goes away by its own buttons (mute) or when the
+// app lets go: a privacy warning isn't for a stray key, click or script to hide.
+function canDismiss(a) {
+  return !!a && !a.ambient && a.module !== "privacy"
+}
+
 // What the next focus update compares against to spot newcomers, after
 // resolveFocus(). While `held` (just after a switch by hand, or with the popup
 // open) one that couldn't take the pill stays a newcomer, so it takes the pill
@@ -2347,6 +2354,7 @@ if (typeof module !== "undefined") {
     parseIdList: parseIdList,
     toggleIdList: toggleIdList,
     rainNote: rainNote,
+    canDismiss: canDismiss,
     rememberKnown: rememberKnown,
     preferPlaying: preferPlaying,
   }

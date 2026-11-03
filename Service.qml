@@ -2155,7 +2155,7 @@ Item {
   function dismiss(activityId) {
     var a = null
     for (var i = 0; i < activities.length; i++) if (activities[i].id === activityId) a = activities[i]
-    if (!a || a.ambient) return false
+    if (!Model.canDismiss(a)) return false
     if (a.module === "push") return removePush(a.id.slice(5))
     var next = {}
     for (var k in dismissed) next[k] = dismissed[k]
@@ -2378,10 +2378,10 @@ Item {
     function focus(id: string): string { return root.focusOn(id) ? "ok" : "not found" }
     // Middle-click equivalent on the focused activity.
     function primary(): string { return root.focused && root.primary(root.focused.id) ? "ok" : "none" }
-    // The camera/microphone card is a privacy warning: only a click hides it,
-    // so a process using them can't make it go away through IPC.
+    // The camera/microphone card is a privacy warning: nothing hides it, so a
+    // process using them can't make it go away through IPC.
     function dismiss(): string {
-      if (root.focused && root.focused.module === "privacy") return "refused: hide it from the Now Bar itself"
+      if (root.focused && root.focused.module === "privacy") return "refused: the camera and microphone card can't be hidden"
       return root.focused && root.dismiss(root.focused.id) ? "ok" : "none"
     }
     // Any action of any activity, e.g. `act timer cancel`, `act media next`.
