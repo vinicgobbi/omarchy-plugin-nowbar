@@ -2060,6 +2060,41 @@ function resolveFocus(s) {
   return current === -1 ? list[0].id : s.focusId
 }
 
+// What the next focus update compares against to spot newcomers, after
+// resolveFocus(). While `held` (just after a switch by hand, or with the popup
+// open) one that couldn't take the pill stays a newcomer, so it takes the pill
+// once the hold is over instead of counting as seen and never showing up.
+// { known, pending }: pending says something is waiting.
+function rememberKnown(list, knownIds, focusId, held) {
+  var known = {}
+  var pending = false
+  var before = knownIds || {}
+  for (var i = 0; i < (list || []).length; i++) {
+    var a = list[i]
+    var was = before[a.id]
+    if (held && a.id !== focusId && (was === undefined || a.priority < was)) {
+      pending = true
+      if (was !== undefined) known[a.id] = was
+    } else {
+      known[a.id] = a.priority
+    }
+  }
+  return { known: known, pending: pending }
+}
+
+// A paused player doesn't keep the pill while another one plays (unless it was
+// just picked by hand, or the popup is open: `holding`). Returns the focus.
+function preferPlaying(list, focusId, autoFocus, holding) {
+  if (!autoFocus || holding) return focusId
+  var items = list || []
+  var f = items[indexOfId(items, focusId)]
+  if (!f || f.module !== "media" || f.playing) return focusId
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].module === "media" && items[i].playing) return items[i].id
+  }
+  return focusId
+}
+
 // --- bar widget preferences -----------------------------------------------------------
 
 var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
@@ -2321,6 +2356,8 @@ if (typeof module !== "undefined") {
     QUICK_TOGGLES: QUICK_TOGGLES,
     QUICK_START_EXTRAS: QUICK_START_EXTRAS,
     parseIdList: parseIdList,
-    toggleIdList: toggleIdList
+    toggleIdList: toggleIdList,
+    rememberKnown: rememberKnown,
+    preferPlaying: preferPlaying,
   }
 }

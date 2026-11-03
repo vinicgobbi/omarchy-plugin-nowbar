@@ -853,6 +853,39 @@ test("rain alert: likely soon or in the next slot, not while raining", () => {
   assert.equal(M.rainActivity(null), null)
 })
 
+test("rememberKnown: a newcomer during a hold keeps its turn", () => {
+  const list = [{ id: "new", priority: 60 }, { id: "cur", priority: 65 }]
+  const held = M.rememberKnown(list, { cur: 65 }, "cur", true)
+  assert.deepEqual(held.known, { cur: 65 })
+  assert.equal(held.pending, true)
+  // Hold over: resolveFocus sees it as new, and it takes the pill.
+  assert.equal(M.resolveFocus({ list, focusId: "cur", knownIds: held.known, autoFocus: true, manualUntil: 0, now: 1 }), "new")
+  const free = M.rememberKnown(list, held.known, "new", false)
+  assert.deepEqual(free.known, { new: 60, cur: 65 })
+  assert.equal(free.pending, false)
+  // More important than it was (paused player playing again) stays pending,
+  // remembered at what it was.
+  const rose = M.rememberKnown([{ id: "a", priority: 60 }, { id: "cur", priority: 50 }], { a: 80, cur: 50 }, "cur", true)
+  assert.deepEqual(rose.known, { a: 80, cur: 50 })
+  assert.equal(rose.pending, true)
+  // Already known, nothing changed: nothing waits.
+  assert.equal(M.rememberKnown(list, { new: 60, cur: 65 }, "cur", true).pending, false)
+  // The one with the focus is seen.
+  assert.equal(M.rememberKnown(list, {}, "new", true).known.new, 60)
+})
+
+test("preferPlaying: a paused player gives way to one playing", () => {
+  const paused = { id: "m1", module: "media", playing: false }
+  const playing = { id: "m2", module: "media", playing: true }
+  const timer = { id: "timer", module: "timer" }
+  assert.equal(M.preferPlaying([timer, paused, playing], "m1", true, false), "m2")
+  assert.equal(M.preferPlaying([paused, playing], "m1", true, true), "m1")
+  assert.equal(M.preferPlaying([paused, playing], "m1", false, false), "m1")
+  assert.equal(M.preferPlaying([timer, playing], "timer", true, false), "timer")
+  assert.equal(M.preferPlaying([paused], "m1", true, false), "m1")
+  assert.equal(M.preferPlaying([], "", true, false), "")
+})
+
 test("updates card with plugins and themes", () => {
   const r = M.parseUpdates("plugins\tNow Bar\ta99077b\t0cbd80c\nthemes\tlunar-quest\t1111111\t2222222\nthemes\tsword-art\t3333333\t4444444\nerror\tplugins\tsome could not be checked")
   assert.equal(r.items.length, 3)

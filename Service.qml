@@ -2043,21 +2043,39 @@ Item {
     if (next !== dismissed) dismissed = next
   }
 
-  onActivitiesChanged: {
-    var ids = {}
-    for (var i = 0; i < activities.length; i++) ids[activities[i].id] = activities[i].priority
+  onActivitiesChanged: updateFocus()
+
+  function updateFocus() {
+    var t = Date.now()
+    // Just after a switch by hand, or with a popup open (see holdOrder).
+    var holding = t < manualUntil || heldOrder.length > 0
     var next = Model.resolveFocus({
       list: activities,
       focusId: focusId,
       knownIds: knownIds,
       autoFocus: prefs.autoFocus,
-      // A popup is open (see holdOrder): only alerts move the card.
+      // A popup is open: only alerts move the card.
       onlyAlerts: heldOrder.length > 0,
       manualUntil: manualUntil,
       now: Date.now()
     })
-    knownIds = ids
+    next = Model.preferPlaying(activities, next, prefs.autoFocus, holding)
+    var seen = Model.rememberKnown(activities, knownIds, next, prefs.autoFocus && holding)
+    knownIds = seen.known
     if (next !== focusId) focusId = next
+    // Nothing else may update once the switch by hand wears off (everything
+    // paused: no ticking), so look again then. Closing the popup updates by itself.
+    if (seen.pending && t < manualUntil) {
+      pendingFocus.interval = manualUntil - t + 50
+      pendingFocus.restart()
+    } else {
+      pendingFocus.stop()
+    }
+  }
+
+  Timer {
+    id: pendingFocus
+    onTriggered: root.updateFocus()
   }
 
   // Gives `id` the focus as if it had just shown up: only with "Focus new
