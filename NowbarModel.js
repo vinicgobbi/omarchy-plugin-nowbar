@@ -2140,6 +2140,41 @@ function mediaTiming(memo, track, length, position, playing, now) {
   return { length: memo.length, position: pos, memo: { track: track, length: memo.length, position: pos, at: now } }
 }
 
+// Covers downloaded this session, oldest first: going back to a recent track
+// shows its cover at once. Only remote ones (their URLs name one image): a
+// player may reuse a local file for every track, and reading one is cheap.
+var ART_CACHE_SIZE = 6
+
+// { entry, list }: the entry for `url` moved to the end of the list, if there.
+function artCacheTouch(list, url) {
+  var items = list || []
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].url !== url) continue
+    var entry = items[i]
+    return { entry: entry, list: items.slice(0, i).concat(items.slice(i + 1), [entry]) }
+  }
+  return { entry: null, list: items }
+}
+
+// { list, evicted }: `entry` added; the oldest ones over the limit are dropped,
+// never the one on screen (`shownPath`). evicted: the files to delete.
+function artCachePut(list, entry, shownPath, keep) {
+  var limit = keep === undefined ? ART_CACHE_SIZE : keep
+  var evicted = []
+  var out = []
+  ;(list || []).forEach(function(x) {
+    if (x.url !== entry.url) out.push(x)
+    else if (x.path !== entry.path && x.path !== shownPath) evicted.push(x.path)
+  })
+  out.push(entry)
+  for (var i = 0; i < out.length && out.length > limit;) {
+    if (out[i].path === shownPath || out[i] === entry) { i++; continue }
+    evicted.push(out[i].path)
+    out.splice(i, 1)
+  }
+  return { list: out, evicted: evicted }
+}
+
 // --- bar widget preferences -----------------------------------------------------------
 
 var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
@@ -2407,5 +2442,8 @@ if (typeof module !== "undefined") {
     preferPlaying: preferPlaying,
     wheelStep: wheelStep,
     mediaTiming: mediaTiming,
+    artCacheTouch: artCacheTouch,
+    artCachePut: artCachePut,
+    ART_CACHE_SIZE: ART_CACHE_SIZE,
   }
 }

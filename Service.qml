@@ -435,6 +435,16 @@ Item {
   // return`). A track change while a fetch is in flight replaces this
   // instead of starting a second one; only the latest request matters.
   property var _artPending: null
+  // Downloaded covers kept for this session (Model.artCachePut). Plain data:
+  // only the functions below read it.
+  property var _artCache: []
+
+  // Deletes a cover file unless the cache still holds it.
+  function _dropArtFile(path) {
+    if (!path) return
+    for (var i = 0; i < _artCache.length; i++) if (_artCache[i].path === path) return
+    artCleanupProcess.remove(path)
+  }
 
   function _clearArt() {
     // Bump the generation too, not just the visible state: otherwise a
@@ -446,14 +456,17 @@ Item {
     root.safeArtPath = ""
     root.artAccent = ""
     root.artBase = ""
+    artRetry.stop()
     var stale = root._artCurrentFile
     root._artCurrentFile = ""
-    if (stale) artCleanupProcess.remove(stale)
+    root._dropArtFile(stale)
   }
 
   function _startArtFetch(request) {
     artFetchProcess.generation = request.generation
     artFetchProcess.targetPath = request.target
+    artFetchProcess.sourceUrl = request.safe
+    artFetchProcess.isLocal = request.isLocal
     artFetchProcess.command = ["bash", "-c", root._artFetchScript, "_",
       request.safe, request.target, request.isLocal ? "1" : "0", String(root.artMaxBytes), String(root.artMaxDimension)]
     artFetchProcess.running = true
@@ -464,8 +477,28 @@ Item {
     if (safe === "") { root._clearArt(); return }
 
     root._artGeneration += 1
+    artRetry.stop()
     var isLocal = /^file:\/\/\//i.test(safe)
     var generation = root._artGeneration
+
+    // A recent track's cover is still here: at once, no download.
+    var hit = Model.artCacheTouch(root._artCache, safe)
+    if (hit.entry) {
+      root._artCache = hit.list
+      root._artPending = null
+      var previousFile = root._artCurrentFile
+      root._artCurrentFile = hit.entry.path
+      root.safeArtPath = Util.fileUrl(hit.entry.path)
+      if (hit.entry.accent !== undefined) {
+        root.artAccent = hit.entry.accent
+        root.artBase = hit.entry.base
+      } else {
+        root.extractAccent(hit.entry.path, generation)
+      }
+      if (previousFile !== hit.entry.path) root._dropArtFile(previousFile)
+      return
+    }
+
     var request = {
       safe: safe,
       generation: generation,
@@ -478,6 +511,13 @@ Item {
       return
     }
     root._startArtFetch(request)
+  }
+
+  // A cover that failed is tried again after a while, not only on the next track.
+  Timer {
+    id: artRetry
+    interval: 60000
+    onTriggered: root.refreshArt()
   }
 
   readonly property string artUrl: mediaPlayer && mediaPlayer.trackArtUrl ? mediaPlayer.trackArtUrl : ""
@@ -521,6 +561,7 @@ Item {
   function extractAccent(path, generation) {
     if (accentProcess.running) { accentProcess.pending = { path: path, generation: generation }; return }
     accentProcess.generation = generation
+    accentProcess.path = path
     // The file was checked when fetched; the decoder is still named from its
     // first bytes (as the fetch does) rather than left to ImageMagick's guess.
     accentProcess.command = ["sh", "-c",
@@ -534,6 +575,7 @@ Item {
   Process {
     id: accentProcess
     property int generation: 0
+    property string path: ""
     property var pending: null
     stdout: StdioCollector {
       waitForEnd: true
@@ -543,6 +585,11 @@ Item {
         root.artAccent = Model.accentFromHistogram(text)
         // A gray cover keeps the theme: no accent means no tint either.
         root.artBase = root.artAccent !== "" ? Model.baseFromHistogram(text) : ""
+        for (var i = 0; i < root._artCache.length; i++) {
+          if (root._artCache[i].path !== accentProcess.path) continue
+          root._artCache[i].accent = root.artAccent
+          root._artCache[i].base = root.artBase
+        }
       }
     }
     onExited: {
@@ -556,6 +603,8 @@ Item {
     id: artFetchProcess
     property int generation: 0
     property string targetPath: ""
+    property string sourceUrl: ""
+    property bool isLocal: false
     onExited: function(exitCode) {
       // A newer track may have started a fresh fetch while this one was in
       // flight; only publish (or clean up in place of) a result that's
@@ -566,11 +615,22 @@ Item {
           root._artCurrentFile = targetPath
           root.safeArtPath = Util.fileUrl(targetPath)
           root.extractAccent(targetPath, generation)
-          if (previous && previous !== targetPath) artCleanupProcess.remove(previous)
+          // Remote covers stay for a while (see Model.artCachePut).
+          if (!isLocal) {
+            var put = Model.artCachePut(root._artCache, { url: sourceUrl, path: targetPath }, targetPath)
+            root._artCache = put.list
+            for (var i = 0; i < put.evicted.length; i++) artCleanupProcess.remove(put.evicted[i])
+          }
+          if (previous !== targetPath) root._dropArtFile(previous)
         } else {
           root.safeArtPath = ""
           root.artAccent = ""
           root.artBase = ""
+          var failed = root._artCurrentFile
+          root._artCurrentFile = ""
+          root._dropArtFile(failed)
+          // The network was down, the file wasn't there yet...: later.
+          artRetry.restart()
         }
       } else if (exitCode === 0) {
         artCleanupProcess.remove(targetPath)
@@ -2069,7 +2129,7 @@ Item {
       // A popup is open: only alerts move the card.
       onlyAlerts: heldOrder.length > 0,
       manualUntil: manualUntil,
-      now: Date.now()
+      now: t
     })
     next = Model.preferPlaying(activities, next, prefs.autoFocus, holding)
     var seen = Model.rememberKnown(activities, knownIds, next, prefs.autoFocus && holding)

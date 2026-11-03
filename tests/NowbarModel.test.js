@@ -957,6 +957,28 @@ test("mediaTiming: Firefox after a seek keeps the bar", () => {
   assert.equal(other.memo, null)
 })
 
+test("art cache: least recently used goes first, never the one on screen", () => {
+  const e = n => ({ url: "u" + n, path: "/c/" + n })
+  let r = M.artCachePut([], e(1), "", 2)
+  r = M.artCachePut(r.list, e(2), "", 2)
+  assert.deepEqual(r.evicted, [])
+  const touched = M.artCacheTouch(r.list, "u1")
+  assert.equal(touched.entry.path, "/c/1")
+  assert.deepEqual(touched.list.map(x => x.url), ["u2", "u1"])
+  r = M.artCachePut(touched.list, e(3), "", 2)
+  assert.deepEqual(r.evicted, ["/c/2"])
+  assert.deepEqual(r.list.map(x => x.url), ["u1", "u3"])
+  // The oldest is on screen: the next one goes instead.
+  r = M.artCachePut(r.list, e(4), "/c/1", 2)
+  assert.deepEqual(r.evicted, ["/c/3"])
+  assert.deepEqual(r.list.map(x => x.url), ["u1", "u4"])
+  assert.equal(M.artCacheTouch(r.list, "nope").entry, null)
+  // The same url again replaces it, and its old file goes.
+  r = M.artCachePut(r.list, { url: "u4", path: "/c/4b" }, "", 2)
+  assert.deepEqual(r.evicted, ["/c/4"])
+  assert.deepEqual(r.list.map(x => x.path), ["/c/1", "/c/4b"])
+})
+
 test("updates card with plugins and themes", () => {
   const r = M.parseUpdates("plugins\tNow Bar\ta99077b\t0cbd80c\nthemes\tlunar-quest\t1111111\t2222222\nthemes\tsword-art\t3333333\t4444444\nerror\tplugins\tsome could not be checked")
   assert.equal(r.items.length, 3)
