@@ -1,3 +1,9 @@
+## v0.7.1 (2026-11-03)
+
+### Fix
+
+- **seguranca**: capas e miniaturas em cache ficam privadas
+
 ## v0.7.0 (2026-11-03)
 
 ### BREAKING CHANGE
