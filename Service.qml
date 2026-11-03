@@ -284,12 +284,23 @@ Item {
     return list.concat(paused.slice(0, maxPausedCards))
   }
 
+  // The last length and position of each player's track (Model.mediaTiming).
+  // Changed in place, never reassigned: mediaInfos reads and writes it, and
+  // mustn't depend on itself.
+  readonly property var _mediaMemo: ({ players: {} })
+
   readonly property var mediaInfos: {
     // Read `now` so the position (which MPRIS doesn't push) refreshes each tick.
     var _tick = root.now
-    return mediaPlayers.map(function(p) {
+    var at = Date.now()
+    var memo = {}
+    var infos = mediaPlayers.map(function(p) {
+      var key = playerKey(p)
+      var timing = Model.mediaTiming(_mediaMemo.players[key], [p.trackTitle, p.trackArtist, p.trackAlbum].join("\n"),
+        p.lengthSupported ? p.length : 0, p.positionSupported ? p.position : 0, !!p.isPlaying, at)
+      if (timing.memo) memo[key] = timing.memo
       return {
-        key: playerKey(p),
+        key: key,
         title: p.trackTitle || "",
         artist: p.trackArtist || "",
         album: p.trackAlbum || "",
@@ -299,8 +310,8 @@ Item {
         canPrevious: !!p.canGoPrevious,
         canNext: !!p.canGoNext,
         canSeek: !!p.canSeek && !!p.positionSupported,
-        position: p.positionSupported ? p.position : 0,
-        length: p.lengthSupported ? p.length : 0,
+        position: timing.position,
+        length: timing.length,
         volumeSupported: !!p.volumeSupported,
         volume: p.volumeSupported ? p.volume : 0,
         shuffleSupported: !!p.shuffleSupported && !!p.canControl,
@@ -310,6 +321,8 @@ Item {
         canRaise: !!p.canRaise
       }
     })
+    _mediaMemo.players = memo
+    return infos
   }
 
   // The player whose cover is shown (and colors the accent): the focused

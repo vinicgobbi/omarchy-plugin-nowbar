@@ -937,6 +937,26 @@ test("wheelStep: one step per notch or per swipe", () => {
   assert.deepEqual(run([[0, 1000]]), [])
 })
 
+test("mediaTiming: Firefox after a seek keeps the bar", () => {
+  const first = M.mediaTiming(null, "t", 200, 50, true, 1000)
+  assert.equal(first.length, 200)
+  assert.equal(first.position, 50)
+  // No length and position 0: counts on from the last one.
+  const lost = M.mediaTiming(first.memo, "t", 0, 0, true, 3000)
+  assert.equal(lost.length, 200)
+  assert.equal(lost.position, 52)
+  // A real position (the Seeked signal) wins.
+  const seeked = M.mediaTiming(lost.memo, "t", 0, 120, true, 4000)
+  assert.equal(seeked.position, 120)
+  // Paused, it stays; never past the end.
+  assert.equal(M.mediaTiming(seeked.memo, "t", 0, 0, false, 9000).position, 120)
+  assert.equal(M.mediaTiming(seeked.memo, "t", 0, 0, true, 999999).position, 200)
+  // Another track doesn't inherit it.
+  const other = M.mediaTiming(seeked.memo, "u", 0, 0, true, 5000)
+  assert.equal(other.length, 0)
+  assert.equal(other.memo, null)
+})
+
 test("updates card with plugins and themes", () => {
   const r = M.parseUpdates("plugins\tNow Bar\ta99077b\t0cbd80c\nthemes\tlunar-quest\t1111111\t2222222\nthemes\tsword-art\t3333333\t4444444\nerror\tplugins\tsome could not be checked")
   assert.equal(r.items.length, 3)

@@ -2126,6 +2126,20 @@ function wheelStep(state, delta, now) {
   return { state: { acc: acc, dir: dir, last: now, quietUntil: quietUntil }, step: step }
 }
 
+// A track's length and position as far as they can be told. Firefox takes the
+// length out of its metadata after a seek (until the next play or pause) and
+// reads position 0, which would take the seek bar away: the same track keeps
+// the last length it had and counts on from the last position (a real position
+// still wins). `memo` is what the last call returned, kept per player.
+function mediaTiming(memo, track, length, position, playing, now) {
+  var len = num(length, 0)
+  var pos = num(position, 0)
+  if (len > 0) return { length: len, position: pos, memo: { track: track, length: len, position: pos, at: now } }
+  if (!memo || memo.track !== track || !(memo.length > 0)) return { length: len, position: pos, memo: null }
+  if (pos <= 0) pos = Math.min(memo.length, memo.position + (playing ? Math.max(0, now - memo.at) / 1000 : 0))
+  return { length: memo.length, position: pos, memo: { track: track, length: memo.length, position: pos, at: now } }
+}
+
 // --- bar widget preferences -----------------------------------------------------------
 
 var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
@@ -2392,5 +2406,6 @@ if (typeof module !== "undefined") {
     rememberKnown: rememberKnown,
     preferPlaying: preferPlaying,
     wheelStep: wheelStep,
+    mediaTiming: mediaTiming,
   }
 }
