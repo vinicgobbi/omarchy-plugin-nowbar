@@ -134,7 +134,6 @@ var PRIORITY = {
   reminderSoon: 45,
   reminderDone: 44,
   btLow: 52,
-  rain: 58,
   stopwatch: 50,
   bluetooth: 55,
   mediaPlaying: 60,
@@ -917,6 +916,32 @@ function mediaId(key) {
   return "media:" + String(key || "player").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80)
 }
 
+// The player's logo in the icon font: sharp at any size and in one color, like
+// the bar's other icons. "" for a player not listed.
+var PLAYER_GLYPHS = [
+  [/spotify/, "\uf1bc"],
+  [/firefox/, "\u{f0239}"],
+  [/chromium/, "\ue743"],
+  [/chrome/, "\uf268"],
+  [/microsoft[- ]edge|msedge/, "\u{f01e9}"],
+  [/\bopera\b/, "\uf26a"],
+  [/\bvlc\b/, "\u{f057c}"],
+  [/youtube|freetube/, "\u{f05c3}"],
+  [/discord|vesktop/, "\u{f066f}"],
+  [/telegram/, "\uf2c6"],
+  [/soundcloud/, "\uf1be"],
+  [/twitch/, "\uf1e8"],
+  [/\bkodi\b/, "\u{f0314}"]
+]
+
+function playerGlyph(entry, name) {
+  var text = (String(entry || "") + " " + String(name || "")).toLowerCase()
+  for (var i = 0; i < PLAYER_GLYPHS.length; i++) {
+    if (PLAYER_GLYPHS[i][0].test(text)) return PLAYER_GLYPHS[i][1]
+  }
+  return ""
+}
+
 function mediaActivity(m) {
   if (!m || !(m.title || m.artist)) return null
   var title = clean(m.title || m.player || "Media")
@@ -962,7 +987,12 @@ function mediaActivity(m) {
     urgent: false,
     title: title,
     subtitle: [artist, player].filter(function(x) { return x }).join(" · "),
-    pillText: artist ? title + " · " + artist : title,
+    // The song alone; the artist is on the card and in the tooltip.
+    pillText: title,
+    artist: artist,
+    playerName: player,
+    desktopEntry: clean(m.desktopEntry, 120),
+    appGlyph: playerGlyph(m.desktopEntry, m.player),
     progress: len > 0 && len < 1e9 ? Math.max(0, Math.min(1, pos / len)) : -1,
     // The times are shown on both sides of the bar instead.
     details: album && album !== title ? [album] : [],
@@ -1776,8 +1806,9 @@ function isRainCode(code) {
 }
 
 // Rain on the way: not raining now, and likely (60%+) in this 3-hour slot or
-// the next. A real activity (it takes the pill like any new one), once per
-// slot; hidden, it stays hidden for that slot.
+// the next. A note on the weather card (see rainNote), never an activity of
+// its own: a forecast must not hold the pill against music or anything else
+// that is actually going on.
 var RAIN_LIKELY = 60
 
 // A weather report older than this is shown as such ("Offline · updated 3 h
@@ -1793,27 +1824,14 @@ function weatherAge(fetchedAt, now) {
   return { stale: true, text: "Offline \u00b7 updated " + (h >= 24 ? Math.floor(h / 24) + " d" : h + " h") + " ago" }
 }
 
-function rainActivity(w, stale) {
-  if (!w || stale || w.raining || !Array.isArray(w.hours) || w.hours.length === 0) return null
+// { icon, text, pill, chance }, or null when there is nothing to tell.
+function rainNote(w, stale) {
+  if (!w || stale || w.raining || !Array.isArray(w.hours)) return null
   for (var i = 0; i < Math.min(2, w.hours.length); i++) {
     var h = w.hours[i]
-    if (h.rain < RAIN_LIKELY) continue
+    if (!(h.rain >= RAIN_LIKELY)) continue
     var when = i === 0 ? "soon" : "around " + pad2(h.hour) + ":00"
-    return {
-      id: "rain",
-      module: "weather",
-      priority: PRIORITY.rain,
-      icon: "\u{e318}",
-      color: "#3d8fe0",
-      urgent: false,
-      title: "Rain likely " + when,
-      subtitle: h.rain + "% chance" + (w.location ? " \u00b7 " + w.location : ""),
-      pillText: "Rain " + when + " \u00b7 " + h.rain + "%",
-      progress: -1,
-      details: [],
-      actions: [],
-      signature: "rain:" + (i === 0 ? "now" : h.hour)
-    }
+    return { icon: "\u{e318}", text: "Rain likely " + when, pill: "Rain " + when, chance: h.rain }
   }
   return null
 }
@@ -1926,8 +1944,9 @@ function parseWttr(text, now, opts) {
 }
 
 // The weather card (ambient). w: parseWttr() result or null; update: whether
-// an Omarchy update is available (told on the card and in the pill).
-function weatherActivity(w, update) {
+// an Omarchy update is available (told on the card and in the pill); stale:
+// the report is old, so it doesn't warn about rain.
+function weatherActivity(w, update, stale) {
   if (!w && !update) return null
   var details = update ? ["\u{f06b0}  Omarchy update available"] : []
   if (!w) {
@@ -1938,7 +1957,8 @@ function weatherActivity(w, update) {
     }
   }
   var today = w.days.length ? w.days[0] : null
-  var pill = w.temp + "°" + (w.desc ? " · " + w.desc : "")
+  var rain = rainNote(w, stale)
+  var pill = w.temp + "°" + (rain ? " · " + rain.pill : (w.desc ? " · " + w.desc : ""))
   return {
     id: "brief",
     module: "weather",
@@ -1948,6 +1968,7 @@ function weatherActivity(w, update) {
     color: w.color,
     urgent: false,
     weather: w,
+    rain: rain,
     title: w.temp + w.unit + (w.desc ? " · " + w.desc : ""),
     subtitle: [w.location, today ? "H " + today.max + "° L " + today.min + "°" : ""].filter(function(x) { return x }).join(" · "),
     pillText: update ? pill + "  ·  \u{f06b0} Update" : pill,
@@ -2060,6 +2081,182 @@ function resolveFocus(s) {
   return current === -1 ? list[0].id : s.focusId
 }
 
+// Whether an activity can be hidden by hand. The weather is ambient, and the
+// camera/microphone card only goes away by its own buttons (mute) or when the
+// app lets go: a privacy warning isn't for a stray key, click or script to hide.
+function canDismiss(a) {
+  return !!a && !a.ambient && a.module !== "privacy"
+}
+
+// What the next focus update compares against to spot newcomers, after
+// resolveFocus(). While `held` (just after a switch by hand, or with the popup
+// open) one that couldn't take the pill stays a newcomer, so it takes the pill
+// once the hold is over instead of counting as seen and never showing up.
+// { known, pending }: pending says something is waiting.
+function rememberKnown(list, knownIds, focusId, held) {
+  var known = {}
+  var pending = false
+  var before = knownIds || {}
+  for (var i = 0; i < (list || []).length; i++) {
+    var a = list[i]
+    var was = before[a.id]
+    if (held && a.id !== focusId && (was === undefined || a.priority < was)) {
+      pending = true
+      if (was !== undefined) known[a.id] = was
+    } else {
+      known[a.id] = a.priority
+    }
+  }
+  return { known: known, pending: pending }
+}
+
+// A paused player doesn't keep the pill while another one plays (unless it was
+// just picked by hand, or the popup is open: `holding`). Returns the focus.
+function preferPlaying(list, focusId, autoFocus, holding) {
+  if (!autoFocus || holding) return focusId
+  var items = list || []
+  var f = items[indexOfId(items, focusId)]
+  if (!f || f.module !== "media" || f.playing) return focusId
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].module === "media" && items[i].playing) return items[i].id
+  }
+  return focusId
+}
+
+// Scrolling over the pill: one step per notch of a mouse wheel (a whole notch
+// in one event) or per swipe of a touchpad. A swipe's small deltas add up to
+// a notch, then the rest of it (and its inertia) is ignored until it stops or
+// turns around. { state, step }: step is what to move by (-1, 0, 1).
+var WHEEL_NOTCH = 120
+var WHEEL_IDLE_MS = 300
+var WHEEL_QUIET_MS = 250
+
+function wheelStep(state, delta, now) {
+  var s = state || { acc: 0, dir: 0, last: 0, quietUntil: 0 }
+  var d = num(delta, 0)
+  if (d === 0) return { state: s, step: 0 }
+  var dir = d > 0 ? 1 : -1
+  var flipped = s.dir !== 0 && s.dir !== dir
+  var acc = flipped || now - s.last > WHEEL_IDLE_MS ? 0 : s.acc
+  var quietUntil = flipped ? 0 : s.quietUntil
+  var step = 0
+  if (Math.abs(d) >= WHEEL_NOTCH) {
+    acc = 0
+    step = -dir
+  } else if (now < quietUntil) {
+    acc = 0
+    quietUntil = now + WHEEL_QUIET_MS
+  } else {
+    acc += d
+    if (Math.abs(acc) >= WHEEL_NOTCH) {
+      acc = 0
+      step = -dir
+      quietUntil = now + WHEEL_QUIET_MS
+    }
+  }
+  return { state: { acc: acc, dir: dir, last: now, quietUntil: quietUntil }, step: step }
+}
+
+// A track's length and position as far as they can be told. Firefox takes the
+// length out of its metadata after a seek (until the next play or pause) and
+// reads position 0, which would take the seek bar away: the same track keeps
+// the last length it had and counts on from the last position (a real position
+// still wins). `memo` is what the last call returned, kept per player.
+function mediaTiming(memo, track, length, position, playing, now) {
+  var len = num(length, 0)
+  var pos = num(position, 0)
+  if (len > 0) return { length: len, position: pos, memo: { track: track, length: len, position: pos, at: now } }
+  if (!memo || memo.track !== track || !(memo.length > 0)) return { length: len, position: pos, memo: null }
+  if (pos <= 0) pos = Math.min(memo.length, memo.position + (playing ? Math.max(0, now - memo.at) / 1000 : 0))
+  return { length: memo.length, position: pos, memo: { track: track, length: memo.length, position: pos, at: now } }
+}
+
+// Covers downloaded this session, oldest first: going back to a recent track
+// shows its cover at once. Only remote ones (their URLs name one image): a
+// player may reuse a local file for every track, and reading one is cheap.
+var ART_CACHE_SIZE = 6
+
+// { entry, list }: the entry for `url` moved to the end of the list, if there.
+function artCacheTouch(list, url) {
+  var items = list || []
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].url !== url) continue
+    var entry = items[i]
+    return { entry: entry, list: items.slice(0, i).concat(items.slice(i + 1), [entry]) }
+  }
+  return { entry: null, list: items }
+}
+
+// { list, evicted }: `entry` added; the oldest ones over the limit are dropped,
+// never the one on screen (`shownPath`). evicted: the files to delete.
+function artCachePut(list, entry, shownPath, keep) {
+  var limit = keep === undefined ? ART_CACHE_SIZE : keep
+  var evicted = []
+  var out = []
+  ;(list || []).forEach(function(x) {
+    if (x.url !== entry.url) out.push(x)
+    else if (x.path !== entry.path && x.path !== shownPath) evicted.push(x.path)
+  })
+  out.push(entry)
+  for (var i = 0; i < out.length && out.length > limit;) {
+    if (out[i].path === shownPath || out[i] === entry) { i++; continue }
+    evicted.push(out[i].path)
+    out.splice(i, 1)
+  }
+  return { list: out, evicted: evicted }
+}
+
+// The cover's accent (and the sky's color) is made to read as text on a dark
+// bar; filling the pill, the same hue goes deeper, and not neon. "" if not a color.
+function pillFill(hex) {
+  var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(String(hex || ""))
+  if (!m) return ""
+  var hsl = rgbToHsl(parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255)
+  return hslToHex(hsl.h, Math.min(0.8, hsl.s), Math.min(0.4, hsl.l))
+}
+
+// Black or white, whichever reads on `hex`. "" if not a color.
+function readableOn(hex) {
+  var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(String(hex || ""))
+  if (!m) return ""
+  var y = 0.2126 * parseInt(m[1], 16) / 255 + 0.7152 * parseInt(m[2], 16) / 255 + 0.0722 * parseInt(m[3], 16) / 255
+  return y > 0.6 ? "#1a1a1a" : "#ffffff"
+}
+
+// The hills over the played part of the media card's seek bar, back to front
+// (after One UI 9; a loop that doesn't follow the sound). `humps` fit in the
+// played part, never narrower than `width` (in px at scale 1), flowing toward
+// the handle at `speed` humps per second. height: share of the tallest; white:
+// how much white goes into the bar's color.
+var HILLS = [
+  { humps: 2, width: 70, height: 1.0, white: 0.1, alpha: 0.85, speed: 0.71 },
+  { humps: 4, width: 45, height: 0.75, white: 0.5, alpha: 0.55, speed: 1.07 },
+  { humps: 8, width: 28, height: 0.6, white: 0.9, alpha: 0.65, speed: 1.43 }
+]
+var HILLS_START = 1.5 // how much taller they are at the start of the track
+var HILLS_GROW = 36   // px of played bar under which they grow from flat
+
+// How many humps of layer `layer` fit in a played part `span` px long.
+function hillHumps(layer, span) {
+  return Math.max(0.5, Math.min(layer.humps, span / layer.width))
+}
+
+// How tall the hills are overall (share of the tallest): taller early in the
+// track, down to their height by halfway, growing from flat over the first px.
+function hillsScale(value, span) {
+  var v = Math.max(0, Math.min(1, value))
+  return Math.min(1, Math.max(0, span) / HILLS_GROW) * (1 + (HILLS_START - 1) * Math.max(0, 1 - 2 * v))
+}
+
+// Height of layer number `index` at `t` (0..1 along the played part), as a
+// share of the tallest: each hump is born flat at the start, is tallest halfway
+// and is gone at the handle. Squared: smooth valleys, no cusp where humps meet.
+function hillHeight(layer, index, t, humps, time) {
+  var x = Math.max(0, Math.min(1, t))
+  var hump = Math.pow(Math.sin(Math.PI * (humps * x - (layer.speed * time + index * 0.37))), 2)
+  return layer.height * Math.pow(Math.max(0, Math.sin(Math.PI * x)), 1.5) * hump
+}
+
 // --- bar widget preferences -----------------------------------------------------------
 
 var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
@@ -2113,9 +2310,8 @@ function defaultPrefs() {
     mediaPausedMinutes: 15, // a paused player leaves the pill after this long (0: never)
     mediaIgnore: "",        // players kept out of the Now Bar, comma separated
     animations: true,       // the popup unfolds from the pill, cards and sections slide in
-    textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
-    maxWidth: 220,          // width of the text area: the pill always has this size (or at most, with "fit")
-    pillWidth: "fixed",     // "fixed": always maxWidth; "fit": as wide as the text, up to maxWidth
+    textMode: "once",       // text longer than the pill: "once" (goes by once per novelty, then rests faded), "scroll" (round and round) or "ellipsis" (cut with ...)
+    maxWidth: 220,          // the pill is as wide as what it shows, up to this (px)
     timerPresets: DEFAULT_PRESETS, // quick start timers, minutes
     pomodoroFocus: 25,
     pomodoroBreak: 5,
@@ -2143,8 +2339,7 @@ function normalizePrefs(input) {
   var out = {}
   for (var k in d) if (typeof d[k] === "boolean") out[k] = typeof src[k] === "boolean" ? src[k] : d[k]
   out.whenEmpty = src.whenEmpty === "hide" || src.whenEmpty === "icon" ? src.whenEmpty : "brief"
-  out.textMode = src.textMode === "ellipsis" ? "ellipsis" : "scroll"
-  out.pillWidth = src.pillWidth === "fit" ? "fit" : "fixed"
+  out.textMode = src.textMode === "ellipsis" || src.textMode === "scroll" ? src.textMode : "once"
   out.weatherUnit = src.weatherUnit === "metric" || src.weatherUnit === "imperial" ? src.weatherUnit : "auto"
   out.maxWidth = clampInt(src.maxWidth, 80, 600, d.maxWidth)
   var presets = parsePresets(src.timerPresets === undefined ? d.timerPresets : src.timerPresets)
@@ -2177,9 +2372,66 @@ function entrySettings(prefs, existing) {
   var d = defaultPrefs()
   var out = {}
   var src = existing && typeof existing === "object" ? existing : {}
-  for (var k in src) if (!(k in d) && k !== "id") out[k] = src[k]
+  // "pillWidth" is gone: the pill always fits what it shows, up to maxWidth.
+  for (var k in src) if (!(k in d) && k !== "id" && k !== "pillWidth") out[k] = src[k]
   for (var name in d) if (prefs[name] !== d[name]) out[name] = prefs[name]
   return out
+}
+
+// --- options view --------------------------------------------------------------------
+
+// The pages of the options, and what `nowbar settings <name>` accepts: the
+// pages, plus the names of the tabs they used to be. null when unknown.
+var SETTINGS_PAGES = ["home", "media", "timers", "weather", "updates", "look", "shortcuts", "omarchy"]
+
+function settingsPage(name) {
+  var n = String(name || "")
+  if (n === "") return "home"
+  if (SETTINGS_PAGES.indexOf(n) !== -1) return n
+  if (n === "activities") return "home"
+  if (n === "popup" || n === "quick") return "shortcuts"
+  return null
+}
+
+// The line under a page's name in the list: where it stands now, so most of the
+// time there's no need to open it. `info`: { place, indicators, weatherWidget }.
+function settingsSummary(page, prefs, info) {
+  var p = prefs || {}
+  var i = info || {}
+  var modules = p.modules || {}
+  var off = "Off"
+  if (page === "media") {
+    if (modules.media === false) return off
+    var hidden = (p.ignoredPlayers || []).length
+    return [p.mediaPausedMinutes > 0 ? "Paused leaves after " + intervalLabel(p.mediaPausedMinutes) : "Paused stays in the pill",
+      hidden > 0 ? hidden + " hidden" : ""].filter(function(x) { return x }).join(" · ")
+  }
+  if (page === "timers") {
+    if (modules.timer === false) return off
+    return "Pomodoro " + p.pomodoroFocus + "/" + p.pomodoroBreak + " min · sound " + (p.timerSound ? "on" : "off")
+  }
+  if (page === "weather") {
+    if (modules.weather === false) return off
+    var unit = p.weatherUnit === "metric" ? "°C" : (p.weatherUnit === "imperial" ? "°F" : "")
+    return [i.place || "Automatic location", unit].filter(function(x) { return x }).join(" · ")
+  }
+  if (page === "updates") {
+    if (modules.updates === false) return off
+    var n = (p.updateSourceList || []).length
+    return "Every " + intervalLabel(p.updateInterval) + " · " + n + (n === 1 ? " source" : " sources")
+  }
+  if (page === "look") {
+    return "Up to " + p.maxWidth + " px · colors " + (p.coverAccent ? "from the cover" : "from the theme")
+  }
+  if (page === "shortcuts") {
+    var rows = [p.showQuickToggles ? "Quick toggles" : "", p.showQuickStart ? "Quick start" : ""].filter(function(x) { return x })
+    return rows.length ? rows.join(" and ") : "None shown"
+  }
+  if (page === "omarchy") {
+    var replaced = [i.indicators === "replaced" ? "indicators" : "", i.weatherWidget === "replaced" ? "weather" : ""].filter(function(x) { return x })
+    return replaced.length ? "Replacing its " + replaced.join(" and ") : "Using Omarchy's widgets"
+  }
+  return ""
 }
 
 function tooltipLabel(activity, index, count) {
@@ -2247,7 +2499,6 @@ if (typeof module !== "undefined") {
     validRecordingPath: validRecordingPath,
     recordedActivity: recordedActivity,
     btLowActivity: btLowActivity,
-    rainActivity: rainActivity,
     mixOklab: mixOklab,
     parseIgnoredPlayers: parseIgnoredPlayers,
     isIgnoredPlayer: isIgnoredPlayer,
@@ -2321,6 +2572,27 @@ if (typeof module !== "undefined") {
     QUICK_TOGGLES: QUICK_TOGGLES,
     QUICK_START_EXTRAS: QUICK_START_EXTRAS,
     parseIdList: parseIdList,
-    toggleIdList: toggleIdList
+    toggleIdList: toggleIdList,
+    rainNote: rainNote,
+    playerGlyph: playerGlyph,
+    SETTINGS_PAGES: SETTINGS_PAGES,
+    settingsPage: settingsPage,
+    settingsSummary: settingsSummary,
+    canDismiss: canDismiss,
+    rememberKnown: rememberKnown,
+    preferPlaying: preferPlaying,
+    wheelStep: wheelStep,
+    mediaTiming: mediaTiming,
+    artCacheTouch: artCacheTouch,
+    artCachePut: artCachePut,
+    ART_CACHE_SIZE: ART_CACHE_SIZE,
+    pillFill: pillFill,
+    rgbToHsl: rgbToHsl,
+    readableOn: readableOn,
+    HILLS: HILLS,
+    HILLS_START: HILLS_START,
+    hillHumps: hillHumps,
+    hillsScale: hillsScale,
+    hillHeight: hillHeight
   }
 }

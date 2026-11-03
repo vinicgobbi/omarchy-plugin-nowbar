@@ -55,9 +55,8 @@
       "quickToggleItems": "dnd,nightlight,stayAwake,record,reminder,dictation",
       "showQuickStart": true,
       "quickStartItems": "stopwatch,pomodoro,sleep",
-      "textMode": "scroll",
+      "textMode": "once",
       "maxWidth": 220,
-      "pillWidth": "fixed",
       "timerPresets": "1,5,10,25",
       "pomodoroFocus": 25,
       "pomodoroBreak": 5,
@@ -283,33 +282,23 @@
         "key": "textMode",
         "type": "enum",
         "label": "Long text",
-        "description": "Text longer than the pill: scroll it, or cut it with \"...\".",
+        "description": "Text longer than the pill: it goes by once each time it changes and then rests faded, scrolls round and round, or is cut with \"...\".",
         "options": [
+          "once",
           "scroll",
           "ellipsis"
         ],
-        "defaultValue": "scroll"
+        "defaultValue": "once"
       },
       {
         "key": "maxWidth",
         "type": "integer",
-        "label": "Pill text width (px)",
+        "label": "Maximum pill width (px)",
         "min": 80,
         "max": 600,
         "step": 20,
         "defaultValue": 220,
-        "description": "The pill keeps this size (fixed), or grows up to it (fit text)."
-      },
-      {
-        "key": "pillWidth",
-        "type": "enum",
-        "label": "Pill width",
-        "description": "fixed: always the text width set; fit: as wide as the text, up to it.",
-        "options": [
-          "fixed",
-          "fit"
-        ],
-        "defaultValue": "fixed"
+        "description": "The pill takes only the room what it shows needs, up to this."
       },
       {
         "key": "timerPresets",

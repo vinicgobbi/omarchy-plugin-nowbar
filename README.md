@@ -8,9 +8,11 @@ activities, and click it for the details and controls.
 ## What it does
 
 - **One pill for all live activities.** It shows the most important one, with
-  a thin progress line and a `2/4` position marker. The pill keeps a fixed
-  size (or fits its text, up to that size, if you prefer); longer text scrolls
-  around (or is cut with "…").
+  a thin progress line (except for media, which shows it on its card) and a
+  `2/4` position marker. The pill takes only the
+  room what it shows needs, up to a maximum width; longer text goes
+  by whole each time it changes and then rests, faded where it's cut (or
+  scrolls round and round, or is cut with "…").
 - **A popup carousel** with ‹ › arrows, dots and ←/→ keys. Each card has the
   details and that activity's buttons.
 - **New activities take the pill** when they matter more than the current one
@@ -22,12 +24,15 @@ activities, and click it for the details and controls.
   recording, low battery, or a script that failed paint the pill and the
   popup red.
 - **Dynamic colors:** media cards take their colors from the album cover, the
-  weather card from the sky.
-- **A real player:** the media card has big round controls (play/pause in
-  the middle), the blurred cover behind it, elapsed and remaining time on
-  each side of the bar, shuffle and repeat, 10 s back / forward on long
-  podcasts and videos, and the cover opens the player. A new track slides
-  in, and while something plays the pill shows three dancing bars.
+  weather card from the sky, and the pill fills up with a deeper shade of them,
+  with text in black or white, whichever reads.
+- **A real player:** the cover fills the media card under a dark veil, with
+  the app on top (click: open the player) and "title • artist" on one line that
+  scrolls when it doesn't fit. Soft hills flow over the played part of the seek
+  bar while it plays and sink when it pauses; below it are the elapsed and
+  remaining time, shuffle, previous, play/pause, next, repeat and the volume,
+  plus 10 s back / forward on long podcasts and videos. A new track slides in.
+  The pill shows just the song, with the player's logo.
 - **Charging glows blue to green:** while plugged in, the pill fills up to
   the charge with a blue-to-green gradient and a wave of light running
   through it, and the popup takes the same colors, at any percentage.
@@ -65,7 +70,7 @@ activities, and click it for the details and controls.
 
 | Samsung Now Bar         | Here                                                        | Source                                       |
 | ----------------------- | ----------------------------------------------------------- | -------------------------------------------- |
-| Media player            | One card per player: cover (click: open the player) on a blurred backdrop, title · artist, album, seekable bar with elapsed / remaining time, volume, shuffle, previous, play/pause, next, repeat, and 10 s back / forward on long media | MPRIS |
+| Media player            | One card per player: the cover behind it all, the app (click: open the player) and album, title • artist, seekable bar with hills and elapsed / remaining time, volume, shuffle, previous, play/pause, next, repeat, and 10 s back / forward on long media | MPRIS |
 | Timer / Stopwatch       | Ring that fills up, pause, +1 min, laps; a timer can also run until a time (`14:30`); "Time's up" with Repeat / +1 min / OK, and a sound; kept across shell restarts | This plugin (notifies when the timer ends) |
 | Focus modes             | Pomodoro: focus / break cycles, a long break every 4, blocks done today, and (an option) Do Not Disturb while focusing | This plugin (notifies at each change) |
 | Media sleep timer       | Pauses every player when it ends                            | This plugin                                  |
@@ -77,7 +82,7 @@ activities, and click it for the details and controls.
 | Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left, and Power saver; nothing once full | UPower, power-profiles-daemon                      |
 | Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s (headphones: "Use for audio"); a connected device at 15% or less, until charged | Quickshell Bluetooth, `wpctl` |
 | Screenshot toolbar      | A screenshot just saved: thumbnail, Edit / Copy / Open, for 15 s | The screenshots folder                  |
-| Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off); "Rain likely around 15:00" as its own activity | wttr.in, `omarchy-update-available` |
+| Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off), with "Rain likely around 15:00" as a note on it and in the pill when the weather is what it shows | wttr.in, `omarchy-update-available` |
 | Software update         | Updates waiting, by source, with the main packages, plugins and themes; Update / Check now | `omarchy-update-available`, `checkupdates`, `yay`, `git` (all in Omarchy); `flatpak` if installed |
 | Live Updates (Android)  | Anything a script sends with `nowbar push`, or a command run with `nowbar-run` | IPC                         |
 
@@ -166,18 +171,18 @@ media keys.
 | Left click    | Open/close the popup                                            |
 | Scroll        | Next / previous activity                                        |
 | Middle click  | Main action of the activity (pause the timer, play/pause, stop...) |
-| Right click   | Hide the activity until it changes (a new track, the timer paused...); **Show hidden** in the popup brings it back |
+| Right click   | Hide the activity until it changes (a new track, the timer paused...); **Show hidden** in the popup brings it back. The camera/mic card can't be hidden |
 
 ### Popup keys
 
 | Key              | Effect                                           |
 | ---------------- | ------------------------------------------------ |
 | ← / → (h / l)    | Previous / next activity                         |
-| Tab / Shift+Tab  | Next / previous activity (in the options: tab)   |
+| Tab / Shift+Tab  | Next / previous activity (in the options: page)  |
 | Enter / Space    | Main action                                      |
 | ↑ / ↓ (k / j)    | Media card: volume up / down                     |
 | [ / ]            | Media card: 10 s back / forward                  |
-| x                | Hide the activity until it changes               |
+| x                | Hide the activity until it changes (not the camera/mic card) |
 | u                | Show the hidden activities again                 |
 | 1 – 6            | Start that Quick start timer                     |
 | s                | Start the stopwatch                              |
@@ -259,7 +264,7 @@ on it.
 ### Choosing the place
 
 By default the place is a guess from your IP. To pick one, open the options'
-**Weather** tab and type a city under **Location**: matching places show up
+**Weather** page and type a city under **Place**: matching places show up
 as you type (↑/↓ and Enter, or a click), with their region and country.
 **Use automatic location** goes back to the guess.
 
@@ -277,7 +282,7 @@ omarchy-weather-location --set Iconha -20.7931,-40.8111   # or --clear for autom
 ### Replacing Omarchy's weather widget
 
 Click **Use instead of the weather widget** on the weather card, or **Replace
-the weather widget** in the options (Weather tab). That turns `omarchy.weather`
+the weather widget** in the options (Omarchy integration). That turns `omarchy.weather`
 off and points Omarchy's weather shortcut, SUPER+CTRL+ALT+W, at the weather
 card. **Restore**, in the same place, undoes both and puts the widget back
 where it was in the bar.
@@ -316,7 +321,7 @@ of switching on and off right there.
 ### Replacing Omarchy's indicators widget
 
 Click **Use instead of Omarchy's indicators** under the Quick toggles, or
-**Replace the indicators** in the options (Popup tab). That turns
+**Replace the indicators** in the options (Omarchy integration). That turns
 `omarchy.indicators` off; its place in the bar is remembered, and **Restore**
 puts it back there. With that widget off, the Now Bar also answers
 `omarchy-shell omarchy.indicators refresh` (called by `omarchy-reminder` and
@@ -388,7 +393,7 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `focus <id or module>`    | Focus an activity: `timer`, `media`, `privacy`, `build`...      |
 | `primary`                 | Main action of the focused activity                             |
 | `act <activity> <action>` | Any action, e.g. `act timer cancel`, `act media next` (`media` is the focused player) |
-| `dismiss`                 | Hide the focused activity until it changes (not the camera/mic card: only a click hides it) |
+| `dismiss`                 | Hide the focused activity until it changes (not the camera/mic card, which nothing hides) |
 | `unhide`                  | Show again everything hidden by hand                            |
 | `timer <duration>`        | Start a timer: `90` (seconds), `25m`, `1h30m`, or until `14:30` |
 | `stopwatch`               | Start the stopwatch                                             |
@@ -396,7 +401,7 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `sleep <duration>`        | Pause the media after `30` (minutes), `1h`, or at `23:00`       |
 | `quick <id>`              | A Quick toggle: `dnd`, `nightlight`, `stayAwake`, `record`, `reminder`, `dictation` |
 | `weather`                 | Open the popup on the weather card                              |
-| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `popup`, `weather`, `updates`) |
+| `settings [page]`         | Open the popup on the options (`media`, `timers`, `weather`, `updates`, `look`, `shortcuts`, `omarchy`) |
 | `updates`                 | Check for updates now                                           |
 | `push <id> <json>`        | Add or update an activity from a script                         |
 | `remove <id>`             | Remove a pushed activity                                        |
@@ -405,38 +410,41 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 ## Options
 
 The gear in the popup (or `c`, or `omarchy-shell nowbar settings`) opens the
-options, one tab at a time (Tab / Shift+Tab to switch):
+options: a list that says what can show up and where each thing stands. Whatever
+has more to set opens a page of its own, and what is rarely changed waits under
+**More** there. ↑/↓ and Enter walk the list, Esc goes back, Tab goes through the
+pages.
 
-- **Activities:** which activities can show up (live ones: media, timers,
-  reminders, recording, dictation, camera/mic; system ones: modes and VPN,
-  battery, Bluetooth, screenshots, weather, scripts), and whether a new
-  activity takes the pill. **Media:** how long a paused player keeps the pill
-  (5 min, 15 min, 1 hour or always), and which players show up at all: a
-  hidden one (a browser, say) stays out of the Now Bar but still answers the
-  media keys.
-- **Look:** the pill's width (fixed, or fit to its text up to a maximum),
-  scrolling or cutting long text, the
-  progress line, the `2/4` marker, what it shows when idle (the weather card,
-  an empty pill, or nothing), the dynamic colors, and the animations.
-- **Popup:** the two rows at the bottom of the popup. Quick toggles: show
-  them or not, which ones, and replacing (or restoring) Omarchy's indicators
-  widget. Quick start: show it or not, the timers (minutes, comma separated;
-  empty for none), which extras (stopwatch, Pomodoro, sleep timer) and how
-  long the sleep timer waits (30 min by default). When a timer ends: a sound
-  or not (on by default, never while Do Not Disturb is on), and how long
-  "Time's up" stays (until OK by default, or 1, 5 or 30 minutes). Then the
-  Pomodoro lengths, and Do Not Disturb while focusing (off by default; it
-  only turns off what it turned on).
-- **Weather:** the place (searched by name, or automatic), °C, °F or
-  automatic, and replacing (or restoring) Omarchy's weather widget.
-- **Updates:** which sources are checked (Omarchy, official, AUR, and
-  Flatpak, plugins and themes when there are some to check; a source whose
-  tool is missing isn't listed),
-  how often (30 min to 1 day, or any number of minutes from 5 to 7 days), and
-  whether to check once after the computer starts.
+- **Music & video:** how long a paused player keeps the pill (5 min, 15 min,
+  1 hour or always), and which players show up at all: a hidden one (a browser,
+  say) stays out of the Now Bar but still answers the media keys.
+- **Timers & Pomodoro:** when a timer ends, a sound or not (on by default, never
+  while Do Not Disturb is on) and how long "Time's up" stays (until OK by default,
+  or 1, 5 or 30 minutes). Then the Pomodoro lengths, and Do Not Disturb while
+  focusing (off by default; it only turns off what it turned on).
+- **Weather:** the place (searched by name, or automatic), and °C, °F or automatic.
+- **Updates:** which sources are checked (Omarchy, official, AUR, and Flatpak,
+  plugins and themes when there are some to check; a source whose tool is missing
+  isn't listed) and how often (30 min to 1 day). Under More: any number of minutes
+  from 5 to 7 days, and whether to check once after the computer starts.
+- The other activities (reminders, recording, dictation, camera/mic, modes and
+  VPN, battery, Bluetooth, screenshots, scripts) are just a switch on the list,
+  next to whether a new activity takes the pill.
+- **Appearance:** the pill's maximum width (it takes only the room what it
+  shows needs, up to that), how long text
+  behaves (once, in a loop, or cut), what it shows with nothing going on (the
+  weather, an empty pill, or nothing), the dynamic colors, and the animations.
+  Under More: the progress line and the `2/4` marker.
+- **Popup shortcuts:** the two rows at the bottom of the popup. Quick toggles:
+  show them or not, and which ones. Quick start: show it or not, the timer buttons
+  (minutes, comma separated; empty for none), which extras (stopwatch, Pomodoro,
+  sleep timer) and how long the sleep timer waits (30 min by default).
+- **Omarchy integration:** replacing (or restoring) Omarchy's indicators and
+  weather widgets.
 
-The same options are in the widget's settings. **Reset** restores them all
-(every tab, hidden players included), so it asks for a second click first.
+The same options are in the widget's settings. **Restore defaults**, at the end
+of the list, restores them all (hidden players included), so it asks for a second
+click first.
 
 ## Details
 
@@ -484,7 +492,7 @@ The same options are in the widget's settings. **Reset** restores them all
 ## Uninstall
 
 If you replaced Omarchy's weather or indicators widget, **restore them first**
-(options: Weather tab and Popup tab), or from a terminal:
+(options: Omarchy integration), or from a terminal:
 
 ```bash
 ~/.config/omarchy/plugins/vinicgobbi.nowbar/bin/nowbar-weather-widget restore

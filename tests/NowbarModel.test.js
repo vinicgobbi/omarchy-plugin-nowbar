@@ -176,7 +176,7 @@ test("media activity", () => {
   assert.equal(M.mediaActivity({ title: "", artist: "" }), null)
   const a = M.mediaActivity({ key: "spotify", title: "Song", artist: "Band", player: "Spotify", playing: true, canToggle: true, canNext: true, canPrevious: true, position: 30, length: 120 })
   assert.equal(a.priority, M.PRIORITY.mediaPlaying)
-  assert.equal(a.pillText, "Song · Band")
+  assert.equal(a.pillText, "Song")
   assert.equal(a.progress, 0.25)
   assert.deepEqual(a.actions.map((x) => x.id), ["playPause", "previous", "next"])
   const live = M.mediaActivity({ title: "Radio", playing: false, length: 9.2e12 })
@@ -270,13 +270,17 @@ test("prefs normalize and store only non-defaults", () => {
   assert.equal(M.normalizePrefs({ showQuickToggles: false }).showQuickToggles, false)
   assert.equal(p.modules.weather, true)
   assert.equal(M.normalizePrefs({ whenEmpty: "icon" }).whenEmpty, "icon")
-  assert.equal(p.textMode, "scroll")
+  assert.equal(p.textMode, "once")
+  assert.equal(M.normalizePrefs({ textMode: "scroll" }).textMode, "scroll")
+  assert.equal(M.normalizePrefs({ textMode: "nope" }).textMode, "once")
   assert.equal(p.coverAccent, true)
   assert.equal(p.animations, true)
   assert.equal(M.normalizePrefs({ animations: false }).animations, false)
   assert.equal(M.normalizePrefs({ textMode: "ellipsis" }).textMode, "ellipsis")
   assert.equal(p.maxWidth, 600)
   assert.equal(p.autoFocus, true)
+  assert.equal(p.pillWidth, undefined)
+  assert.equal(M.entrySettings(p, { pillWidth: "fit" }).pillWidth, undefined)
   assert.deepEqual(M.entrySettings(p, { other: 1, id: "x" }), { other: 1, moduleCharging: false, maxWidth: 600 })
 })
 
@@ -841,16 +845,198 @@ test("bluetooth: audio action, low battery card", () => {
   assert.equal(low.signature, "low:3")
 })
 
-test("rain alert: likely soon or in the next slot, not while raining", () => {
-  const w = (rain0, rain1, raining) => ({ raining, location: "Here", hours: [{ hour: 12, rain: rain0 }, { hour: 15, rain: rain1 }] })
-  assert.equal(M.rainActivity(w(10, 20, false)), null)
-  assert.equal(M.rainActivity(w(80, 90, true)), null)
-  assert.equal(M.rainActivity(w(70, 0, false)).title, "Rain likely soon")
-  const a = M.rainActivity(w(20, 75, false))
-  assert.equal(a.title, "Rain likely around 15:00")
-  assert.equal(a.subtitle, "75% chance · Here")
-  assert.equal(a.signature, "rain:15")
-  assert.equal(M.rainActivity(null), null)
+test("rain: a note on the weather card, likely soon or in the next slot, not while raining", () => {
+  const w = (rain0, rain1, raining) => ({ raining, temp: 21, unit: "°C", desc: "Cloudy", location: "Here", days: [], hours: [{ hour: 12, rain: rain0 }, { hour: 15, rain: rain1 }] })
+  assert.equal(M.rainNote(w(10, 20, false)), null)
+  assert.equal(M.rainNote(w(80, 90, true)), null)
+  assert.equal(M.rainNote(null), null)
+  assert.equal(M.rainNote(w(70, 0, false)).text, "Rain likely soon")
+  assert.equal(M.rainNote(w(70, 0, false), true), null)
+  const later = M.rainNote(w(20, 75, false))
+  assert.equal(later.text, "Rain likely around 15:00")
+  assert.equal(later.chance, 75)
+  // Hours without a rain chance (the GNOME extension's) say nothing.
+  assert.equal(M.rainNote({ hours: [{ hour: 12 }] }), null)
+
+  const card = M.weatherActivity(w(70, 0, false), false, false)
+  assert.equal(card.rain.pill, "Rain soon")
+  assert.equal(card.pillText, "21° · Rain soon")
+  const stale = M.weatherActivity(w(70, 0, false), false, true)
+  assert.equal(stale.rain, null)
+  assert.equal(stale.pillText, "21° · Cloudy")
+  assert.equal(M.rainActivity, undefined)
+})
+
+test("rain never holds the pill against music", () => {
+  const weather = M.weatherActivity({ temp: 21, unit: "°C", desc: "", days: [], hours: [{ hour: 12, rain: 90 }] }, false, false)
+  const media = M.mediaActivity({ key: "p", title: "Song", playing: true, canToggle: true })
+  assert.equal(weather.ambient, true)
+  const list = M.sortActivities([weather, media])
+  assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: weather.priority }, autoFocus: true, manualUntil: 0, now: 1 }), media.id)
+})
+
+test("media card fields, and the pill with the song alone", () => {
+  const a = M.mediaActivity({ key: "p", title: "Song", artist: "Band", player: "Spotify", desktopEntry: "spotify", playing: true })
+  assert.equal(a.pillText, "Song")
+  assert.equal(a.artist, "Band")
+  assert.equal(a.playerName, "Spotify")
+  assert.equal(a.desktopEntry, "spotify")
+  assert.equal(M.mediaActivity({ key: "p", title: "Song" }).desktopEntry, "")
+})
+
+test("playerGlyph: the logo from the desktop entry or the player's name", () => {
+  const spotify = M.playerGlyph("spotify", "")
+  assert.notEqual(spotify, "")
+  assert.equal(M.playerGlyph("com.spotify.Client", "Spotify"), spotify)
+  assert.equal(M.playerGlyph("", "Spotify"), spotify)
+  assert.notEqual(M.playerGlyph("firefox", "Mozilla Firefox"), spotify)
+  assert.notEqual(M.playerGlyph("chromium", ""), M.playerGlyph("google-chrome", ""))
+  assert.equal(M.playerGlyph("mpv", "mpv"), "")
+  assert.equal(M.playerGlyph("", ""), "")
+  assert.equal(M.playerGlyph(null, undefined), "")
+  // Not just anything with those letters in it.
+  assert.equal(M.playerGlyph("operator", "knowledge"), "")
+  assert.equal(M.mediaActivity({ key: "p", title: "S", desktopEntry: "spotify" }).appGlyph, spotify)
+  assert.equal(M.mediaActivity({ key: "p", title: "S" }).appGlyph, "")
+})
+
+test("canDismiss: never the weather, nor the camera and microphone", () => {
+  assert.equal(M.canDismiss({ module: "media" }), true)
+  assert.equal(M.canDismiss({ module: "privacy" }), false)
+  assert.equal(M.canDismiss({ module: "weather", ambient: true }), false)
+  assert.equal(M.canDismiss(null), false)
+})
+
+test("rememberKnown: a newcomer during a hold keeps its turn", () => {
+  const list = [{ id: "new", priority: 60 }, { id: "cur", priority: 65 }]
+  const held = M.rememberKnown(list, { cur: 65 }, "cur", true)
+  assert.deepEqual(held.known, { cur: 65 })
+  assert.equal(held.pending, true)
+  // Hold over: resolveFocus sees it as new, and it takes the pill.
+  assert.equal(M.resolveFocus({ list, focusId: "cur", knownIds: held.known, autoFocus: true, manualUntil: 0, now: 1 }), "new")
+  const free = M.rememberKnown(list, held.known, "new", false)
+  assert.deepEqual(free.known, { new: 60, cur: 65 })
+  assert.equal(free.pending, false)
+  // More important than it was (paused player playing again) stays pending,
+  // remembered at what it was.
+  const rose = M.rememberKnown([{ id: "a", priority: 60 }, { id: "cur", priority: 50 }], { a: 80, cur: 50 }, "cur", true)
+  assert.deepEqual(rose.known, { a: 80, cur: 50 })
+  assert.equal(rose.pending, true)
+  // Already known, nothing changed: nothing waits.
+  assert.equal(M.rememberKnown(list, { new: 60, cur: 65 }, "cur", true).pending, false)
+  // The one with the focus is seen.
+  assert.equal(M.rememberKnown(list, {}, "new", true).known.new, 60)
+})
+
+test("preferPlaying: a paused player gives way to one playing", () => {
+  const paused = { id: "m1", module: "media", playing: false }
+  const playing = { id: "m2", module: "media", playing: true }
+  const timer = { id: "timer", module: "timer" }
+  assert.equal(M.preferPlaying([timer, paused, playing], "m1", true, false), "m2")
+  assert.equal(M.preferPlaying([paused, playing], "m1", true, true), "m1")
+  assert.equal(M.preferPlaying([paused, playing], "m1", false, false), "m1")
+  assert.equal(M.preferPlaying([timer, playing], "timer", true, false), "timer")
+  assert.equal(M.preferPlaying([paused], "m1", true, false), "m1")
+  assert.equal(M.preferPlaying([], "", true, false), "")
+})
+
+test("wheelStep: one step per notch or per swipe", () => {
+  const run = events => {
+    let state = null
+    const steps = []
+    for (const [delta, at] of events) {
+      const r = M.wheelStep(state, delta, at)
+      state = r.state
+      if (r.step) steps.push(r.step)
+    }
+    return steps
+  }
+  // A mouse wheel: every notch counts, however quick, up is back.
+  assert.deepEqual(run([[-120, 1000], [-120, 1040], [120, 1080]]), [1, 1, -1])
+  // A long touchpad swipe with inertia is one step.
+  const swipe = []
+  for (let i = 0; i < 100; i++) swipe.push([-30, 1000 + i * 16])
+  assert.deepEqual(run(swipe), [1])
+  // Stopped and swiped again: another step.
+  assert.deepEqual(run([...swipe, [-60, 3000], [-60, 3016]]), [1, 1])
+  // Turning around counts at once.
+  assert.deepEqual(run([[-60, 1000], [-60, 1016], [60, 1032], [60, 1048]]), [1, -1])
+  // Bits left from long ago don't add up.
+  assert.deepEqual(run([[-90, 1000], [-90, 2000]]), [])
+  assert.deepEqual(run([[0, 1000]]), [])
+})
+
+test("mediaTiming: Firefox after a seek keeps the bar", () => {
+  const first = M.mediaTiming(null, "t", 200, 50, true, 1000)
+  assert.equal(first.length, 200)
+  assert.equal(first.position, 50)
+  // No length and position 0: counts on from the last one.
+  const lost = M.mediaTiming(first.memo, "t", 0, 0, true, 3000)
+  assert.equal(lost.length, 200)
+  assert.equal(lost.position, 52)
+  // A real position (the Seeked signal) wins.
+  const seeked = M.mediaTiming(lost.memo, "t", 0, 120, true, 4000)
+  assert.equal(seeked.position, 120)
+  // Paused, it stays; never past the end.
+  assert.equal(M.mediaTiming(seeked.memo, "t", 0, 0, false, 9000).position, 120)
+  assert.equal(M.mediaTiming(seeked.memo, "t", 0, 0, true, 999999).position, 200)
+  // Another track doesn't inherit it.
+  const other = M.mediaTiming(seeked.memo, "u", 0, 0, true, 5000)
+  assert.equal(other.length, 0)
+  assert.equal(other.memo, null)
+})
+
+test("art cache: least recently used goes first, never the one on screen", () => {
+  const e = n => ({ url: "u" + n, path: "/c/" + n })
+  let r = M.artCachePut([], e(1), "", 2)
+  r = M.artCachePut(r.list, e(2), "", 2)
+  assert.deepEqual(r.evicted, [])
+  const touched = M.artCacheTouch(r.list, "u1")
+  assert.equal(touched.entry.path, "/c/1")
+  assert.deepEqual(touched.list.map(x => x.url), ["u2", "u1"])
+  r = M.artCachePut(touched.list, e(3), "", 2)
+  assert.deepEqual(r.evicted, ["/c/2"])
+  assert.deepEqual(r.list.map(x => x.url), ["u1", "u3"])
+  // The oldest is on screen: the next one goes instead.
+  r = M.artCachePut(r.list, e(4), "/c/1", 2)
+  assert.deepEqual(r.evicted, ["/c/3"])
+  assert.deepEqual(r.list.map(x => x.url), ["u1", "u4"])
+  assert.equal(M.artCacheTouch(r.list, "nope").entry, null)
+  // The same url again replaces it, and its old file goes.
+  r = M.artCachePut(r.list, { url: "u4", path: "/c/4b" }, "", 2)
+  assert.deepEqual(r.evicted, ["/c/4"])
+  assert.deepEqual(r.list.map(x => x.path), ["/c/1", "/c/4b"])
+})
+
+test("pill colors: deep fill, readable text", () => {
+  assert.equal(M.pillFill("nope"), "")
+  assert.equal(M.readableOn("nope"), "")
+  assert.equal(M.readableOn("#ffffff"), "#1a1a1a")
+  assert.equal(M.readableOn("#101040"), "#ffffff")
+  // Bright stays the hue, goes deep; already deep stays as it is.
+  const fill = M.pillFill("#ff8800")
+  assert.ok(M.rgbToHsl(parseInt(fill.slice(1, 3), 16) / 255, parseInt(fill.slice(3, 5), 16) / 255, parseInt(fill.slice(5, 7), 16) / 255).l <= 0.41)
+  assert.equal(M.readableOn(fill), "#ffffff")
+  assert.equal(M.pillFill("#102030"), "#102030")
+})
+
+test("hills: flat at both ends, within their height, moving", () => {
+  M.HILLS.forEach((layer, i) => {
+    const humps = M.hillHumps(layer, 300)
+    assert.ok(M.hillHeight(layer, i, 0, humps, 0.3) < 1e-6)
+    assert.ok(M.hillHeight(layer, i, 1, humps, 0.3) < 1e-6)
+    for (let t = 0; t <= 1; t += 0.05) {
+      const h = M.hillHeight(layer, i, t, humps, 0.7)
+      assert.ok(h >= 0 && h <= layer.height + 1e-9)
+    }
+    assert.notEqual(M.hillHeight(layer, i, 0.5, humps, 0), M.hillHeight(layer, i, 0.5, humps, 0.1))
+  })
+  // A short bar fits fewer of them; never less than half of one.
+  assert.equal(M.hillHumps(M.HILLS[0], 1000), 2)
+  assert.equal(M.hillHumps(M.HILLS[0], 1), 0.5)
+  assert.equal(M.hillsScale(0.5, 0), 0)
+  assert.equal(M.hillsScale(0.5, 200), 1)
+  assert.equal(M.hillsScale(0, 200), M.HILLS_START)
 })
 
 test("updates card with plugins and themes", () => {
@@ -932,8 +1118,38 @@ test("weather in the place's own time, past days dropped, age", () => {
   assert.equal(M.weatherAge(at, at + 50 * 3600000).text, "Offline · updated 2 d ago")
   // A stale report doesn't warn about rain.
   const rainy = { raining: false, location: "X", hours: [{ hour: 15, rain: 80 }] }
-  assert.ok(M.rainActivity(rainy, false))
-  assert.equal(M.rainActivity(rainy, true), null)
+  assert.ok(M.rainNote(rainy, false))
+  assert.equal(M.rainNote(rainy, true), null)
+})
+
+test("settingsPage: the pages, and the old tab names", () => {
+  assert.equal(M.settingsPage(""), "home")
+  assert.equal(M.settingsPage("look"), "look")
+  assert.equal(M.settingsPage("omarchy"), "omarchy")
+  assert.equal(M.settingsPage("activities"), "home")
+  assert.equal(M.settingsPage("popup"), "shortcuts")
+  assert.equal(M.settingsPage("quick"), "shortcuts")
+  assert.equal(M.settingsPage("timers"), "timers")
+  assert.equal(M.settingsPage("nope"), null)
+  assert.equal(M.settingsPage("constructor"), null)
+})
+
+test("settingsSummary says where each page stands", () => {
+  const p = M.normalizePrefs({})
+  assert.equal(M.settingsSummary("media", p), "Paused leaves after 15 min")
+  assert.equal(M.settingsSummary("media", M.normalizePrefs({ mediaPausedMinutes: 0, mediaIgnore: "a, b" })), "Paused stays in the pill · 2 hidden")
+  assert.equal(M.settingsSummary("media", M.normalizePrefs({ moduleMedia: false })), "Off")
+  assert.equal(M.settingsSummary("timers", p), "Pomodoro 25/5 min · sound on")
+  assert.equal(M.settingsSummary("weather", p, { place: "São Paulo" }), "São Paulo")
+  assert.equal(M.settingsSummary("weather", M.normalizePrefs({ weatherUnit: "metric" }), {}), "Automatic location · °C")
+  assert.match(M.settingsSummary("updates", p), /^Every 3 h · \d+ sources$/)
+  assert.equal(M.settingsSummary("updates", M.normalizePrefs({ moduleUpdates: false })), "Off")
+  assert.equal(M.settingsSummary("look", p), "Up to 220 px · colors from the cover")
+  assert.equal(M.settingsSummary("shortcuts", p), "Quick toggles and Quick start")
+  assert.equal(M.settingsSummary("shortcuts", M.normalizePrefs({ showQuickToggles: false, showQuickStart: false })), "None shown")
+  assert.equal(M.settingsSummary("omarchy", p, {}), "Using Omarchy's widgets")
+  assert.equal(M.settingsSummary("omarchy", p, { indicators: "replaced", weatherWidget: "replaced" }), "Replacing its indicators and weather")
+  assert.equal(M.settingsSummary("nope", p), "")
 })
 
 test("Clear all reminders asks first", () => {

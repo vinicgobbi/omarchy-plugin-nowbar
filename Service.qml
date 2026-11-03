@@ -284,23 +284,35 @@ Item {
     return list.concat(paused.slice(0, maxPausedCards))
   }
 
+  // The last length and position of each player's track (Model.mediaTiming).
+  // Changed in place, never reassigned: mediaInfos reads and writes it, and
+  // mustn't depend on itself.
+  readonly property var _mediaMemo: ({ players: {} })
+
   readonly property var mediaInfos: {
     // Read `now` so the position (which MPRIS doesn't push) refreshes each tick.
     var _tick = root.now
-    return mediaPlayers.map(function(p) {
+    var at = Date.now()
+    var memo = {}
+    var infos = mediaPlayers.map(function(p) {
+      var key = playerKey(p)
+      var timing = Model.mediaTiming(_mediaMemo.players[key], [p.trackTitle, p.trackArtist, p.trackAlbum].join("\n"),
+        p.lengthSupported ? p.length : 0, p.positionSupported ? p.position : 0, !!p.isPlaying, at)
+      if (timing.memo) memo[key] = timing.memo
       return {
-        key: playerKey(p),
+        key: key,
         title: p.trackTitle || "",
         artist: p.trackArtist || "",
         album: p.trackAlbum || "",
         player: p.identity || p.desktopEntry || "",
+        desktopEntry: p.desktopEntry || "",
         playing: !!p.isPlaying,
         canToggle: !!(p.canTogglePlaying || p.canPlay || p.canPause),
         canPrevious: !!p.canGoPrevious,
         canNext: !!p.canGoNext,
         canSeek: !!p.canSeek && !!p.positionSupported,
-        position: p.positionSupported ? p.position : 0,
-        length: p.lengthSupported ? p.length : 0,
+        position: timing.position,
+        length: timing.length,
         volumeSupported: !!p.volumeSupported,
         volume: p.volumeSupported ? p.volume : 0,
         shuffleSupported: !!p.shuffleSupported && !!p.canControl,
@@ -310,6 +322,8 @@ Item {
         canRaise: !!p.canRaise
       }
     })
+    _mediaMemo.players = memo
+    return infos
   }
 
   // The player whose cover is shown (and colors the accent): the focused
@@ -422,6 +436,16 @@ Item {
   // return`). A track change while a fetch is in flight replaces this
   // instead of starting a second one; only the latest request matters.
   property var _artPending: null
+  // Downloaded covers kept for this session (Model.artCachePut). Plain data:
+  // only the functions below read it.
+  property var _artCache: []
+
+  // Deletes a cover file unless the cache still holds it.
+  function _dropArtFile(path) {
+    if (!path) return
+    for (var i = 0; i < _artCache.length; i++) if (_artCache[i].path === path) return
+    artCleanupProcess.remove(path)
+  }
 
   function _clearArt() {
     // Bump the generation too, not just the visible state: otherwise a
@@ -433,14 +457,17 @@ Item {
     root.safeArtPath = ""
     root.artAccent = ""
     root.artBase = ""
+    artRetry.stop()
     var stale = root._artCurrentFile
     root._artCurrentFile = ""
-    if (stale) artCleanupProcess.remove(stale)
+    root._dropArtFile(stale)
   }
 
   function _startArtFetch(request) {
     artFetchProcess.generation = request.generation
     artFetchProcess.targetPath = request.target
+    artFetchProcess.sourceUrl = request.safe
+    artFetchProcess.isLocal = request.isLocal
     artFetchProcess.command = ["bash", "-c", root._artFetchScript, "_",
       request.safe, request.target, request.isLocal ? "1" : "0", String(root.artMaxBytes), String(root.artMaxDimension)]
     artFetchProcess.running = true
@@ -451,8 +478,28 @@ Item {
     if (safe === "") { root._clearArt(); return }
 
     root._artGeneration += 1
+    artRetry.stop()
     var isLocal = /^file:\/\/\//i.test(safe)
     var generation = root._artGeneration
+
+    // A recent track's cover is still here: at once, no download.
+    var hit = Model.artCacheTouch(root._artCache, safe)
+    if (hit.entry) {
+      root._artCache = hit.list
+      root._artPending = null
+      var previousFile = root._artCurrentFile
+      root._artCurrentFile = hit.entry.path
+      root.safeArtPath = Util.fileUrl(hit.entry.path)
+      if (hit.entry.accent !== undefined) {
+        root.artAccent = hit.entry.accent
+        root.artBase = hit.entry.base
+      } else {
+        root.extractAccent(hit.entry.path, generation)
+      }
+      if (previousFile !== hit.entry.path) root._dropArtFile(previousFile)
+      return
+    }
+
     var request = {
       safe: safe,
       generation: generation,
@@ -465,6 +512,13 @@ Item {
       return
     }
     root._startArtFetch(request)
+  }
+
+  // A cover that failed is tried again after a while, not only on the next track.
+  Timer {
+    id: artRetry
+    interval: 60000
+    onTriggered: root.refreshArt()
   }
 
   readonly property string artUrl: mediaPlayer && mediaPlayer.trackArtUrl ? mediaPlayer.trackArtUrl : ""
@@ -508,6 +562,7 @@ Item {
   function extractAccent(path, generation) {
     if (accentProcess.running) { accentProcess.pending = { path: path, generation: generation }; return }
     accentProcess.generation = generation
+    accentProcess.path = path
     // The file was checked when fetched; the decoder is still named from its
     // first bytes (as the fetch does) rather than left to ImageMagick's guess.
     accentProcess.command = ["sh", "-c",
@@ -521,6 +576,7 @@ Item {
   Process {
     id: accentProcess
     property int generation: 0
+    property string path: ""
     property var pending: null
     stdout: StdioCollector {
       waitForEnd: true
@@ -530,6 +586,11 @@ Item {
         root.artAccent = Model.accentFromHistogram(text)
         // A gray cover keeps the theme: no accent means no tint either.
         root.artBase = root.artAccent !== "" ? Model.baseFromHistogram(text) : ""
+        for (var i = 0; i < root._artCache.length; i++) {
+          if (root._artCache[i].path !== accentProcess.path) continue
+          root._artCache[i].accent = root.artAccent
+          root._artCache[i].base = root.artBase
+        }
       }
     }
     onExited: {
@@ -543,6 +604,8 @@ Item {
     id: artFetchProcess
     property int generation: 0
     property string targetPath: ""
+    property string sourceUrl: ""
+    property bool isLocal: false
     onExited: function(exitCode) {
       // A newer track may have started a fresh fetch while this one was in
       // flight; only publish (or clean up in place of) a result that's
@@ -553,11 +616,22 @@ Item {
           root._artCurrentFile = targetPath
           root.safeArtPath = Util.fileUrl(targetPath)
           root.extractAccent(targetPath, generation)
-          if (previous && previous !== targetPath) artCleanupProcess.remove(previous)
+          // Remote covers stay for a while (see Model.artCachePut).
+          if (!isLocal) {
+            var put = Model.artCachePut(root._artCache, { url: sourceUrl, path: targetPath }, targetPath)
+            root._artCache = put.list
+            for (var i = 0; i < put.evicted.length; i++) artCleanupProcess.remove(put.evicted[i])
+          }
+          if (previous !== targetPath) root._dropArtFile(previous)
         } else {
           root.safeArtPath = ""
           root.artAccent = ""
           root.artBase = ""
+          var failed = root._artCurrentFile
+          root._artCurrentFile = ""
+          root._dropArtFile(failed)
+          // The network was down, the file wasn't there yet...: later.
+          artRetry.restart()
         }
       } else if (exitCode === 0) {
         artCleanupProcess.remove(targetPath)
@@ -1616,7 +1690,7 @@ Item {
   }
 
   // How old the report is: "Updated 9:02", or "Offline · updated 3 h ago"
-  // (then the rain alert stays quiet).
+  // (then the rain note stays quiet).
   readonly property var weatherAge: Model.weatherAge(weatherFetchedAt, root.now)
   readonly property bool weatherLoading: weatherProcess.running
 
@@ -1997,8 +2071,7 @@ Item {
     if (screenshot) list.push(Model.screenshotActivity(screenshot))
     if (recorded) list.push(Model.recordedActivity(recorded))
     if (firedReminder) list.push(Model.firedReminderActivity(firedReminder))
-    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates))
-    if (weatherEnabled) list.push(Model.rainActivity(weather, weatherAge.stale))
+    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates, weatherAge.stale))
     if (modules.updates) list.push(Model.updatesActivity(shownUpdates, updatesChecking))
     for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })
@@ -2043,21 +2116,39 @@ Item {
     if (next !== dismissed) dismissed = next
   }
 
-  onActivitiesChanged: {
-    var ids = {}
-    for (var i = 0; i < activities.length; i++) ids[activities[i].id] = activities[i].priority
+  onActivitiesChanged: updateFocus()
+
+  function updateFocus() {
+    var t = Date.now()
+    // Just after a switch by hand, or with a popup open (see holdOrder).
+    var holding = t < manualUntil || heldOrder.length > 0
     var next = Model.resolveFocus({
       list: activities,
       focusId: focusId,
       knownIds: knownIds,
       autoFocus: prefs.autoFocus,
-      // A popup is open (see holdOrder): only alerts move the card.
+      // A popup is open: only alerts move the card.
       onlyAlerts: heldOrder.length > 0,
       manualUntil: manualUntil,
-      now: Date.now()
+      now: t
     })
-    knownIds = ids
+    next = Model.preferPlaying(activities, next, prefs.autoFocus, holding)
+    var seen = Model.rememberKnown(activities, knownIds, next, prefs.autoFocus && holding)
+    knownIds = seen.known
     if (next !== focusId) focusId = next
+    // Nothing else may update once the switch by hand wears off (everything
+    // paused: no ticking), so look again then. Closing the popup updates by itself.
+    if (seen.pending && t < manualUntil) {
+      pendingFocus.interval = manualUntil - t + 50
+      pendingFocus.restart()
+    } else {
+      pendingFocus.stop()
+    }
+  }
+
+  Timer {
+    id: pendingFocus
+    onTriggered: root.updateFocus()
   }
 
   // Gives `id` the focus as if it had just shown up: only with "Focus new
@@ -2138,7 +2229,7 @@ Item {
   function dismiss(activityId) {
     var a = null
     for (var i = 0; i < activities.length; i++) if (activities[i].id === activityId) a = activities[i]
-    if (!a || a.ambient) return false
+    if (!Model.canDismiss(a)) return false
     if (a.module === "push") return removePush(a.id.slice(5))
     var next = {}
     for (var k in dismissed) next[k] = dismissed[k]
@@ -2310,6 +2401,8 @@ Item {
 
   // Re-read the polled sources right away when a module is switched back on.
   onModulesChanged: {
+    // Scripts turned off: nothing is kept for them (or keeps the clock ticking).
+    if (!modules.push && Object.keys(pushes).length > 0) pushes = ({})
     refreshReminders()
     refreshRecording()
     refreshModes()
@@ -2335,12 +2428,10 @@ Item {
   IpcHandler {
     target: "nowbar"
 
-    // Open the popup on the options: settings [activities|look|popup|weather|updates]
+    // Open the popup on the options: settings [media|timers|weather|updates|look|shortcuts|omarchy]
     function settings(tab: string): string {
-      var t = String(tab || "")
-      if (t === "timers" || t === "quick") t = "popup"   // the tab's old names
-      if (t !== "" && ["activities", "look", "popup", "weather", "updates"].indexOf(t) === -1)
-        return "unknown tab: use activities, look, popup, weather or updates"
+      var t = Model.settingsPage(tab)
+      if (t === null) return "unknown page: use " + Model.SETTINGS_PAGES.join(", ")
       root.settingsRequested(t)
       if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
       return "ok"
@@ -2361,10 +2452,10 @@ Item {
     function focus(id: string): string { return root.focusOn(id) ? "ok" : "not found" }
     // Middle-click equivalent on the focused activity.
     function primary(): string { return root.focused && root.primary(root.focused.id) ? "ok" : "none" }
-    // The camera/microphone card is a privacy warning: only a click hides it,
-    // so a process using them can't make it go away through IPC.
+    // The camera/microphone card is a privacy warning: nothing hides it, so a
+    // process using them can't make it go away through IPC.
     function dismiss(): string {
-      if (root.focused && root.focused.module === "privacy") return "refused: hide it from the Now Bar itself"
+      if (root.focused && root.focused.module === "privacy") return "refused: the camera and microphone card can't be hidden"
       return root.focused && root.dismiss(root.focused.id) ? "ok" : "none"
     }
     // Any action of any activity, e.g. `act timer cancel`, `act media next`.

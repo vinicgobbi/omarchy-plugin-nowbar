@@ -70,6 +70,8 @@ omarchy-shell nowbar status
   widget's settings to the service
 - `WeatherCard.qml` — the weather card's layout (data from
   `NowbarModel.parseWttr`)
+- `MediaHills.qml` — the hills over the media card's seek bar (their shapes
+  come from `NowbarModel.js`)
 - `AdvancedSettings.qml` — the options view inside the popup
 - `bin/nowbar-weather-widget` — `replace` / `restore` / `status`: turns
   `omarchy.weather` off (or back on, where it was) and adds (or removes) a marked block in
