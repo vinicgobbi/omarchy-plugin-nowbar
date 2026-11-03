@@ -1,3 +1,30 @@
+## v0.7.0 (2026-11-03)
+
+### BREAKING CHANGE
+
+- a opção pillWidth deixa de existir e maxWidth passa a limitar a pílula inteira.
+
+### Feat
+
+- **pilula**: logo do player em vetor, com nota como ícone genérico
+- **pilula**: remove o progresso da mídia da pílula
+- **pilula**: largura vira tamanho máximo, sem modo fixo
+- **opcoes**: redesenha as opções como lista com páginas de detalhe
+- **midia**: card no estilo One UI com capa de fundo e ondas
+- **pilula**: cor da capa e do céu, ícone do app e texto com fade
+
+### Fix
+
+- **pilula**: ícone do app não estoura mais em uma cor
+- **midia**: suaviza os cantos da capa no card de mídia
+- **push**: apaga os pushes ao desligar o módulo de scripts
+- **capas**: tenta de novo capa que falhou e guarda as recentes
+- **midia**: barra de tempo não some após seek no Firefox
+- **pilula**: gesto do touchpad troca uma atividade só
+- **privacidade**: card de câmera e microfone não pode ser escondido
+- **clima**: aviso de chuva vira nota no card de clima
+- **foco**: novidade durante a trava toma a pílula depois dela
+
 ## v0.6.0 (2026-10-10)
 
 ### Feat
