@@ -374,6 +374,8 @@ Item {
   readonly property string _artCacheDir: (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")) + "/omarchy/vinicgobbi.nowbar"
 
   readonly property string _artFetchScript: [
+    // Yours alone, like everything else this plugin keeps.
+    "umask 077",
     "dir=$(dirname -- \"$2\")",
     "mkdir -p -- \"$dir\" || exit 1",
     "tmp=\"$2.tmp\"",
@@ -527,7 +529,7 @@ Item {
   function initArtCache() {
     // Sweep anything left behind by a crashed previous session before this
     // one starts writing to the same cache directory.
-    artStartupCleanupProcess.command = ["sh", "-c", "rm -rf -- \"$1\"; mkdir -p -- \"$1\"", "_", root._artCacheDir]
+    artStartupCleanupProcess.command = ["sh", "-c", "umask 077; rm -rf -- \"$1\"; mkdir -p -- \"$1\"", "_", root._artCacheDir]
     artStartupCleanupProcess.running = true
     root.refreshArt()
   }
@@ -1050,7 +1052,8 @@ Item {
       var thumb = root._artCacheDir + "/recording-" + Date.now() + ".png"
       recordedCheck.thumb = thumb
       recordedCheck.command = ["sh", "-c",
-        "[ -e /tmp/omarchy-screenrecord-filename ] && exit 2; "
+        // The thumbnail shows your screen: yours alone.
+        "umask 077; [ -e /tmp/omarchy-screenrecord-filename ] && exit 2; "
         + "[ -f \"$1\" ] && [ ! -L \"$1\" ] && [ ! -e \"${1%.mp4}-processed.mp4\" ] || exit 2; "
         + "command -v ffmpegthumbnailer >/dev/null 2>&1 && ffmpegthumbnailer -i \"$1\" -o \"$2\" -s 256 -q 6 >/dev/null 2>&1; "
         // 0: with a thumbnail, 3: without one (the card shows an icon).
