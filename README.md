@@ -8,8 +8,8 @@ activities, and click it for the details and controls.
 ## What it does
 
 - **One pill for all live activities.** It shows the most important one, with
-  a thin progress line and a `2/4` position marker. The pill keeps a fixed
-  size (or fits its text, up to that size, if you prefer); longer text goes
+  a thin progress line and a `2/4` position marker. The pill takes only the
+  room what it shows needs, up to a maximum width; longer text goes
   by whole each time it changes and then rests, faded where it's cut (or
   scrolls round and round, or is cut with "…").
 - **A popup carousel** with ‹ › arrows, dots and ←/→ keys. Each card has the
@@ -429,10 +429,11 @@ pages.
 - The other activities (reminders, recording, dictation, camera/mic, modes and
   VPN, battery, Bluetooth, screenshots, scripts) are just a switch on the list,
   next to whether a new activity takes the pill.
-- **Appearance:** the pill's width (fixed, or fit to its text), how long text
+- **Appearance:** the pill's maximum width (it takes only the room what it
+  shows needs, up to that), how long text
   behaves (once, in a loop, or cut), what it shows with nothing going on (the
   weather, an empty pill, or nothing), the dynamic colors, and the animations.
-  Under More: the width in pixels, the progress line and the `2/4` marker.
+  Under More: the progress line and the `2/4` marker.
 - **Popup shortcuts:** the two rows at the bottom of the popup. Quick toggles:
   show them or not, and which ones. Quick start: show it or not, the timer buttons
   (minutes, comma separated; empty for none), which extras (stopwatch, Pomodoro,

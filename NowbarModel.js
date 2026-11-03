@@ -2284,8 +2284,7 @@ function defaultPrefs() {
     mediaIgnore: "",        // players kept out of the Now Bar, comma separated
     animations: true,       // the popup unfolds from the pill, cards and sections slide in
     textMode: "once",       // text longer than the pill: "once" (goes by once per novelty, then rests faded), "scroll" (round and round) or "ellipsis" (cut with ...)
-    maxWidth: 220,          // width of the text area: the pill always has this size (or at most, with "fit")
-    pillWidth: "fixed",     // "fixed": always maxWidth; "fit": as wide as the text, up to maxWidth
+    maxWidth: 220,          // the pill is as wide as what it shows, up to this (px)
     timerPresets: DEFAULT_PRESETS, // quick start timers, minutes
     pomodoroFocus: 25,
     pomodoroBreak: 5,
@@ -2314,7 +2313,6 @@ function normalizePrefs(input) {
   for (var k in d) if (typeof d[k] === "boolean") out[k] = typeof src[k] === "boolean" ? src[k] : d[k]
   out.whenEmpty = src.whenEmpty === "hide" || src.whenEmpty === "icon" ? src.whenEmpty : "brief"
   out.textMode = src.textMode === "ellipsis" || src.textMode === "scroll" ? src.textMode : "once"
-  out.pillWidth = src.pillWidth === "fit" ? "fit" : "fixed"
   out.weatherUnit = src.weatherUnit === "metric" || src.weatherUnit === "imperial" ? src.weatherUnit : "auto"
   out.maxWidth = clampInt(src.maxWidth, 80, 600, d.maxWidth)
   var presets = parsePresets(src.timerPresets === undefined ? d.timerPresets : src.timerPresets)
@@ -2347,7 +2345,8 @@ function entrySettings(prefs, existing) {
   var d = defaultPrefs()
   var out = {}
   var src = existing && typeof existing === "object" ? existing : {}
-  for (var k in src) if (!(k in d) && k !== "id") out[k] = src[k]
+  // "pillWidth" is gone: the pill always fits what it shows, up to maxWidth.
+  for (var k in src) if (!(k in d) && k !== "id" && k !== "pillWidth") out[k] = src[k]
   for (var name in d) if (prefs[name] !== d[name]) out[name] = prefs[name]
   return out
 }
@@ -2395,7 +2394,7 @@ function settingsSummary(page, prefs, info) {
     return "Every " + intervalLabel(p.updateInterval) + " · " + n + (n === 1 ? " source" : " sources")
   }
   if (page === "look") {
-    return (p.pillWidth === "fit" ? "Fits its text" : "Fixed width") + " · colors " + (p.coverAccent ? "from the cover" : "from the theme")
+    return "Up to " + p.maxWidth + " px · colors " + (p.coverAccent ? "from the cover" : "from the theme")
   }
   if (page === "shortcuts") {
     var rows = [p.showQuickToggles ? "Quick toggles" : "", p.showQuickStart ? "Quick start" : ""].filter(function(x) { return x })

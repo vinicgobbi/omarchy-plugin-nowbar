@@ -91,6 +91,7 @@ Panel {
     }
   }
   onOpenedChanged: {
+    if (opened) anchorWidth = width
     unfold(opened)
     // The carousel keeps its order while it is on screen.
     if (service) service.holdOrder(opened)
@@ -1085,7 +1086,10 @@ Panel {
     anchors.centerIn: parent
 
     readonly property bool hasActivity: root.pillItem !== null
-    readonly property real textMax: root.prefs.maxWidth
+    // The option is for the whole pill: the text gets what's left of it after
+    // the padding, the icon and the marker.
+    readonly property real textMax: Math.max(Style.space(40), root.prefs.maxWidth - Style.space(16) - iconSlot.width - pillContent.spacing
+      - (countSlot.visible ? countSlot.width + pillContent.spacing : 0))
     readonly property real progress: hasActivity && root.prefs.showProgress ? root.pillItem.progress : -1
 
     height: root.vertical ? pillContent.implicitHeight + Style.space(12) : Math.max(Style.space(18), root.barSize - Style.space(10))
@@ -1162,8 +1166,8 @@ Panel {
       visible: opacity > 0
     }
 
-    // Horizontal: icon, text, "2/4", each in a fixed slot so the pill keeps
-    // the same size whatever it shows. Vertical bars only have room for the icon.
+    // Horizontal: icon, text, "2/4", each taking the room it needs, so the pill
+    // is as wide as what it shows. Vertical bars only have room for the icon.
     Row {
       id: pillContent
       anchors.centerIn: parent
@@ -1172,6 +1176,7 @@ Panel {
       // Media: the player's app in one color (three little bars dancing, or
       // the note when paused, if the app isn't found); anything else: its icon.
       Item {
+        id: iconSlot
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(16)
         height: pillIcon.implicitHeight
@@ -1250,15 +1255,15 @@ Panel {
         id: textClip
         visible: !root.vertical
         anchors.verticalCenter: parent.verticalCenter
-        // "Fit": as wide as the text, up to the width set; else always that.
-        width: root.prefs.pillWidth === "fit" ? Math.min(pill.textMax, Math.ceil(fullWidth)) : pill.textMax
+        // As wide as the text, up to what the pill has room for.
+        width: Math.min(pill.textMax, Math.ceil(fullWidth))
         Behavior on width {
           enabled: root.motion
           NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
         }
         height: implicitHeight
-        // Against the limit, not the width: in "fit" the width is still growing
-        // to the text for a moment.
+        // Against the limit, not the width: that is still easing to the text
+        // for a moment.
         limit: pill.textMax
         centered: true
         text: pill.hasActivity ? root.pillItem.pillText : "Nothing going on"
@@ -1268,28 +1273,16 @@ Panel {
         playKey: !pill.hasActivity ? "" : root.pillItem.id + "\n" + (root.pillItem.module === "media" ? root.pillItem.pillText : root.pillItem.signature)
       }
 
-      Item {
-        visible: !root.vertical && root.prefs.showCount
+      // Only when there is something to count.
+      Text {
+        id: countSlot
+        visible: !root.vertical && root.prefs.showCount && root.count > 1 && root.pillItem !== null
         anchors.verticalCenter: parent.verticalCenter
-        width: countMetrics.width
-        height: countText.implicitHeight
-
-        TextMetrics {
-          id: countMetrics
-          font: countText.font
-          text: "8/8"
-        }
-
-        Text {
-          id: countText
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          textFormat: Text.PlainText
-          text: root.count > 1 && root.pillItem !== null ? (root.focusIndex + 1) + "/" + root.count : ""
-          color: Util.alpha(root.pillFg, 0.62)
-          font.family: root.family
-          font.pixelSize: Style.font.caption
-        }
+        textFormat: Text.PlainText
+        text: (root.focusIndex + 1) + "/" + root.count
+        color: Util.alpha(root.pillFg, 0.62)
+        font.family: root.family
+        font.pixelSize: Style.font.caption
       }
     }
 
@@ -1365,9 +1358,18 @@ Panel {
 
   readonly property var presets: prefs.presetSeconds
 
+  // The popup stays where it opened: switching cards changes the pill's width,
+  // and centered on the pill it would jump sideways under the pointer.
+  property real anchorWidth: 0
+  Item {
+    id: popupAnchor
+    width: root.opened ? root.anchorWidth : root.width
+    height: root.height
+  }
+
   KeyboardPanel {
     id: popup
-    anchorItem: root
+    anchorItem: popupAnchor
     bar: root.bar
     owner: root
     open: root.opened

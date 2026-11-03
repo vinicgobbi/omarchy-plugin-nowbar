@@ -279,6 +279,8 @@ test("prefs normalize and store only non-defaults", () => {
   assert.equal(M.normalizePrefs({ textMode: "ellipsis" }).textMode, "ellipsis")
   assert.equal(p.maxWidth, 600)
   assert.equal(p.autoFocus, true)
+  assert.equal(p.pillWidth, undefined)
+  assert.equal(M.entrySettings(p, { pillWidth: "fit" }).pillWidth, undefined)
   assert.deepEqual(M.entrySettings(p, { other: 1, id: "x" }), { other: 1, moduleCharging: false, maxWidth: 600 })
 })
 
@@ -1126,7 +1128,7 @@ test("settingsSummary says where each page stands", () => {
   assert.equal(M.settingsSummary("weather", M.normalizePrefs({ weatherUnit: "metric" }), {}), "Automatic location · °C")
   assert.match(M.settingsSummary("updates", p), /^Every 3 h · \d+ sources$/)
   assert.equal(M.settingsSummary("updates", M.normalizePrefs({ moduleUpdates: false })), "Off")
-  assert.equal(M.settingsSummary("look", p), "Fixed width · colors from the cover")
+  assert.equal(M.settingsSummary("look", p), "Up to 220 px · colors from the cover")
   assert.equal(M.settingsSummary("shortcuts", p), "Quick toggles and Quick start")
   assert.equal(M.settingsSummary("shortcuts", M.normalizePrefs({ showQuickToggles: false, showQuickStart: false })), "None shown")
   assert.equal(M.settingsSummary("omarchy", p, {}), "Using Omarchy's widgets")

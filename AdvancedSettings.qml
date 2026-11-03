@@ -1133,17 +1133,16 @@ Column {
       visible: root.page === "look"
 
       Option {
-        label: "Pill width"
-        hint: root.prefs.pillWidth === "fit" ? "As wide as its text." : "Always the same, whatever it shows."
-        ButtonGroup {
+        label: "Maximum width (px)"
+        hint: "The pill takes only the room each thing needs, up to this."
+        NumberField {
           foreground: root.foreground
           fontFamily: root.fontFamily
-          options: [
-            { value: "fixed", label: "Fixed" },
-            { value: "fit", label: "Fit text" }
-          ]
-          value: root.prefs.pillWidth
-          onChanged: function(v) { root.changed("pillWidth", v) }
+          value: root.prefs.maxWidth
+          from: 80
+          to: 600
+          stepSize: 20
+          onModified: function(v) { root.changed("maxWidth", v) }
         }
       }
 
@@ -1193,19 +1192,6 @@ Column {
       }
 
       More {
-        Option {
-          label: root.prefs.pillWidth === "fit" ? "Max text width (px)" : "Text width (px)"
-          NumberField {
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            value: root.prefs.maxWidth
-            from: 80
-            to: 600
-            stepSize: 20
-            onModified: function(v) { root.changed("maxWidth", v) }
-          }
-        }
-
         SwitchOption { key: "showProgress"; label: "Progress line in the pill" }
         SwitchOption { key: "showCount"; label: "Position in the pill (2/4)" }
       }
