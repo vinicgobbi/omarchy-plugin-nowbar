@@ -2400,6 +2400,8 @@ Item {
 
   // Re-read the polled sources right away when a module is switched back on.
   onModulesChanged: {
+    // Scripts turned off: nothing is kept for them (or keeps the clock ticking).
+    if (!modules.push && Object.keys(pushes).length > 0) pushes = ({})
     refreshReminders()
     refreshRecording()
     refreshModes()
