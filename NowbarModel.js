@@ -2196,6 +2196,40 @@ function readableOn(hex) {
   return y > 0.6 ? "#1a1a1a" : "#ffffff"
 }
 
+// The hills over the played part of the media card's seek bar, back to front
+// (after One UI 9; a loop that doesn't follow the sound). `humps` fit in the
+// played part, never narrower than `width` (in px at scale 1), flowing toward
+// the handle at `speed` humps per second. height: share of the tallest; white:
+// how much white goes into the bar's color.
+var HILLS = [
+  { humps: 2, width: 70, height: 1.0, white: 0.1, alpha: 0.85, speed: 0.71 },
+  { humps: 4, width: 45, height: 0.75, white: 0.5, alpha: 0.55, speed: 1.07 },
+  { humps: 8, width: 28, height: 0.6, white: 0.9, alpha: 0.65, speed: 1.43 }
+]
+var HILLS_START = 1.5 // how much taller they are at the start of the track
+var HILLS_GROW = 36   // px of played bar under which they grow from flat
+
+// How many humps of layer `layer` fit in a played part `span` px long.
+function hillHumps(layer, span) {
+  return Math.max(0.5, Math.min(layer.humps, span / layer.width))
+}
+
+// How tall the hills are overall (share of the tallest): taller early in the
+// track, down to their height by halfway, growing from flat over the first px.
+function hillsScale(value, span) {
+  var v = Math.max(0, Math.min(1, value))
+  return Math.min(1, Math.max(0, span) / HILLS_GROW) * (1 + (HILLS_START - 1) * Math.max(0, 1 - 2 * v))
+}
+
+// Height of layer number `index` at `t` (0..1 along the played part), as a
+// share of the tallest: each hump is born flat at the start, is tallest halfway
+// and is gone at the handle. Squared: smooth valleys, no cusp where humps meet.
+function hillHeight(layer, index, t, humps, time) {
+  var x = Math.max(0, Math.min(1, t))
+  var hump = Math.pow(Math.sin(Math.PI * (humps * x - (layer.speed * time + index * 0.37))), 2)
+  return layer.height * Math.pow(Math.max(0, Math.sin(Math.PI * x)), 1.5) * hump
+}
+
 // --- bar widget preferences -----------------------------------------------------------
 
 var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
@@ -2469,5 +2503,10 @@ if (typeof module !== "undefined") {
     pillFill: pillFill,
     rgbToHsl: rgbToHsl,
     readableOn: readableOn,
+    HILLS: HILLS,
+    HILLS_START: HILLS_START,
+    hillHumps: hillHumps,
+    hillsScale: hillsScale,
+    hillHeight: hillHeight
   }
 }

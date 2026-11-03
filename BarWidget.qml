@@ -61,7 +61,6 @@ Panel {
   // Screenshot cards show the file itself (a local file in the screenshots
   // folder; decoded at thumbnail size only).
   readonly property string shotUrl: focused && (focused.module === "screenshot" || focused.id === "recorded") && focused.image ? Util.fileUrl(focused.image) : ""
-  readonly property string cardImage: coverUrl || shotUrl
 
   // The weather card is "ambient": it counts in the carousel and in the "2/3"
   // like any activity, but never takes the pill from a live one. Alone, it is
@@ -188,6 +187,9 @@ Panel {
   }
 
   readonly property bool isMedia: focused !== null && focused.module === "media"
+  // The card stands on the cover: its text is white whatever the theme.
+  readonly property bool mediaHasCover: isMedia && coverUrl !== ""
+  readonly property color mediaFg: mediaHasCover ? "white" : popupFg
 
   // The app behind the focused player: from its desktop entry, or its name when
   // the entry doesn't match (Spotify's Flatpak says "spotify", its app is
@@ -231,32 +233,28 @@ Panel {
   // Another track on the same player. In the popup, the old title slides out
   // and fades while the new one comes in from the side of the change (the
   // cover crossfades by itself once loaded); the pill's text slides too.
-  readonly property string trackKey: isMedia ? focused.id + "\n" + focused.title + "\n" + focused.subtitle : ""
+  readonly property string trackKey: isMedia ? focused.id + "\n" + focused.title + "\n" + focused.artist : ""
   property string lastTrackKey: ""
   property string lastTitle: ""
-  property string lastSubtitle: ""
-  property string lastAlbum: ""
+  property string lastArtist: ""
   property string ghostTitle: ""
-  property string ghostSubtitle: ""
-  property string ghostAlbum: ""
+  property string ghostArtist: ""
   onTrackKeyChanged: {
     var before = lastTrackKey.split("\n")[0]
     var now = trackKey.split("\n")[0]
     var sameplayer = now !== "" && now === before
     ghostTitle = lastTitle
-    ghostSubtitle = lastSubtitle
-    ghostAlbum = lastAlbum
+    ghostArtist = lastArtist
     lastTrackKey = trackKey
     lastTitle = isMedia ? focused.title : ""
-    lastSubtitle = isMedia ? focused.subtitle : ""
-    lastAlbum = isMedia && focused.album !== focused.title ? focused.album : ""
+    lastArtist = isMedia ? focused.artist : ""
     if (sameplayer && motion) {
       if (opened) {
         trackSwap.stop()
         ghostSlide.to = -trackDir * Style.space(36)
         trackSlide.from = trackDir * Style.space(40)
         trackShift.x = trackSlide.from
-        liveText.opacity = 0
+        liveLine.opacity = 0
         trackSwap.start()
       }
       if (pillItem !== null && pillItem.id === now) {
@@ -272,23 +270,22 @@ Panel {
     // The old title leaves quickly; the new one only starts once it is
     // nearly gone, so the two never sit on top of each other.
     NumberAnimation { id: ghostSlide; target: ghostShift; property: "x"; from: 0; duration: 200; easing.type: Easing.InCubic }
-    NumberAnimation { target: ghostText; property: "opacity"; from: 1; to: 0; duration: 160; easing.type: Easing.InQuad }
+    NumberAnimation { target: ghostLine; property: "opacity"; from: 1; to: 0; duration: 160; easing.type: Easing.InQuad }
     SequentialAnimation {
       PauseAnimation { duration: 150 }
       ParallelAnimation {
         NumberAnimation { id: trackSlide; target: trackShift; property: "x"; to: 0; duration: 460; easing.type: Easing.OutQuint }
-        NumberAnimation { target: liveText; property: "opacity"; to: 1; duration: 340; easing.type: Easing.OutCubic }
+        NumberAnimation { target: liveLine; property: "opacity"; to: 1; duration: 340; easing.type: Easing.OutCubic }
       }
     }
     // Whatever happens, end with the new text in place.
-    onStopped: { trackShift.x = 0; liveText.opacity = 1; ghostText.opacity = 0 }
+    onStopped: { trackShift.x = 0; liveLine.opacity = 1; ghostLine.opacity = 0 }
   }
 
-  // Title, subtitle and (media) album, as the card shows them.
+  // Title and subtitle, as a card shows them.
   component CardText: Column {
     property string title: ""
     property string subtitle: ""
-    property string album: ""
     spacing: Style.space(3)
 
     Text {
@@ -310,17 +307,6 @@ Panel {
       color: Util.alpha(root.popupFg, 0.72)
       font.family: root.family
       font.pixelSize: Style.font.bodySmall
-      elide: Text.ElideRight
-    }
-
-    Text {
-      width: parent.width
-      visible: text !== ""
-      textFormat: Text.PlainText
-      text: parent.album
-      color: Util.alpha(root.popupFg, 0.58)
-      font.family: root.family
-      font.pixelSize: Style.font.caption
       elide: Text.ElideRight
     }
   }
@@ -535,19 +521,29 @@ Panel {
     return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 0.6 ? Qt.rgba(0.07, 0.07, 0.08, 1) : Qt.rgba(1, 1, 1, 1)
   }
 
-  // One round media button; the primary one (play/pause) is filled with the
-  // accent. `on` lights shuffle / repeat.
+  // One round media button. Over a cover they're translucent circles; without
+  // one, play/pause is filled with the accent. `on` lights shuffle / repeat.
+  // `keepPlace`: when the player can't do it, it stays there, faded, so the row
+  // keeps its shape from one track to the next.
   component MediaKey: Item {
     id: mk
     property string actionId: ""
     property bool primary: false
     property bool on: false
+    property bool keepPlace: false
     property string tip: ""
-    // Play/pause the biggest, previous/next a size down, the rest smaller.
-    readonly property bool transport: actionId === "previous" || actionId === "next"
+    // Previous, play and next the same size; shuffle and repeat smaller, the
+    // ±10 s beside the times smaller still.
+    readonly property bool transport: primary || actionId === "previous" || actionId === "next"
+    readonly property bool compact: actionId === "back10" || actionId === "forward10"
     readonly property var action: root.mediaAction(actionId)
-    visible: action !== null
-    width: Style.space(primary ? 50 : (transport ? 38 : 32))
+    readonly property bool filled: primary && !root.mediaHasCover
+    readonly property color glyphColor: filled ? root.onAccent(root.accentFor(root.focused))
+      : (on && !root.mediaHasCover ? root.accentFor(root.focused) : root.mediaFg)
+    visible: action !== null || keepPlace
+    enabled: action !== null
+    opacity: enabled ? 1 : 0.35
+    width: Style.space(transport ? 50 : (compact ? 26 : 36))
     height: width
     // Keys of different sizes, centered on one line (a Row lines them up by
     // the top otherwise).
@@ -562,10 +558,11 @@ Panel {
     Rectangle {
       anchors.fill: parent
       radius: width / 2
-      color: mk.primary ? root.accentFor(root.focused) : Util.alpha(root.popupFg, mkArea.containsMouse ? 0.12 : 0)
+      color: mk.filled ? root.accentFor(root.focused)
+        : Util.alpha(root.mediaFg, mkArea.containsMouse ? 0.2 : (mk.transport || mk.on ? 0.12 : 0))
       // Only the hover; the accent animates by itself (coverAccent).
       Behavior on color {
-        enabled: root.motion && !mk.primary
+        enabled: root.motion && !mk.filled
         ColorAnimation { duration: 160 }
       }
     }
@@ -575,11 +572,11 @@ Panel {
       // The play triangle looks off to the left when centered by its box.
       anchors.horizontalCenterOffset: mk.action && mk.action.icon === "\u{f040a}" ? Math.round(width * 0.08) : 0
       textFormat: Text.PlainText
-      text: mk.action ? mk.action.icon : ""
-      color: mk.primary ? root.onAccent(root.accentFor(root.focused)) : (mk.on ? root.accentFor(root.focused) : root.popupFg)
-      opacity: mk.primary || mk.on || mk.actionId !== "shuffle" && mk.actionId !== "loop" ? 1 : 0.55
+      text: mk.action ? mk.action.icon : (mk.actionId === "previous" ? "\u{f04ae}" : "\u{f04ad}")
+      color: mk.glyphColor
+      opacity: mk.transport || mk.on ? 1 : 0.7
       font.family: root.family
-      font.pixelSize: mk.primary ? Style.font.displayLarge : (mk.transport ? Style.font.display : Style.font.iconLarge)
+      font.pixelSize: mk.primary ? Style.font.displayLarge : (mk.transport ? Style.font.display : (mk.compact ? Style.font.body : Style.font.iconLarge))
     }
 
     // A dot under shuffle / repeat while on.
@@ -590,7 +587,8 @@ Panel {
       radius: width / 2
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
-      color: root.accentFor(root.focused)
+      anchors.bottomMargin: Style.space(2)
+      color: mk.glyphColor
     }
 
     MouseArea {
@@ -912,30 +910,32 @@ Panel {
     property url source: ""
     property bool blurred: false
     property Item mask: null
+    property int decodeSize: 256
     readonly property bool ready: img.status === Image.Ready && String(img.source) !== ""
+    readonly property bool effect: blurred || mask !== null
     opacity: 0
 
     Image {
       id: img
       anchors.fill: parent
-      visible: !cl.blurred
+      visible: !cl.effect
       source: cl.source
       fillMode: Image.PreserveAspectCrop
       asynchronous: true
       // Blurred, a small one does (and is cheaper to blur).
-      sourceSize.width: cl.blurred ? 96 : 256
-      sourceSize.height: cl.blurred ? 96 : 256
+      sourceSize.width: cl.blurred ? 96 : cl.decodeSize
+      sourceSize.height: cl.blurred ? 96 : cl.decodeSize
     }
 
     MultiEffect {
       anchors.fill: parent
-      visible: cl.blurred
+      visible: cl.effect
       source: img
       autoPaddingEnabled: false
-      blurEnabled: true
+      blurEnabled: cl.blurred
       blur: 1.0
       blurMax: 48
-      saturation: 0.2
+      saturation: cl.blurred ? 0.2 : 0
       maskEnabled: cl.mask !== null
       maskSource: cl.mask
     }
@@ -950,6 +950,7 @@ Panel {
     property bool blurred: false
     property Item mask: null
     property real enterScale: 0.94
+    property int decodeSize: 256
     property int front: 0
     readonly property bool showing: la.opacity > 0.01 || lb.opacity > 0.01
 
@@ -995,8 +996,8 @@ Panel {
     // Stand-in target when there is no old cover to fade out.
     Item { id: nobody; visible: false }
 
-    CoverLayer { id: la; anchors.fill: parent; blurred: cs.blurred; mask: cs.mask; onReadyChanged: cs.landed(la) }
-    CoverLayer { id: lb; anchors.fill: parent; blurred: cs.blurred; mask: cs.mask; onReadyChanged: cs.landed(lb) }
+    CoverLayer { id: la; anchors.fill: parent; blurred: cs.blurred; mask: cs.mask; decodeSize: cs.decodeSize; onReadyChanged: cs.landed(la) }
+    CoverLayer { id: lb; anchors.fill: parent; blurred: cs.blurred; mask: cs.mask; decodeSize: cs.decodeSize; onReadyChanged: cs.landed(lb) }
 
     ParallelAnimation {
       id: swap
@@ -1692,15 +1693,13 @@ Panel {
               Row {
                 width: parent.width
                 spacing: Style.space(12)
-                visible: !(root.isWeather && !!root.focused.weather)
+                visible: !root.isMedia && !(root.isWeather && !!root.focused.weather)
 
                 Rectangle {
                   id: cardIcon
-                  // Media with cover art gets the cover, like omarchy-plugin-media;
-                  // a screenshot gets its thumbnail.
-                  readonly property bool hasCover: root.cardImage !== ""
-                  readonly property bool raisable: root.isMedia && root.focused.canRaise === true
-                  width: Style.space(root.shotUrl !== "" ? 96 : (hasCover ? 72 : 48))
+                  // A screenshot gets its thumbnail.
+                  readonly property bool hasCover: root.shotUrl !== ""
+                  width: Style.space(hasCover ? 96 : 48)
                   height: width
 
                   Behavior on width {
@@ -1709,19 +1708,13 @@ Panel {
                   }
                   radius: hasCover ? Style.spacing.labelGap : width / 2
                   color: Util.alpha(root.accentFor(root.focused), 0.2)
-                  scale: coverArea.pressed ? 0.95 : 1
-
-                  Behavior on scale {
-                    enabled: root.motion
-                    NumberAnimation { duration: 120 }
-                  }
 
                   // The next cover crossfades in once loaded, with a slight zoom.
                   CoverSwap {
                     anchors.fill: parent
                     anchors.margins: Style.space(2)
                     visible: cardIcon.hasCover
-                    source: root.cardImage
+                    source: root.shotUrl
                   }
 
                   // Timer, Pomodoro, sleep timer: a ring around the icon fills up.
@@ -1731,32 +1724,6 @@ Panel {
                     thickness: Math.max(3, Style.space(3))
                     progress: visible ? root.focused.progress : 0
                     color: root.accentFor(root.focused)
-                  }
-
-                  // Click the cover: bring the player's window up.
-                  MouseArea {
-                    id: coverArea
-                    anchors.fill: parent
-                    enabled: cardIcon.raisable
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.mediaKey("raise")
-                  }
-
-                  Rectangle {
-                    anchors.fill: parent
-                    radius: parent.radius
-                    visible: coverArea.containsMouse
-                    color: Util.alpha("black", 0.35)
-
-                    Text {
-                      anchors.centerIn: parent
-                      textFormat: Text.PlainText
-                      text: "\u{f03cc}"
-                      color: "white"
-                      font.family: root.family
-                      font.pixelSize: Style.font.iconLarge
-                    }
                   }
 
                   Text {
@@ -1770,65 +1737,24 @@ Panel {
                   }
                 }
 
-                // The card's text; on a track change the old one (ghost) slides
-                // out while the new one slides in, both clipped to this box.
-                Item {
-                  id: cardText
-                  width: parent.width - cardIcon.width - parent.spacing - (mediaHide.visible ? mediaHide.width + parent.spacing : 0)
-                  height: liveText.implicitHeight
+                CardText {
+                  width: parent.width - cardIcon.width - parent.spacing
                   anchors.verticalCenter: parent.verticalCenter
-                  clip: true
-
-                  CardText {
-                    id: liveText
-                    width: parent.width
-                    title: root.focused ? root.focused.title : ""
-                    subtitle: root.focused ? root.focused.subtitle : ""
-                    album: root.isMedia && root.focused.album !== root.focused.title ? root.focused.album : ""
-                    transform: Translate { id: trackShift }
-                  }
-
-                  CardText {
-                    id: ghostText
-                    width: parent.width
-                    opacity: 0
-                    visible: opacity > 0
-                    title: root.ghostTitle
-                    subtitle: root.ghostSubtitle
-                    album: root.ghostAlbum
-                    transform: Translate { id: ghostShift }
-                  }
-                }
-
-                // Media cards have their own controls below; hiding sits here.
-                Button {
-                  id: mediaHide
-                  visible: root.isMedia
-                  anchors.top: parent.top
-                  iconText: "\u{f0209}"
-                  foreground: Util.alpha(root.popupFg, 0.85)
-                  tooltipText: "Hide until it changes (x / right click)"
-                  onClicked: if (root.service && root.focused) root.service.dismiss(root.focused.id)
+                  title: root.focused ? root.focused.title : ""
+                  subtitle: root.focused ? root.focused.subtitle : ""
                 }
               }
 
-              // Media you can seek: click or drag along the bar.
+              // What's left to go, or how far along.
               Item {
                 id: progressBar
                 width: parent.width
-                visible: root.focused !== null && root.focused.progress >= 0
+                visible: root.focused !== null && !root.isMedia && root.focused.progress >= 0
                 readonly property real trackHeight: Style.space(root.isCharging(root.focused) ? 8 : 4)
-                height: seekable ? Style.space(16) : trackHeight
+                height: trackHeight
 
-                readonly property bool seekable: root.focused !== null && root.focused.seekable === true
-                property bool dragging: false
-                property real dragValue: 0
-                readonly property real shownValue: dragging ? dragValue : value
-
-                // Where the activity says it is, and what the bar shows. While
-                // media plays, the bar glides to each new second in a straight
-                // line instead of jumping a step each tick; a jump (another
-                // track, a seek) goes there quickly; another card, at once.
+                // Where the activity says it is, and what the bar shows: a jump
+                // goes there quickly; another card, at once.
                 readonly property real target: root.focused ? Math.max(0, Math.min(1, root.focused.progress)) : 0
                 property real value: 0
                 property string valueOf: ""
@@ -1836,16 +1762,11 @@ Panel {
                   var id = root.focused ? root.focused.id : ""
                   glide.stop()
                   if (id !== valueOf || !root.motion) { valueOf = id; value = target; return }
-                  var len = root.isMedia ? root.focused.length : 0
-                  var ahead = (target - value) * len
-                  var flowing = root.isMedia && root.focused.playing && ahead > 0 && ahead < 2.5
                   glide.to = target
-                  glide.duration = flowing ? 1050 : 320
-                  glide.easing.type = flowing ? Easing.Linear : Easing.OutCubic
                   glide.start()
                 }
 
-                NumberAnimation { id: glide; target: progressBar; property: "value" }
+                NumberAnimation { id: glide; target: progressBar; property: "value"; duration: 320; easing.type: Easing.OutCubic }
 
                 Rectangle {
                   anchors.verticalCenter: parent.verticalCenter
@@ -1857,7 +1778,7 @@ Panel {
                   ChargeWave {
                     anchors.fill: parent
                     visible: root.isCharging(root.focused)
-                    level: progressBar.shownValue
+                    level: progressBar.value
                     running: root.opened
                   }
 
@@ -1865,93 +1786,9 @@ Panel {
                     visible: !root.isCharging(root.focused)
                     height: parent.height
                     radius: parent.radius
-                    width: parent.width * progressBar.shownValue
+                    width: parent.width * progressBar.value
                     color: root.accentFor(root.focused)
                   }
-                }
-
-                Rectangle {
-                  visible: progressBar.seekable
-                  // Grows under the pointer, more while dragging.
-                  property real size: Style.space(progressBar.dragging ? 14 : (seekArea.containsMouse ? 12 : 10))
-                  Behavior on size {
-                    enabled: root.motion
-                    NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
-                  }
-                  width: size
-                  height: size
-                  radius: size / 2
-                  anchors.verticalCenter: parent.verticalCenter
-                  x: Math.max(0, Math.min(progressBar.width - size, progressBar.width * progressBar.shownValue - size / 2))
-                  color: root.accentFor(root.focused)
-                }
-
-                MouseArea {
-                  id: seekArea
-                  anchors.fill: parent
-                  enabled: progressBar.seekable
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  function valueAt(x) { return Math.max(0, Math.min(1, x / progressBar.width)) }
-                  onPressed: function(mouse) { progressBar.dragging = true; progressBar.dragValue = valueAt(mouse.x) }
-                  onPositionChanged: function(mouse) { if (progressBar.dragging) progressBar.dragValue = valueAt(mouse.x) }
-                  onReleased: {
-                    if (progressBar.dragging && root.service && root.focused) root.service.seek(root.focused.id, progressBar.dragValue)
-                    progressBar.dragging = false
-                  }
-                  onCanceled: progressBar.dragging = false
-                }
-
-                // The time under the pointer, before clicking (while dragging,
-                // the elapsed time below follows instead).
-                Rectangle {
-                  readonly property real at: seekArea.valueAt(seekArea.mouseX) * (root.focused ? root.focused.length : 0)
-                  visible: progressBar.seekable && seekArea.containsMouse && !progressBar.dragging && root.isMedia && root.focused.length > 0
-                  width: hoverTime.implicitWidth + Style.space(10)
-                  height: hoverTime.implicitHeight + Style.space(4)
-                  radius: height / 2
-                  x: Math.max(0, Math.min(progressBar.width - width, seekArea.mouseX - width / 2))
-                  y: -height - Style.space(2)
-                  color: Color.tooltip.background
-
-                  Text {
-                    id: hoverTime
-                    anchors.centerIn: parent
-                    textFormat: Text.PlainText
-                    text: Model.formatDuration(parent.at * 1000)
-                    color: Color.tooltip.text
-                    font.family: root.family
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-              }
-
-              // 1:51 ................................ -1:20 (follows a drag).
-              Item {
-                width: parent.width
-                height: elapsedText.implicitHeight
-                visible: root.isMedia && root.focused.length > 0
-                // The real position (or where it is being dragged to): the bar
-                // glides, the numbers don't count backwards on a track change.
-                readonly property real at: (progressBar.dragging ? progressBar.dragValue : progressBar.target) * (root.focused ? root.focused.length : 0)
-
-                Text {
-                  id: elapsedText
-                  anchors.left: parent.left
-                  textFormat: Text.PlainText
-                  text: Model.formatDuration(parent.at * 1000)
-                  color: Util.alpha(root.popupFg, 0.75)
-                  font.family: root.family
-                  font.pixelSize: Style.font.caption
-                }
-
-                Text {
-                  anchors.right: parent.right
-                  textFormat: Text.PlainText
-                  text: "-" + Model.formatDuration(Math.max(0, (root.focused ? root.focused.length : 0) - parent.at) * 1000)
-                  color: Util.alpha(root.popupFg, 0.75)
-                  font.family: root.family
-                  font.pixelSize: Style.font.caption
                 }
               }
 
@@ -1976,110 +1813,462 @@ Panel {
                 }
               }
 
-              //   ⤨  ↺10  ⏮  ( ⏯ )  ⏭  10↻  ⟳     (only what the player can do)
+              // --- media: laid out like One UI's. The cover fills the card, dimmed
+              // under the rest; the app on top, "title • artist" on one line that
+              // scrolls when it doesn't fit, the seek bar (hills while it plays),
+              // the controls and the volume.
               Item {
+                id: mediaCard
                 width: parent.width
-                height: mediaKeys.height
+                height: mediaBody.implicitHeight
                 visible: root.isMedia
 
-                Row {
-                  id: mediaKeys
-                  anchors.centerIn: parent
-                  spacing: Style.space(10)
+                readonly property real radius: Math.max(Style.space(12), Style.cornerRadius)
 
-                  MediaKey { actionId: "shuffle"; on: root.isMedia && root.focused.shuffle === true; tip: "Shuffle" }
-                  MediaKey { actionId: "back10"; tip: "Back 10 s ([)" }
-                  MediaKey { actionId: "previous"; tip: "Previous" }
-                  MediaKey { actionId: "playPause"; primary: true; tip: "Play / pause (Enter, middle click)" }
-                  MediaKey { actionId: "next"; tip: "Next" }
-                  MediaKey { actionId: "forward10"; tip: "Forward 10 s (])" }
-                  MediaKey {
-                    actionId: "loop"
-                    on: root.isMedia && root.focused.loop !== "" && root.focused.loop !== "none"
-                    tip: root.isMedia && root.focused.loop === "track" ? "Repeat: this track" : (root.isMedia && root.focused.loop === "playlist" ? "Repeat: all" : "Repeat: off")
+                Rectangle {
+                  anchors.fill: parent
+                  radius: mediaCard.radius
+                  color: Util.alpha(root.popupFg, 0.06)
+                }
+
+                Rectangle {
+                  id: mediaMask
+                  anchors.fill: parent
+                  radius: mediaCard.radius
+                  visible: false
+                  layer.enabled: true
+                }
+
+                // Rests a little while paused. The next one crossfades in once
+                // loaded; no zoom, so nothing pokes out past the corners.
+                CoverSwap {
+                  anchors.fill: parent
+                  mask: mediaMask
+                  enterScale: 1
+                  decodeSize: 512
+                  source: root.isMedia ? root.coverUrl : ""
+                  opacity: root.isMedia && !root.focused.playing ? 0.6 : 1
+                  Behavior on opacity {
+                    enabled: root.motion
+                    NumberAnimation { duration: 250; easing.type: Easing.OutQuad }
                   }
                 }
-              }
 
-              // Player volume (media cards whose player reports one).
-              Row {
-                id: volumeRow
-                width: parent.width
-                spacing: Style.space(8)
-                visible: root.focused !== null && root.focused.module === "media" && root.focused.volume >= 0
-
-                property bool dragging: false
-                property real dragValue: 0
-                readonly property real level: dragging ? dragValue : (root.focused && root.focused.volume >= 0 ? root.focused.volume : 0)
-
-                Text {
-                  id: volumeIcon
-                  anchors.verticalCenter: parent.verticalCenter
-                  textFormat: Text.PlainText
-                  text: volumeRow.level <= 0 ? "\u{f0581}" : (volumeRow.level < 0.5 ? "\u{f0580}" : "\u{f057e}")
-                  color: root.popupFg
-                  font.family: root.family
-                  font.pixelSize: Style.font.body
+                Rectangle {
+                  anchors.fill: parent
+                  radius: mediaCard.radius
+                  opacity: root.mediaHasCover ? 1 : 0
+                  gradient: Gradient {
+                    GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.35) }
+                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.72) }
+                  }
+                  Behavior on opacity {
+                    enabled: root.motion
+                    NumberAnimation { duration: 250 }
+                  }
                 }
 
-                Item {
-                  id: volumeTrack
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: parent.width - volumeIcon.width - volumePct.width - parent.spacing * 2
-                  height: Style.space(14)
+                Column {
+                  id: mediaBody
+                  width: parent.width
+                  readonly property real inner: width - leftPadding - rightPadding
+                  leftPadding: Style.space(14)
+                  rightPadding: Style.space(14)
+                  topPadding: Style.space(10)
+                  bottomPadding: Style.space(12)
+                  spacing: Style.space(8)
 
-                  Rectangle {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width
-                    height: Style.space(4)
-                    radius: height / 2
-                    color: Util.alpha(root.popupFg, 0.15)
+                  // Where the sound comes from; a click opens the player.
+                  Item {
+                    width: mediaBody.inner
+                    height: Math.max(mediaSource.height, mediaHide.implicitHeight)
 
                     Rectangle {
-                      height: parent.height
-                      radius: parent.radius
-                      width: parent.width * volumeRow.level
+                      id: mediaSource
+                      readonly property bool raisable: root.isMedia && root.focused.canRaise === true
+                      anchors.left: parent.left
+                      anchors.leftMargin: -Style.space(4)
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: Math.min(parent.width - mediaHide.implicitWidth, sourceRow.implicitWidth + Style.space(12))
+                      height: sourceRow.implicitHeight + Style.space(6)
+                      radius: height / 2
+                      color: Util.alpha(root.mediaFg, sourceArea.containsMouse ? 0.14 : 0)
+
+                      Row {
+                        id: sourceRow
+                        anchors.left: parent.left
+                        anchors.leftMargin: Style.space(4)
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(6)
+
+                        Image {
+                          anchors.verticalCenter: parent.verticalCenter
+                          visible: root.mediaApp !== null
+                          width: Style.space(16)
+                          height: width
+                          source: root.mediaApp ? root.mediaApp.icon : ""
+                          fillMode: Image.PreserveAspectFit
+                          asynchronous: true
+                          sourceSize.width: width * 2
+                          sourceSize.height: height * 2
+                        }
+
+                        Text {
+                          id: sourceName
+                          anchors.verticalCenter: parent.verticalCenter
+                          width: Math.min(implicitWidth, mediaSource.parent.width - mediaHide.implicitWidth - Style.space(52))
+                          textFormat: Text.PlainText
+                          // The album too, when there's room and it says something.
+                          text: !root.isMedia ? "" : (root.focused.playerName || "Media")
+                            + (root.focused.album && root.focused.album !== root.focused.title ? " \u00b7 " + root.focused.album : "")
+                          color: Util.alpha(root.mediaFg, 0.78)
+                          font.family: root.family
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                          elide: Text.ElideRight
+                        }
+
+                        Text {
+                          anchors.verticalCenter: parent.verticalCenter
+                          visible: mediaSource.raisable
+                          textFormat: Text.PlainText
+                          text: "\u{f0142}"
+                          color: Util.alpha(root.mediaFg, 0.55)
+                          font.family: root.family
+                          font.pixelSize: Style.font.caption
+                        }
+                      }
+
+                      MouseArea {
+                        id: sourceArea
+                        anchors.fill: parent
+                        enabled: mediaSource.raisable
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.mediaKey("raise")
+                      }
+
+                      Tip {
+                        visible: sourceArea.containsMouse
+                        text: "Open the player"
+                      }
+                    }
+
+                    Button {
+                      id: mediaHide
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      iconText: "\u{f0209}"
+                      foreground: Util.alpha(root.mediaFg, 0.85)
+                      tooltipText: "Hide until it changes (x / right click)"
+                      onClicked: if (root.service && root.focused) root.service.dismiss(root.focused.id)
+                    }
+                  }
+
+                  // On a track change the old line (ghost) slides out while the
+                  // new one slides in, both clipped to this box.
+                  Item {
+                    width: mediaBody.inner
+                    height: liveLine.implicitHeight
+                    clip: true
+
+                    Marquee {
+                      id: liveLine
+                      width: parent.width
+                      height: implicitHeight
+                      text: root.isMedia ? root.focused.title : ""
+                      secondary: root.isMedia && root.focused.artist ? "  \u2022  " + root.focused.artist : ""
+                      color: root.mediaFg
+                      pixelSize: Style.font.subtitle
+                      bold: true
+                      mode: "scroll"
+                      playKey: text + secondary
+                      active: root.opened
+                      transform: Translate { id: trackShift }
+                    }
+
+                    MarqueeLine {
+                      id: ghostLine
+                      opacity: 0
+                      visible: opacity > 0
+                      text: root.ghostTitle
+                      secondary: root.ghostArtist ? "  \u2022  " + root.ghostArtist : ""
+                      color: root.mediaFg
+                      pixelSize: Style.font.subtitle
+                      bold: true
+                      transform: Translate { id: ghostShift }
+                    }
+                  }
+
+                  // Click or drag along the bar. The hills stand on the played part.
+                  Item {
+                    id: mediaSeek
+                    width: mediaBody.inner
+                    visible: root.isMedia && root.focused.progress >= 0
+                    readonly property real peak: Style.space(16)
+                    readonly property real handleRadius: Style.space(seekArea.containsMouse || dragging ? 8 : 7)
+                    readonly property real barHeight: Style.space(4)
+                    height: Math.ceil(peak * Model.HILLS_START) + Style.space(8)
+                    readonly property real barY: height - Style.space(8)
+                    readonly property bool seekable: root.isMedia && root.focused.seekable === true
+                    property bool dragging: false
+                    property real dragValue: 0
+                    readonly property real shownValue: dragging ? dragValue : value
+                    readonly property real handleX: handleRadius + (width - 2 * handleRadius) * shownValue
+
+                    // Where the track is, and what the bar shows. While it plays,
+                    // the bar glides to each new second in a straight line instead
+                    // of jumping a step each tick; a jump (another track, a seek)
+                    // goes there quickly; another card, at once.
+                    readonly property real target: root.isMedia ? Math.max(0, Math.min(1, root.focused.progress)) : 0
+                    property real value: 0
+                    property string valueOf: ""
+                    onTargetChanged: {
+                      var id = root.isMedia ? root.focused.id : ""
+                      seekGlide.stop()
+                      if (id !== valueOf || !root.motion) { valueOf = id; value = target; return }
+                      var ahead = (target - value) * root.focused.length
+                      var flowing = root.focused.playing && ahead > 0 && ahead < 2.5
+                      seekGlide.to = target
+                      seekGlide.duration = flowing ? 1050 : 320
+                      seekGlide.easing.type = flowing ? Easing.Linear : Easing.OutCubic
+                      seekGlide.start()
+                    }
+
+                    NumberAnimation { id: seekGlide; target: mediaSeek; property: "value" }
+
+                    MediaHills {
+                      x: 0
+                      y: 0
+                      width: parent.width
+                      height: parent.barY
+                      value: mediaSeek.shownValue
+                      end: mediaSeek.handleX
+                      peak: mediaSeek.peak
+                      unit: Style.space(10) / 10
+                      color: root.accentFor(root.focused)
+                      waving: root.isMedia && root.focused.playing === true
+                      animate: root.motion
+                      active: root.opened
+                    }
+
+                    // Still to play.
+                    Rectangle {
+                      readonly property real from: mediaSeek.handleX + mediaSeek.handleRadius + Style.space(4)
+                      x: from
+                      y: mediaSeek.barY - height / 2
+                      width: Math.max(0, parent.width - from)
+                      height: mediaSeek.barHeight
+                      radius: height / 2
+                      color: Util.alpha(root.mediaFg, 0.28)
+                    }
+
+                    // Played.
+                    Rectangle {
+                      x: 0
+                      y: mediaSeek.barY - height / 2
+                      width: mediaSeek.handleX
+                      height: mediaSeek.barHeight
+                      radius: height / 2
                       color: root.accentFor(root.focused)
                     }
+
+                    // The bar's color in a white ring.
+                    Rectangle {
+                      visible: mediaSeek.seekable
+                      width: mediaSeek.handleRadius * 2
+                      height: width
+                      radius: width / 2
+                      x: mediaSeek.handleX - mediaSeek.handleRadius
+                      y: mediaSeek.barY - mediaSeek.handleRadius
+                      color: root.accentFor(root.focused)
+                      border.color: "white"
+                      border.width: Math.max(2, Style.space(2))
+                    }
+
+                    MouseArea {
+                      id: seekArea
+                      anchors.fill: parent
+                      enabled: mediaSeek.seekable
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      function valueAt(x) { return Math.max(0, Math.min(1, x / mediaSeek.width)) }
+                      onPressed: function(mouse) { mediaSeek.dragging = true; mediaSeek.dragValue = valueAt(mouse.x) }
+                      onPositionChanged: function(mouse) { if (mediaSeek.dragging) mediaSeek.dragValue = valueAt(mouse.x) }
+                      onReleased: {
+                        if (mediaSeek.dragging && root.service && root.focused) root.service.seek(root.focused.id, mediaSeek.dragValue)
+                        mediaSeek.dragging = false
+                      }
+                      onCanceled: mediaSeek.dragging = false
+                    }
+
+                    // The time under the pointer, before clicking (while dragging,
+                    // the elapsed time below follows instead).
+                    Rectangle {
+                      readonly property real at: seekArea.valueAt(seekArea.mouseX) * (root.focused ? root.focused.length || 0 : 0)
+                      visible: mediaSeek.seekable && seekArea.containsMouse && !mediaSeek.dragging && root.focused.length > 0
+                      width: hoverTime.implicitWidth + Style.space(10)
+                      height: hoverTime.implicitHeight + Style.space(4)
+                      radius: height / 2
+                      x: Math.max(0, Math.min(mediaSeek.width - width, seekArea.mouseX - width / 2))
+                      y: mediaSeek.barY - mediaSeek.handleRadius - height - Style.space(2)
+                      color: Color.tooltip.background
+
+                      Text {
+                        id: hoverTime
+                        anchors.centerIn: parent
+                        textFormat: Text.PlainText
+                        text: Model.formatDuration(parent.at * 1000)
+                        color: Color.tooltip.text
+                        font.family: root.family
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
                   }
 
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    function set(x) {
-                      volumeRow.dragValue = Math.max(0, Math.min(1, x / volumeTrack.width))
-                      if (root.service && root.focused) root.service.setVolume(root.focused.id, volumeRow.dragValue)
+                  // 1:51 ......... ↺10 10↻ ......... -1:20 (follows a drag).
+                  Item {
+                    width: mediaBody.inner
+                    height: Math.max(elapsedText.implicitHeight, seekKeys.height)
+                    visible: root.isMedia && root.focused.length > 0
+                    // The real position (or where it is being dragged to): the bar
+                    // glides, the numbers don't count backwards on a track change.
+                    readonly property real at: (mediaSeek.dragging ? mediaSeek.dragValue : mediaSeek.target) * (root.focused ? root.focused.length || 0 : 0)
+
+                    Text {
+                      id: elapsedText
+                      anchors.left: parent.left
+                      anchors.verticalCenter: parent.verticalCenter
+                      textFormat: Text.PlainText
+                      text: Model.formatDuration(parent.at * 1000)
+                      color: Util.alpha(root.mediaFg, 0.78)
+                      font.family: root.family
+                      font.pixelSize: Style.font.caption
                     }
-                    onPressed: function(mouse) { volumeRow.dragging = true; set(mouse.x) }
-                    onPositionChanged: function(mouse) { if (volumeRow.dragging) set(mouse.x) }
-                    onReleased: volumeRow.dragging = false
-                    onCanceled: volumeRow.dragging = false
-                    // 5% per mouse wheel notch (120); a touchpad's many small
-                    // deltas add up to the same, instead of 5% each. Quick
-                    // steps build on the last one, not on the volume the
-                    // player hasn't reported back yet.
-                    property real wheelLevel: 0
-                    property double wheelAt: 0
-                    onWheel: function(wheel) {
-                      if (!root.service || !root.focused || wheel.angleDelta.y === 0) return
-                      var base = Date.now() - wheelAt < 800 ? wheelLevel : volumeRow.level
-                      wheelLevel = Math.max(0, Math.min(1, base + wheel.angleDelta.y / 120 * 0.05))
-                      wheelAt = Date.now()
-                      root.service.setVolume(root.focused.id, wheelLevel)
+
+                    // Long podcasts and videos.
+                    Row {
+                      id: seekKeys
+                      anchors.centerIn: parent
+                      spacing: Style.space(10)
+                      MediaKey { actionId: "back10"; tip: "Back 10 s ([)" }
+                      MediaKey { actionId: "forward10"; tip: "Forward 10 s (])" }
+                    }
+
+                    Text {
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      textFormat: Text.PlainText
+                      text: "-" + Model.formatDuration(Math.max(0, (root.focused ? root.focused.length || 0 : 0) - parent.at) * 1000)
+                      color: Util.alpha(root.mediaFg, 0.78)
+                      font.family: root.family
+                      font.pixelSize: Style.font.caption
                     }
                   }
-                }
 
-                Text {
-                  id: volumePct
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(34)
-                  horizontalAlignment: Text.AlignRight
-                  textFormat: Text.PlainText
-                  text: Math.round(volumeRow.level * 100) + "%"
-                  color: Util.alpha(root.popupFg, 0.75)
-                  font.family: root.family
-                  font.pixelSize: Style.font.caption
+                  //   ⤨  ⏮  ( ⏯ )  ⏭  ⟳     (shuffle and repeat only if the player can)
+                  Item {
+                    width: mediaBody.inner
+                    height: mediaKeys.height
+
+                    Row {
+                      id: mediaKeys
+                      anchors.centerIn: parent
+                      spacing: Style.space(10)
+
+                      MediaKey { actionId: "shuffle"; on: root.isMedia && root.focused.shuffle === true; tip: "Shuffle" }
+                      MediaKey { actionId: "previous"; keepPlace: true; tip: "Previous" }
+                      MediaKey { actionId: "playPause"; primary: true; keepPlace: true; tip: "Play / pause (Enter, middle click)" }
+                      MediaKey { actionId: "next"; keepPlace: true; tip: "Next" }
+                      MediaKey {
+                        actionId: "loop"
+                        on: root.isMedia && root.focused.loop !== "" && root.focused.loop !== "none"
+                        tip: root.isMedia && root.focused.loop === "track" ? "Repeat: this track" : (root.isMedia && root.focused.loop === "playlist" ? "Repeat: all" : "Repeat: off")
+                      }
+                    }
+                  }
+
+                  // Player volume (when the player reports one).
+                  Row {
+                    id: volumeRow
+                    width: mediaBody.inner
+                    spacing: Style.space(8)
+                    visible: root.isMedia && root.focused.volume >= 0
+
+                    property bool dragging: false
+                    property real dragValue: 0
+                    readonly property real level: dragging ? dragValue : (root.isMedia && root.focused.volume >= 0 ? root.focused.volume : 0)
+
+                    Text {
+                      id: volumeIcon
+                      anchors.verticalCenter: parent.verticalCenter
+                      textFormat: Text.PlainText
+                      text: volumeRow.level <= 0 ? "\u{f0581}" : (volumeRow.level < 0.5 ? "\u{f0580}" : "\u{f057e}")
+                      color: root.mediaFg
+                      font.family: root.family
+                      font.pixelSize: Style.font.body
+                    }
+
+                    Item {
+                      id: volumeTrack
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: parent.width - volumeIcon.width - volumePct.width - parent.spacing * 2
+                      height: Style.space(14)
+
+                      Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width
+                        height: Style.space(4)
+                        radius: height / 2
+                        color: Util.alpha(root.mediaFg, 0.28)
+
+                        Rectangle {
+                          height: parent.height
+                          radius: parent.radius
+                          width: parent.width * volumeRow.level
+                          color: root.accentFor(root.focused)
+                        }
+                      }
+
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        function set(x) {
+                          volumeRow.dragValue = Math.max(0, Math.min(1, x / volumeTrack.width))
+                          if (root.service && root.focused) root.service.setVolume(root.focused.id, volumeRow.dragValue)
+                        }
+                        onPressed: function(mouse) { volumeRow.dragging = true; set(mouse.x) }
+                        onPositionChanged: function(mouse) { if (volumeRow.dragging) set(mouse.x) }
+                        onReleased: volumeRow.dragging = false
+                        onCanceled: volumeRow.dragging = false
+                        // 5% per mouse wheel notch (120); a touchpad's many small
+                        // deltas add up to the same, instead of 5% each. Quick
+                        // steps build on the last one, not on the volume the
+                        // player hasn't reported back yet.
+                        property real wheelLevel: 0
+                        property double wheelAt: 0
+                        onWheel: function(wheel) {
+                          if (!root.service || !root.focused || wheel.angleDelta.y === 0) return
+                          var base = Date.now() - wheelAt < 800 ? wheelLevel : volumeRow.level
+                          wheelLevel = Math.max(0, Math.min(1, base + wheel.angleDelta.y / 120 * 0.05))
+                          wheelAt = Date.now()
+                          root.service.setVolume(root.focused.id, wheelLevel)
+                        }
+                      }
+                    }
+
+                    Text {
+                      id: volumePct
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: Style.space(34)
+                      horizontalAlignment: Text.AlignRight
+                      textFormat: Text.PlainText
+                      text: Math.round(volumeRow.level * 100) + "%"
+                      color: Util.alpha(root.mediaFg, 0.78)
+                      font.family: root.family
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
                 }
               }
 

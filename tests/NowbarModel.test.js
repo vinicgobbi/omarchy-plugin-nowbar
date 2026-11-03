@@ -1002,6 +1002,25 @@ test("pill colors: deep fill, readable text", () => {
   assert.equal(M.pillFill("#102030"), "#102030")
 })
 
+test("hills: flat at both ends, within their height, moving", () => {
+  M.HILLS.forEach((layer, i) => {
+    const humps = M.hillHumps(layer, 300)
+    assert.ok(M.hillHeight(layer, i, 0, humps, 0.3) < 1e-6)
+    assert.ok(M.hillHeight(layer, i, 1, humps, 0.3) < 1e-6)
+    for (let t = 0; t <= 1; t += 0.05) {
+      const h = M.hillHeight(layer, i, t, humps, 0.7)
+      assert.ok(h >= 0 && h <= layer.height + 1e-9)
+    }
+    assert.notEqual(M.hillHeight(layer, i, 0.5, humps, 0), M.hillHeight(layer, i, 0.5, humps, 0.1))
+  })
+  // A short bar fits fewer of them; never less than half of one.
+  assert.equal(M.hillHumps(M.HILLS[0], 1000), 2)
+  assert.equal(M.hillHumps(M.HILLS[0], 1), 0.5)
+  assert.equal(M.hillsScale(0.5, 0), 0)
+  assert.equal(M.hillsScale(0.5, 200), 1)
+  assert.equal(M.hillsScale(0, 200), M.HILLS_START)
+})
+
 test("updates card with plugins and themes", () => {
   const r = M.parseUpdates("plugins\tNow Bar\ta99077b\t0cbd80c\nthemes\tlunar-quest\t1111111\t2222222\nthemes\tsword-art\t3333333\t4444444\nerror\tplugins\tsome could not be checked")
   assert.equal(r.items.length, 3)

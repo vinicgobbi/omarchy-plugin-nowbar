@@ -23,12 +23,15 @@ activities, and click it for the details and controls.
   recording, low battery, or a script that failed paint the pill and the
   popup red.
 - **Dynamic colors:** media cards take their colors from the album cover, the
-  weather card from the sky.
-- **A real player:** the media card has big round controls (play/pause in
-  the middle), the blurred cover behind it, elapsed and remaining time on
-  each side of the bar, shuffle and repeat, 10 s back / forward on long
-  podcasts and videos, and the cover opens the player. A new track slides
-  in, and while something plays the pill shows three dancing bars.
+  weather card from the sky, and the pill fills up with a deeper shade of them,
+  with text in black or white, whichever reads.
+- **A real player:** the cover fills the media card under a dark veil, with
+  the app on top (click: open the player) and "title • artist" on one line that
+  scrolls when it doesn't fit. Soft hills flow over the played part of the seek
+  bar while it plays and sink when it pauses; below it are the elapsed and
+  remaining time, shuffle, previous, play/pause, next, repeat and the volume,
+  plus 10 s back / forward on long podcasts and videos. A new track slides in.
+  The pill shows just the song, with the app's icon in one color.
 - **Charging glows blue to green:** while plugged in, the pill fills up to
   the charge with a blue-to-green gradient and a wave of light running
   through it, and the popup takes the same colors, at any percentage.
@@ -66,7 +69,7 @@ activities, and click it for the details and controls.
 
 | Samsung Now Bar         | Here                                                        | Source                                       |
 | ----------------------- | ----------------------------------------------------------- | -------------------------------------------- |
-| Media player            | One card per player: cover (click: open the player) on a blurred backdrop, title · artist, album, seekable bar with elapsed / remaining time, volume, shuffle, previous, play/pause, next, repeat, and 10 s back / forward on long media | MPRIS |
+| Media player            | One card per player: the cover behind it all, the app (click: open the player) and album, title • artist, seekable bar with hills and elapsed / remaining time, volume, shuffle, previous, play/pause, next, repeat, and 10 s back / forward on long media | MPRIS |
 | Timer / Stopwatch       | Ring that fills up, pause, +1 min, laps; a timer can also run until a time (`14:30`); "Time's up" with Repeat / +1 min / OK, and a sound; kept across shell restarts | This plugin (notifies when the timer ends) |
 | Focus modes             | Pomodoro: focus / break cycles, a long break every 4, blocks done today, and (an option) Do Not Disturb while focusing | This plugin (notifies at each change) |
 | Media sleep timer       | Pauses every player when it ends                            | This plugin                                  |
