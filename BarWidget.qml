@@ -1119,9 +1119,11 @@ Panel {
       Item {
         id: iconSlot
         anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(16)
+        // A logo reads better a size up.
+        readonly property bool media: pill.hasActivity && root.pillItem.module === "media"
+        width: Style.space(media ? 20 : 16)
         height: pillIcon.implicitHeight
-        readonly property string logo: pill.hasActivity && root.pillItem.module === "media" ? root.pillItem.appGlyph : ""
+        readonly property string logo: media ? root.pillItem.appGlyph : ""
         // Timer, Pomodoro, sleep timer: a little ring that fills up.
         readonly property bool countdown: pill.hasActivity && root.pillItem.module === "timer" && root.pillItem.progress >= 0
         readonly property bool recordingNow: pill.hasActivity && root.pillItem.id === "recording"
@@ -1138,7 +1140,7 @@ Panel {
           // Paused media: the note, dimmed.
           opacity: !pill.hasActivity || root.pillItem.module === "media" && !root.pillItem.playing ? 0.55 : 1
           font.family: root.family
-          font.pixelSize: Style.font.body
+          font.pixelSize: parent.media ? Math.round(Style.font.body * 1.4) : Style.font.body
         }
 
         Ring {
