@@ -9,8 +9,9 @@ activities, and click it for the details and controls.
 
 - **One pill for all live activities.** It shows the most important one, with
   a thin progress line and a `2/4` position marker. The pill keeps a fixed
-  size (or fits its text, up to that size, if you prefer); longer text scrolls
-  around (or is cut with "…").
+  size (or fits its text, up to that size, if you prefer); longer text goes
+  by whole each time it changes and then rests, faded where it's cut (or
+  scrolls round and round, or is cut with "…").
 - **A popup carousel** with ‹ › arrows, dots and ←/→ keys. Each card has the
   details and that activity's buttons.
 - **New activities take the pill** when they matter more than the current one
@@ -415,7 +416,7 @@ options, one tab at a time (Tab / Shift+Tab to switch):
   hidden one (a browser, say) stays out of the Now Bar but still answers the
   media keys.
 - **Look:** the pill's width (fixed, or fit to its text up to a maximum),
-  scrolling or cutting long text, the
+  how long text behaves (once, in a loop, or cut), the
   progress line, the `2/4` marker, what it shows when idle (the weather card,
   an empty pill, or nothing), the dynamic colors, and the animations.
 - **Popup:** the two rows at the bottom of the popup. Quick toggles: show

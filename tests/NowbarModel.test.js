@@ -176,7 +176,7 @@ test("media activity", () => {
   assert.equal(M.mediaActivity({ title: "", artist: "" }), null)
   const a = M.mediaActivity({ key: "spotify", title: "Song", artist: "Band", player: "Spotify", playing: true, canToggle: true, canNext: true, canPrevious: true, position: 30, length: 120 })
   assert.equal(a.priority, M.PRIORITY.mediaPlaying)
-  assert.equal(a.pillText, "Song · Band")
+  assert.equal(a.pillText, "Song")
   assert.equal(a.progress, 0.25)
   assert.deepEqual(a.actions.map((x) => x.id), ["playPause", "previous", "next"])
   const live = M.mediaActivity({ title: "Radio", playing: false, length: 9.2e12 })
@@ -270,7 +270,9 @@ test("prefs normalize and store only non-defaults", () => {
   assert.equal(M.normalizePrefs({ showQuickToggles: false }).showQuickToggles, false)
   assert.equal(p.modules.weather, true)
   assert.equal(M.normalizePrefs({ whenEmpty: "icon" }).whenEmpty, "icon")
-  assert.equal(p.textMode, "scroll")
+  assert.equal(p.textMode, "once")
+  assert.equal(M.normalizePrefs({ textMode: "scroll" }).textMode, "scroll")
+  assert.equal(M.normalizePrefs({ textMode: "nope" }).textMode, "once")
   assert.equal(p.coverAccent, true)
   assert.equal(p.animations, true)
   assert.equal(M.normalizePrefs({ animations: false }).animations, false)
@@ -871,6 +873,15 @@ test("rain never holds the pill against music", () => {
   assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: weather.priority }, autoFocus: true, manualUntil: 0, now: 1 }), media.id)
 })
 
+test("media card fields, and the pill with the song alone", () => {
+  const a = M.mediaActivity({ key: "p", title: "Song", artist: "Band", player: "Spotify", desktopEntry: "spotify", playing: true })
+  assert.equal(a.pillText, "Song")
+  assert.equal(a.artist, "Band")
+  assert.equal(a.playerName, "Spotify")
+  assert.equal(a.desktopEntry, "spotify")
+  assert.equal(M.mediaActivity({ key: "p", title: "Song" }).desktopEntry, "")
+})
+
 test("canDismiss: never the weather, nor the camera and microphone", () => {
   assert.equal(M.canDismiss({ module: "media" }), true)
   assert.equal(M.canDismiss({ module: "privacy" }), false)
@@ -977,6 +988,18 @@ test("art cache: least recently used goes first, never the one on screen", () =>
   r = M.artCachePut(r.list, { url: "u4", path: "/c/4b" }, "", 2)
   assert.deepEqual(r.evicted, ["/c/4"])
   assert.deepEqual(r.list.map(x => x.path), ["/c/1", "/c/4b"])
+})
+
+test("pill colors: deep fill, readable text", () => {
+  assert.equal(M.pillFill("nope"), "")
+  assert.equal(M.readableOn("nope"), "")
+  assert.equal(M.readableOn("#ffffff"), "#1a1a1a")
+  assert.equal(M.readableOn("#101040"), "#ffffff")
+  // Bright stays the hue, goes deep; already deep stays as it is.
+  const fill = M.pillFill("#ff8800")
+  assert.ok(M.rgbToHsl(parseInt(fill.slice(1, 3), 16) / 255, parseInt(fill.slice(3, 5), 16) / 255, parseInt(fill.slice(5, 7), 16) / 255).l <= 0.41)
+  assert.equal(M.readableOn(fill), "#ffffff")
+  assert.equal(M.pillFill("#102030"), "#102030")
 })
 
 test("updates card with plugins and themes", () => {

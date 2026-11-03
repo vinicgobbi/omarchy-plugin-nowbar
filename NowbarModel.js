@@ -961,7 +961,11 @@ function mediaActivity(m) {
     urgent: false,
     title: title,
     subtitle: [artist, player].filter(function(x) { return x }).join(" · "),
-    pillText: artist ? title + " · " + artist : title,
+    // The song alone; the artist is on the card and in the tooltip.
+    pillText: title,
+    artist: artist,
+    playerName: player,
+    desktopEntry: clean(m.desktopEntry, 120),
     progress: len > 0 && len < 1e9 ? Math.max(0, Math.min(1, pos / len)) : -1,
     // The times are shown on both sides of the bar instead.
     details: album && album !== title ? [album] : [],
@@ -2175,6 +2179,23 @@ function artCachePut(list, entry, shownPath, keep) {
   return { list: out, evicted: evicted }
 }
 
+// The cover's accent (and the sky's color) is made to read as text on a dark
+// bar; filling the pill, the same hue goes deeper, and not neon. "" if not a color.
+function pillFill(hex) {
+  var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(String(hex || ""))
+  if (!m) return ""
+  var hsl = rgbToHsl(parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255)
+  return hslToHex(hsl.h, Math.min(0.8, hsl.s), Math.min(0.4, hsl.l))
+}
+
+// Black or white, whichever reads on `hex`. "" if not a color.
+function readableOn(hex) {
+  var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(String(hex || ""))
+  if (!m) return ""
+  var y = 0.2126 * parseInt(m[1], 16) / 255 + 0.7152 * parseInt(m[2], 16) / 255 + 0.0722 * parseInt(m[3], 16) / 255
+  return y > 0.6 ? "#1a1a1a" : "#ffffff"
+}
+
 // --- bar widget preferences -----------------------------------------------------------
 
 var MODULES = ["media", "timer", "reminders", "recording", "dictation", "privacy", "modes", "charging", "push", "bluetooth", "screenshot", "weather", "updates"]
@@ -2228,7 +2249,7 @@ function defaultPrefs() {
     mediaPausedMinutes: 15, // a paused player leaves the pill after this long (0: never)
     mediaIgnore: "",        // players kept out of the Now Bar, comma separated
     animations: true,       // the popup unfolds from the pill, cards and sections slide in
-    textMode: "scroll",     // text longer than the pill: "scroll" (marquee) or "ellipsis" (cut with ...)
+    textMode: "once",       // text longer than the pill: "once" (goes by once per novelty, then rests faded), "scroll" (round and round) or "ellipsis" (cut with ...)
     maxWidth: 220,          // width of the text area: the pill always has this size (or at most, with "fit")
     pillWidth: "fixed",     // "fixed": always maxWidth; "fit": as wide as the text, up to maxWidth
     timerPresets: DEFAULT_PRESETS, // quick start timers, minutes
@@ -2258,7 +2279,7 @@ function normalizePrefs(input) {
   var out = {}
   for (var k in d) if (typeof d[k] === "boolean") out[k] = typeof src[k] === "boolean" ? src[k] : d[k]
   out.whenEmpty = src.whenEmpty === "hide" || src.whenEmpty === "icon" ? src.whenEmpty : "brief"
-  out.textMode = src.textMode === "ellipsis" ? "ellipsis" : "scroll"
+  out.textMode = src.textMode === "ellipsis" || src.textMode === "scroll" ? src.textMode : "once"
   out.pillWidth = src.pillWidth === "fit" ? "fit" : "fixed"
   out.weatherUnit = src.weatherUnit === "metric" || src.weatherUnit === "imperial" ? src.weatherUnit : "auto"
   out.maxWidth = clampInt(src.maxWidth, 80, 600, d.maxWidth)
@@ -2445,5 +2466,8 @@ if (typeof module !== "undefined") {
     artCacheTouch: artCacheTouch,
     artCachePut: artCachePut,
     ART_CACHE_SIZE: ART_CACHE_SIZE,
+    pillFill: pillFill,
+    rgbToHsl: rgbToHsl,
+    readableOn: readableOn,
   }
 }

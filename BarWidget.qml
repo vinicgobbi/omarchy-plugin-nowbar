@@ -189,6 +189,28 @@ Panel {
 
   readonly property bool isMedia: focused !== null && focused.module === "media"
 
+  // The app behind the focused player: from its desktop entry, or its name when
+  // the entry doesn't match (Spotify's Flatpak says "spotify", its app is
+  // com.spotify.Client). Looked up only when the player changes.
+  readonly property string mediaAppKey: isMedia ? (focused.desktopEntry || "") + "\n" + (focused.playerName || "") : ""
+  readonly property var mediaApp: findApp(mediaAppKey)
+
+  function findApp(key) {
+    if (key === "") return null
+    // The entries load after the shell starts: look again once they're there.
+    var loaded = DesktopEntries.applications.values
+    var terms = key.split("\n")
+    for (var i = 0; i < terms.length; i++) {
+      if (terms[i] === "") continue
+      var entry = DesktopEntries.byId(terms[i]) || DesktopEntries.heuristicLookup(terms[i])
+      if (!entry || !entry.icon) continue
+      var icon = String(entry.icon)
+      var source = icon.charAt(0) === "/" ? Util.fileUrl(icon) : Quickshell.iconPath(icon, true)
+      if (source) return { icon: source }
+    }
+    return null
+  }
+
   // A media control: the focused card's action with that id, if it has it.
   function mediaAction(id) {
     if (!isMedia) return null
@@ -300,6 +322,211 @@ Panel {
       font.family: root.family
       font.pixelSize: Style.font.caption
       elide: Text.ElideRight
+    }
+  }
+
+  // "Title  •  artist" on one line, as plain text.
+  component MarqueeLine: Row {
+    id: line
+    property string text: ""
+    property string secondary: ""
+    property color color: root.fg
+    property int pixelSize: Style.font.body
+    property bool bold: false
+
+    Text {
+      textFormat: Text.PlainText
+      text: line.text
+      color: line.color
+      font.family: root.family
+      font.pixelSize: line.pixelSize
+      font.bold: line.bold
+    }
+
+    Text {
+      visible: line.secondary !== ""
+      textFormat: Text.PlainText
+      text: line.secondary
+      color: Util.alpha(line.color, 0.85)
+      font.family: root.family
+      font.pixelSize: line.pixelSize
+    }
+  }
+
+  // One line of text that doesn't fit, by `mode`: "once" goes by whole each time
+  // `playKey` changes, then rests on its start, faded where it's cut; "scroll"
+  // goes round and round (a copy follows it, so a round ends where it began);
+  // "ellipsis" is cut with "...". Whether it fits is measured on a hidden copy,
+  // so it never depends on how the visible text is laid out.
+  component Marquee: Item {
+    id: mq
+    property string text: ""
+    property string secondary: ""
+    property color color: root.fg
+    property int pixelSize: Style.font.body
+    property bool bold: false
+    property string mode: "scroll"
+    property string playKey: ""
+    property bool centered: false
+    // Off screen: nothing moves.
+    property bool active: true
+    // What it has to fit in: the width, unless that's still easing to it.
+    property real limit: width
+
+    readonly property real gap: Style.space(28)
+    readonly property real fadeWidth: Style.space(20)
+    readonly property real fullWidth: measure.implicitWidth
+    readonly property real distance: fullWidth + gap
+    readonly property bool overflows: fullWidth > limit
+    readonly property bool cut: mode === "ellipsis"
+    readonly property bool canRoll: overflows && !cut && root.motion && active && visible
+    readonly property bool rolling: roll.running
+    // Cut text fades out at the right; while it slides, at the left too,
+    // growing as it leaves the start and shrinking as its copy gets there.
+    readonly property real leftFade: rolling ? Math.max(0, Math.min(fadeWidth, -strip.x, distance + strip.x)) : 0
+    // "once": a round is owed.
+    property bool wanted: true
+
+    implicitHeight: measure.implicitHeight
+    clip: true
+
+    function sync() {
+      if (!overflows || cut || !root.motion) wanted = false
+      if (!canRoll) { roll.stop(); strip.x = 0; return }
+      if (mode !== "once") { if (!roll.running) roll.start(); return }
+      if (wanted) { wanted = false; roll.stop(); strip.x = 0; roll.start() }
+    }
+
+    onPlayKeyChanged: {
+      wanted = true
+      roll.stop()
+      strip.x = 0
+      Qt.callLater(mq.sync)
+    }
+    onCanRollChanged: Qt.callLater(mq.sync)
+    onModeChanged: { roll.stop(); strip.x = 0; Qt.callLater(mq.sync) }
+    Component.onCompleted: Qt.callLater(mq.sync)
+
+    layer.enabled: overflows && !cut
+    layer.effect: MultiEffect {
+      maskEnabled: true
+      maskSource: fadeMask
+      // Soft: the mask's alpha goes straight through (0 to 1).
+      maskThresholdMin: 0.5
+      maskSpreadAtMin: 1.0
+      autoPaddingEnabled: false
+    }
+
+    Rectangle {
+      id: fadeMask
+      anchors.fill: parent
+      visible: false
+      layer.enabled: true
+      readonly property real span: Math.max(1, mq.width)
+      gradient: Gradient {
+        orientation: Gradient.Horizontal
+        GradientStop { position: 0; color: mq.leftFade > 0 ? Qt.rgba(1, 1, 1, 0) : "white" }
+        GradientStop { position: Math.min(0.5, mq.leftFade / fadeMask.span); color: "white" }
+        GradientStop { position: Math.max(0.5, 1 - mq.fadeWidth / fadeMask.span); color: "white" }
+        GradientStop { position: 1; color: Qt.rgba(1, 1, 1, 0) }
+      }
+    }
+
+    MarqueeLine {
+      id: measure
+      opacity: 0
+      text: mq.text
+      secondary: mq.secondary
+      pixelSize: mq.pixelSize
+      bold: mq.bold
+    }
+
+    // "Cut".
+    Text {
+      visible: mq.cut
+      width: mq.width
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      text: mq.text + mq.secondary
+      horizontalAlignment: mq.overflows || !mq.centered ? Text.AlignLeft : Text.AlignHCenter
+      elide: Text.ElideRight
+      color: mq.color
+      font.family: root.family
+      font.pixelSize: mq.pixelSize
+      font.bold: mq.bold
+    }
+
+    Item {
+      visible: !mq.cut
+      x: mq.centered && !mq.overflows ? Math.round((mq.width - mq.fullWidth) / 2) : 0
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+
+      Row {
+        id: strip
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: mq.gap
+
+        MarqueeLine {
+          text: mq.text
+          secondary: mq.secondary
+          color: mq.color
+          pixelSize: mq.pixelSize
+          bold: mq.bold
+        }
+
+        MarqueeLine {
+          visible: mq.rolling
+          text: mq.text
+          secondary: mq.secondary
+          color: mq.color
+          pixelSize: mq.pixelSize
+          bold: mq.bold
+        }
+      }
+    }
+
+    SequentialAnimation {
+      id: roll
+      loops: mq.mode === "once" ? 1 : Animation.Infinite
+      PauseAnimation { duration: mq.mode === "once" ? 1000 : 1800 }
+      NumberAnimation {
+        target: strip
+        property: "x"
+        from: 0
+        to: -mq.distance
+        duration: Math.max(2000, mq.distance * 30)
+      }
+      onFinished: strip.x = 0
+    }
+  }
+
+  // An app's colored icon painted in one color, its light and dark kept as more
+  // or less of it. (Not "<icon>-symbolic": the icon lookup can say one exists and
+  // hand back an empty image, with no way to tell from here.)
+  component AppGlyph: Item {
+    id: glyph
+    property url source: ""
+    property color color: root.fg
+
+    Image {
+      id: glyphImage
+      anchors.fill: parent
+      visible: false
+      source: glyph.source
+      fillMode: Image.PreserveAspectFit
+      asynchronous: true
+      sourceSize.width: Math.ceil(glyph.width * 2)
+      sourceSize.height: Math.ceil(glyph.height * 2)
+    }
+
+    MultiEffect {
+      anchors.fill: parent
+      source: glyphImage
+      autoPaddingEnabled: false
+      brightness: 0.4
+      colorization: 1
+      colorizationColor: glyph.color
     }
   }
 
@@ -531,6 +758,18 @@ Panel {
     : popupThemed
     ? { color: popupAccent, widths: themeBorderSpec.widths, gradient: { colors: [], angle: 0, enabled: false } }
     : themeBorderSpec
+
+  // Music and the weather fill the pill: the cover's accent, the sky's color,
+  // the same hue gone deeper, with text and icon in whichever of black and white
+  // reads on it. "" for everything else (urgent red and charging have their own).
+  readonly property string pillFillColor: {
+    var a = pillItem
+    if (!a || a.urgent || !prefs.coverAccent) return ""
+    if (a.module === "media" && hasCoverAccent) return Model.pillFill(coverAccent.toString().slice(0, 7))
+    if (a.module === "weather" && a.color) return Model.pillFill(a.color)
+    return ""
+  }
+  readonly property color pillFg: pillFillColor !== "" ? Model.readableOn(pillFillColor) : fg
 
   function accentFor(activity) {
     if (activity && activity.urgent) return Color.urgent
@@ -845,7 +1084,9 @@ Panel {
     height: root.vertical ? pillContent.implicitHeight + Style.space(12) : Math.max(Style.space(18), root.barSize - Style.space(10))
     width: root.vertical ? Math.max(Style.space(18), root.barSize - Style.space(10)) : pillContent.implicitWidth + Style.space(16)
     radius: Math.min(width, height) / 2
-    color: root.pillCharging
+    color: root.pillFillColor !== ""
+      ? (pillArea.containsMouse || root.opened ? Qt.tint(root.pillFillColor, Util.alpha("white", 0.15)) : root.pillFillColor)
+      : root.pillCharging
       ? Util.alpha(root.chargeBlue, pillArea.containsMouse || root.opened ? 0.2 : 0.12)
       : hasActivity
       ? Util.alpha(root.accentFor(root.pillItem), pillArea.containsMouse || root.opened ? 0.28 : 0.18)
@@ -921,12 +1162,15 @@ Panel {
       anchors.centerIn: parent
       spacing: Style.space(6)
 
-      // Media playing: three little bars dancing; anything else: its icon.
+      // Media: the player's app in one color (three little bars dancing, or
+      // the note when paused, if the app isn't found); anything else: its icon.
       Item {
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(16)
         height: pillIcon.implicitHeight
-        readonly property bool playing: pill.hasActivity && root.pillItem.module === "media" && root.pillItem.playing === true
+        readonly property bool media: pill.hasActivity && root.pillItem.module === "media"
+        readonly property bool appShown: media && root.mediaApp !== null
+        readonly property bool playing: media && !appShown && root.pillItem.playing === true
         // Timer, Pomodoro, sleep timer: a little ring that fills up.
         readonly property bool countdown: pill.hasActivity && root.pillItem.module === "timer" && root.pillItem.progress >= 0
         readonly property bool recordingNow: pill.hasActivity && root.pillItem.id === "recording"
@@ -934,16 +1178,26 @@ Panel {
         Text {
           id: pillIcon
           anchors.fill: parent
-          visible: !parent.playing && !parent.countdown && !parent.recordingNow
+          visible: !parent.appShown && !parent.playing && !parent.countdown && !parent.recordingNow
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
           textFormat: Text.PlainText
           text: pill.hasActivity ? root.pillItem.icon : "\u{f0996}"
-          color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : (root.pillCharging ? root.chargeGreen : root.fg)
+          color: pill.hasActivity && root.pillItem.urgent ? Color.urgent : (root.pillCharging ? root.chargeGreen : root.pillFg)
           // Paused media: the note, dimmed.
           opacity: !pill.hasActivity || root.pillItem.module === "media" && !root.pillItem.playing ? 0.55 : 1
           font.family: root.family
           font.pixelSize: Style.font.body
+        }
+
+        AppGlyph {
+          anchors.centerIn: parent
+          visible: parent.appShown
+          width: Style.space(15)
+          height: width
+          source: root.mediaApp ? root.mediaApp.icon : ""
+          color: root.pillFg
+          opacity: parent.media && root.pillItem.playing ? 1 : 0.55
         }
 
         Ring {
@@ -978,16 +1232,14 @@ Panel {
           anchors.centerIn: parent
           visible: parent.playing
           height: Style.space(11)
-          color: root.accentFor(root.pillItem)
+          color: root.pillFillColor !== "" ? root.pillFg : root.accentFor(root.pillItem)
           running: parent.playing && root.motion
         }
       }
 
-      // Text longer than the slot either scrolls around (two copies side by
-      // side, so it loops without a gap) or is cut with "...". Whether it
-      // fits is measured on a hidden copy, so it never depends on how the
-      // visible text is laid out.
-      Item {
+      // Text longer than the slot: see Marquee. A song starts its round when it
+      // changes (not on play/pause), anything else when its state does.
+      Marquee {
         id: textClip
         visible: !root.vertical
         anchors.verticalCenter: parent.verticalCenter
@@ -997,82 +1249,16 @@ Panel {
           enabled: root.motion
           NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
         }
-        height: measure.implicitHeight
-        clip: true
-
-        readonly property string label: pill.hasActivity ? root.pillItem.pillText : "Nothing going on"
-        readonly property real gap: Style.space(28)
-        readonly property real fullWidth: measure.implicitWidth
-        // Against the limit, not the width: in "fit" the width is still
-        // growing to the text for a moment.
-        readonly property bool overflows: fullWidth > pill.textMax
-        readonly property bool scrolling: root.prefs.textMode === "scroll" && overflows && !root.vertical
-        // Briefly off when the text changes, so the marquee starts over
-        // (restart() would break the `running` binding).
-        property bool holding: false
-
-        Text {
-          id: measure
-          visible: false
-          textFormat: Text.PlainText
-          text: textClip.label
-          font.family: root.family
-          font.pixelSize: Style.font.body
-        }
-
-        // Fits, or "Cut" mode: one line, centered, "..." when too long.
-        Text {
-          visible: !textClip.scrolling
-          width: textClip.width
-          anchors.verticalCenter: parent.verticalCenter
-          textFormat: Text.PlainText
-          text: textClip.label
-          horizontalAlignment: textClip.overflows ? Text.AlignLeft : Text.AlignHCenter
-          elide: Text.ElideRight
-          color: root.fg
-          opacity: pill.hasActivity ? 1 : 0.6
-          font.family: root.family
-          font.pixelSize: Style.font.body
-        }
-
-        Row {
-          id: marqueeRow
-          visible: textClip.scrolling
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: textClip.gap
-
-          Repeater {
-            model: 2
-
-            Text {
-              textFormat: Text.PlainText
-              text: textClip.label
-              color: root.fg
-              font.family: root.family
-              font.pixelSize: Style.font.body
-            }
-          }
-        }
-
-        SequentialAnimation {
-          id: marquee
-          running: textClip.scrolling && !textClip.holding
-          loops: Animation.Infinite
-          onRunningChanged: if (!running) marqueeRow.x = 0
-          PauseAnimation { duration: 1500 }
-          NumberAnimation {
-            target: marqueeRow
-            property: "x"
-            from: 0
-            to: -(textClip.fullWidth + textClip.gap)
-            duration: Math.max(2000, (textClip.fullWidth + textClip.gap) * 30)
-          }
-        }
-
-        onLabelChanged: {
-          holding = true
-          Qt.callLater(function() { textClip.holding = false })
-        }
+        height: implicitHeight
+        // Against the limit, not the width: in "fit" the width is still growing
+        // to the text for a moment.
+        limit: pill.textMax
+        centered: true
+        text: pill.hasActivity ? root.pillItem.pillText : "Nothing going on"
+        color: root.pillFg
+        opacity: pill.hasActivity ? 1 : 0.6
+        mode: root.prefs.textMode
+        playKey: !pill.hasActivity ? "" : root.pillItem.id + "\n" + (root.pillItem.module === "media" ? root.pillItem.pillText : root.pillItem.signature)
       }
 
       Item {
@@ -1093,7 +1279,7 @@ Panel {
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
           text: root.count > 1 && root.pillItem !== null ? (root.focusIndex + 1) + "/" + root.count : ""
-          color: Util.alpha(root.fg, 0.62)
+          color: Util.alpha(root.pillFg, 0.62)
           font.family: root.family
           font.pixelSize: Style.font.caption
         }
@@ -1114,7 +1300,7 @@ Panel {
       height: Math.max(2, Style.space(2))
       radius: height / 2
       width: Math.max(0, (pill.width - pill.radius) * value)
-      color: root.accentFor(root.pillItem)
+      color: root.pillFillColor !== "" ? Util.alpha(root.pillFg, 0.85) : root.accentFor(root.pillItem)
 
       readonly property real target: Math.max(0, Math.min(1, pill.progress))
       property real value: 0

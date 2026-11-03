@@ -305,6 +305,7 @@ Item {
         artist: p.trackArtist || "",
         album: p.trackAlbum || "",
         player: p.identity || p.desktopEntry || "",
+        desktopEntry: p.desktopEntry || "",
         playing: !!p.isPlaying,
         canToggle: !!(p.canTogglePlaying || p.canPlay || p.canPause),
         canPrevious: !!p.canGoPrevious,

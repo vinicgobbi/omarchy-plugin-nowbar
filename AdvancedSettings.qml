@@ -620,12 +620,13 @@ Column {
 
     Option {
       label: "Long text"
-      hint: "Scroll it around, or cut it with …"
+      hint: "Once: goes by whole each time it changes, then rests, faded where it's cut. Loop: round and round. Cut: with …"
       ButtonGroup {
         foreground: root.foreground
         fontFamily: root.fontFamily
         options: [
-          { value: "scroll", label: "Scroll" },
+          { value: "once", label: "Once" },
+          { value: "scroll", label: "Loop" },
           { value: "ellipsis", label: "Cut" }
         ]
         value: root.prefs.textMode

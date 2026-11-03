@@ -55,7 +55,7 @@
       "quickToggleItems": "dnd,nightlight,stayAwake,record,reminder,dictation",
       "showQuickStart": true,
       "quickStartItems": "stopwatch,pomodoro,sleep",
-      "textMode": "scroll",
+      "textMode": "once",
       "maxWidth": 220,
       "pillWidth": "fixed",
       "timerPresets": "1,5,10,25",
@@ -283,12 +283,13 @@
         "key": "textMode",
         "type": "enum",
         "label": "Long text",
-        "description": "Text longer than the pill: scroll it, or cut it with \"...\".",
+        "description": "Text longer than the pill: it goes by once each time it changes and then rests faded, scrolls round and round, or is cut with \"...\".",
         "options": [
+          "once",
           "scroll",
           "ellipsis"
         ],
-        "defaultValue": "scroll"
+        "defaultValue": "once"
       },
       {
         "key": "maxWidth",
