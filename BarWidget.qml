@@ -938,6 +938,9 @@ Panel {
       saturation: cl.blurred ? 0.2 : 0
       maskEnabled: cl.mask !== null
       maskSource: cl.mask
+      // Soft: a hard cut leaves the corners jagged.
+      maskThresholdMin: 0.5
+      maskSpreadAtMin: 1.0
     }
   }
 
@@ -1825,9 +1828,11 @@ Panel {
 
                 readonly property real radius: Math.max(Style.space(12), Style.cornerRadius)
 
+                // No cover: a quiet card of its own.
                 Rectangle {
                   anchors.fill: parent
                   radius: mediaCard.radius
+                  visible: !root.mediaHasCover
                   color: Util.alpha(root.popupFg, 0.06)
                 }
 
@@ -1839,32 +1844,45 @@ Panel {
                   layer.enabled: true
                 }
 
-                // Rests a little while paused. The next one crossfades in once
-                // loaded; no zoom, so nothing pokes out past the corners.
-                CoverSwap {
+                // The cover and its veil are cut as one, with a soft edge: cut
+                // apart, the cover shows as a bright line around the veil's corners.
+                Item {
                   anchors.fill: parent
-                  mask: mediaMask
-                  enterScale: 1
-                  decodeSize: 512
-                  source: root.isMedia ? root.coverUrl : ""
-                  opacity: root.isMedia && !root.focused.playing ? 0.6 : 1
-                  Behavior on opacity {
-                    enabled: root.motion
-                    NumberAnimation { duration: 250; easing.type: Easing.OutQuad }
+                  layer.enabled: root.isMedia
+                  layer.smooth: true
+                  layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskSource: mediaMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                    autoPaddingEnabled: false
                   }
-                }
 
-                Rectangle {
-                  anchors.fill: parent
-                  radius: mediaCard.radius
-                  opacity: root.mediaHasCover ? 1 : 0
-                  gradient: Gradient {
-                    GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.35) }
-                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.72) }
+                  // Rests a little while paused. The next one crossfades in once
+                  // loaded; no zoom, so nothing pokes out past the corners.
+                  CoverSwap {
+                    anchors.fill: parent
+                    enterScale: 1
+                    decodeSize: 512
+                    source: root.isMedia ? root.coverUrl : ""
+                    opacity: root.isMedia && !root.focused.playing ? 0.6 : 1
+                    Behavior on opacity {
+                      enabled: root.motion
+                      NumberAnimation { duration: 250; easing.type: Easing.OutQuad }
+                    }
                   }
-                  Behavior on opacity {
-                    enabled: root.motion
-                    NumberAnimation { duration: 250 }
+
+                  Rectangle {
+                    anchors.fill: parent
+                    opacity: root.mediaHasCover ? 1 : 0
+                    gradient: Gradient {
+                      GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.35) }
+                      GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.72) }
+                    }
+                    Behavior on opacity {
+                      enabled: root.motion
+                      NumberAnimation { duration: 250 }
+                    }
                   }
                 }
 
