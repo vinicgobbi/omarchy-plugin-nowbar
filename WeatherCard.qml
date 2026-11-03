@@ -16,6 +16,8 @@ Column {
 
   property var weather: null
   property var extraLines: []
+  // Rain on the way (Model.rainNote), or null.
+  property var rain: null
   property color foreground: Color.foreground
   property color accent: Color.accent
   property string fontFamily: Style.font.family
@@ -145,6 +147,31 @@ Column {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
+    }
+  }
+
+  // --- rain on the way ------------------------------------------------------------
+
+  Rectangle {
+    width: parent.width
+    visible: root.rain !== null
+    height: rainLine.implicitHeight + Style.space(10)
+    radius: Style.spacing.labelGap
+    color: Util.alpha("#3d8fe0", 0.22)
+
+    Text {
+      id: rainLine
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.leftMargin: Style.space(10)
+      anchors.rightMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      text: root.rain ? root.rain.icon + "  " + root.rain.text + " \u00b7 " + root.rain.chance + "%" : ""
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      elide: Text.ElideRight
     }
   }
 

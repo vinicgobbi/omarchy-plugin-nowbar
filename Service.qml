@@ -1616,7 +1616,7 @@ Item {
   }
 
   // How old the report is: "Updated 9:02", or "Offline · updated 3 h ago"
-  // (then the rain alert stays quiet).
+  // (then the rain note stays quiet).
   readonly property var weatherAge: Model.weatherAge(weatherFetchedAt, root.now)
   readonly property bool weatherLoading: weatherProcess.running
 
@@ -1997,8 +1997,7 @@ Item {
     if (screenshot) list.push(Model.screenshotActivity(screenshot))
     if (recorded) list.push(Model.recordedActivity(recorded))
     if (firedReminder) list.push(Model.firedReminderActivity(firedReminder))
-    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates))
-    if (weatherEnabled) list.push(Model.rainActivity(weather, weatherAge.stale))
+    if (weatherEnabled) list.push(Model.weatherActivity(weather, updateAvailable && !modules.updates, weatherAge.stale))
     if (modules.updates) list.push(Model.updatesActivity(shownUpdates, updatesChecking))
     for (var k in pushes) list.push(Model.pushActivity(pushes[k], t))
     return list.filter(function(a) { return !!a })

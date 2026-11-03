@@ -77,7 +77,7 @@ activities, and click it for the details and controls.
 | Charging / battery      | `Charging · 63%` with time until full; low battery (≤ 15%) in red with time left, and Power saver; nothing once full | UPower, power-profiles-daemon                      |
 | Connected devices       | A Bluetooth device that just connected, with its battery, for 10 s (headphones: "Use for audio"); a connected device at 15% or less, until charged | Quickshell Bluetooth, `wpctl` |
 | Screenshot toolbar      | A screenshot just saved: thumbnail, Edit / Copy / Open, for 15 s | The screenshots folder                  |
-| Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off); "Rain likely around 15:00" as its own activity | wttr.in, `omarchy-update-available` |
+| Now Brief               | Weather card (and a notice when an Omarchy update is available, if the Updates card is off), with "Rain likely around 15:00" as a note on it and in the pill when the weather is what it shows | wttr.in, `omarchy-update-available` |
 | Software update         | Updates waiting, by source, with the main packages, plugins and themes; Update / Check now | `omarchy-update-available`, `checkupdates`, `yay`, `git` (all in Omarchy); `flatpak` if installed |
 | Live Updates (Android)  | Anything a script sends with `nowbar push`, or a command run with `nowbar-run` | IPC                         |
 

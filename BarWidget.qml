@@ -1481,6 +1481,7 @@ Panel {
                 visible: root.isWeather && !!root.focused.weather
                 weather: root.isWeather ? root.focused.weather : null
                 extraLines: root.isWeather ? root.focused.details : []
+                rain: root.isWeather && root.focused.rain ? root.focused.rain : null
                 ageText: root.service ? root.service.weatherAge.text : ""
                 stale: root.service ? root.service.weatherAge.stale : false
                 loading: root.service ? root.service.weatherLoading : false

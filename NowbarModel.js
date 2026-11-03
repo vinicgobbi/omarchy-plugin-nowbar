@@ -134,7 +134,6 @@ var PRIORITY = {
   reminderSoon: 45,
   reminderDone: 44,
   btLow: 52,
-  rain: 58,
   stopwatch: 50,
   bluetooth: 55,
   mediaPlaying: 60,
@@ -1776,8 +1775,9 @@ function isRainCode(code) {
 }
 
 // Rain on the way: not raining now, and likely (60%+) in this 3-hour slot or
-// the next. A real activity (it takes the pill like any new one), once per
-// slot; hidden, it stays hidden for that slot.
+// the next. A note on the weather card (see rainNote), never an activity of
+// its own: a forecast must not hold the pill against music or anything else
+// that is actually going on.
 var RAIN_LIKELY = 60
 
 // A weather report older than this is shown as such ("Offline · updated 3 h
@@ -1793,27 +1793,14 @@ function weatherAge(fetchedAt, now) {
   return { stale: true, text: "Offline \u00b7 updated " + (h >= 24 ? Math.floor(h / 24) + " d" : h + " h") + " ago" }
 }
 
-function rainActivity(w, stale) {
-  if (!w || stale || w.raining || !Array.isArray(w.hours) || w.hours.length === 0) return null
+// { icon, text, pill, chance }, or null when there is nothing to tell.
+function rainNote(w, stale) {
+  if (!w || stale || w.raining || !Array.isArray(w.hours)) return null
   for (var i = 0; i < Math.min(2, w.hours.length); i++) {
     var h = w.hours[i]
-    if (h.rain < RAIN_LIKELY) continue
+    if (!(h.rain >= RAIN_LIKELY)) continue
     var when = i === 0 ? "soon" : "around " + pad2(h.hour) + ":00"
-    return {
-      id: "rain",
-      module: "weather",
-      priority: PRIORITY.rain,
-      icon: "\u{e318}",
-      color: "#3d8fe0",
-      urgent: false,
-      title: "Rain likely " + when,
-      subtitle: h.rain + "% chance" + (w.location ? " \u00b7 " + w.location : ""),
-      pillText: "Rain " + when + " \u00b7 " + h.rain + "%",
-      progress: -1,
-      details: [],
-      actions: [],
-      signature: "rain:" + (i === 0 ? "now" : h.hour)
-    }
+    return { icon: "\u{e318}", text: "Rain likely " + when, pill: "Rain " + when, chance: h.rain }
   }
   return null
 }
@@ -1926,8 +1913,9 @@ function parseWttr(text, now, opts) {
 }
 
 // The weather card (ambient). w: parseWttr() result or null; update: whether
-// an Omarchy update is available (told on the card and in the pill).
-function weatherActivity(w, update) {
+// an Omarchy update is available (told on the card and in the pill); stale:
+// the report is old, so it doesn't warn about rain.
+function weatherActivity(w, update, stale) {
   if (!w && !update) return null
   var details = update ? ["\u{f06b0}  Omarchy update available"] : []
   if (!w) {
@@ -1938,7 +1926,8 @@ function weatherActivity(w, update) {
     }
   }
   var today = w.days.length ? w.days[0] : null
-  var pill = w.temp + "°" + (w.desc ? " · " + w.desc : "")
+  var rain = rainNote(w, stale)
+  var pill = w.temp + "°" + (rain ? " · " + rain.pill : (w.desc ? " · " + w.desc : ""))
   return {
     id: "brief",
     module: "weather",
@@ -1948,6 +1937,7 @@ function weatherActivity(w, update) {
     color: w.color,
     urgent: false,
     weather: w,
+    rain: rain,
     title: w.temp + w.unit + (w.desc ? " · " + w.desc : ""),
     subtitle: [w.location, today ? "H " + today.max + "° L " + today.min + "°" : ""].filter(function(x) { return x }).join(" · "),
     pillText: update ? pill + "  ·  \u{f06b0} Update" : pill,
@@ -2282,7 +2272,6 @@ if (typeof module !== "undefined") {
     validRecordingPath: validRecordingPath,
     recordedActivity: recordedActivity,
     btLowActivity: btLowActivity,
-    rainActivity: rainActivity,
     mixOklab: mixOklab,
     parseIgnoredPlayers: parseIgnoredPlayers,
     isIgnoredPlayer: isIgnoredPlayer,
@@ -2357,6 +2346,7 @@ if (typeof module !== "undefined") {
     QUICK_START_EXTRAS: QUICK_START_EXTRAS,
     parseIdList: parseIdList,
     toggleIdList: toggleIdList,
+    rainNote: rainNote,
     rememberKnown: rememberKnown,
     preferPlaying: preferPlaying,
   }

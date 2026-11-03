@@ -841,16 +841,34 @@ test("bluetooth: audio action, low battery card", () => {
   assert.equal(low.signature, "low:3")
 })
 
-test("rain alert: likely soon or in the next slot, not while raining", () => {
-  const w = (rain0, rain1, raining) => ({ raining, location: "Here", hours: [{ hour: 12, rain: rain0 }, { hour: 15, rain: rain1 }] })
-  assert.equal(M.rainActivity(w(10, 20, false)), null)
-  assert.equal(M.rainActivity(w(80, 90, true)), null)
-  assert.equal(M.rainActivity(w(70, 0, false)).title, "Rain likely soon")
-  const a = M.rainActivity(w(20, 75, false))
-  assert.equal(a.title, "Rain likely around 15:00")
-  assert.equal(a.subtitle, "75% chance · Here")
-  assert.equal(a.signature, "rain:15")
-  assert.equal(M.rainActivity(null), null)
+test("rain: a note on the weather card, likely soon or in the next slot, not while raining", () => {
+  const w = (rain0, rain1, raining) => ({ raining, temp: 21, unit: "°C", desc: "Cloudy", location: "Here", days: [], hours: [{ hour: 12, rain: rain0 }, { hour: 15, rain: rain1 }] })
+  assert.equal(M.rainNote(w(10, 20, false)), null)
+  assert.equal(M.rainNote(w(80, 90, true)), null)
+  assert.equal(M.rainNote(null), null)
+  assert.equal(M.rainNote(w(70, 0, false)).text, "Rain likely soon")
+  assert.equal(M.rainNote(w(70, 0, false), true), null)
+  const later = M.rainNote(w(20, 75, false))
+  assert.equal(later.text, "Rain likely around 15:00")
+  assert.equal(later.chance, 75)
+  // Hours without a rain chance (the GNOME extension's) say nothing.
+  assert.equal(M.rainNote({ hours: [{ hour: 12 }] }), null)
+
+  const card = M.weatherActivity(w(70, 0, false), false, false)
+  assert.equal(card.rain.pill, "Rain soon")
+  assert.equal(card.pillText, "21° · Rain soon")
+  const stale = M.weatherActivity(w(70, 0, false), false, true)
+  assert.equal(stale.rain, null)
+  assert.equal(stale.pillText, "21° · Cloudy")
+  assert.equal(M.rainActivity, undefined)
+})
+
+test("rain never holds the pill against music", () => {
+  const weather = M.weatherActivity({ temp: 21, unit: "°C", desc: "", days: [], hours: [{ hour: 12, rain: 90 }] }, false, false)
+  const media = M.mediaActivity({ key: "p", title: "Song", playing: true, canToggle: true })
+  assert.equal(weather.ambient, true)
+  const list = M.sortActivities([weather, media])
+  assert.equal(M.resolveFocus({ list, focusId: "brief", knownIds: { brief: weather.priority }, autoFocus: true, manualUntil: 0, now: 1 }), media.id)
 })
 
 test("rememberKnown: a newcomer during a hold keeps its turn", () => {
@@ -965,8 +983,8 @@ test("weather in the place's own time, past days dropped, age", () => {
   assert.equal(M.weatherAge(at, at + 50 * 3600000).text, "Offline · updated 2 d ago")
   // A stale report doesn't warn about rain.
   const rainy = { raining: false, location: "X", hours: [{ hour: 15, rain: 80 }] }
-  assert.ok(M.rainActivity(rainy, false))
-  assert.equal(M.rainActivity(rainy, true), null)
+  assert.ok(M.rainNote(rainy, false))
+  assert.equal(M.rainNote(rainy, true), null)
 })
 
 test("Clear all reminders asks first", () => {
