@@ -1090,7 +1090,8 @@ Panel {
     // the padding, the icon and the marker.
     readonly property real textMax: Math.max(Style.space(40), root.prefs.maxWidth - Style.space(16) - iconSlot.width - pillContent.spacing
       - (countSlot.visible ? countSlot.width + pillContent.spacing : 0))
-    readonly property real progress: hasActivity && root.prefs.showProgress ? root.pillItem.progress : -1
+    // Media shows its progress only on the card.
+    readonly property real progress: hasActivity && root.prefs.showProgress && root.pillItem.module !== "media" ? root.pillItem.progress : -1
 
     height: root.vertical ? pillContent.implicitHeight + Style.space(12) : Math.max(Style.space(18), root.barSize - Style.space(10))
     width: root.vertical ? Math.max(Style.space(18), root.barSize - Style.space(10)) : pillContent.implicitWidth + Style.space(16)
@@ -1288,8 +1289,7 @@ Panel {
 
     // Thin progress line along the bottom of the pill (charging fills the
     // whole pill instead).
-    // Glides like the popup's bar: straight to each new second while media
-    // plays, quickly on a jump, at once for another activity.
+    // Goes to a new value quickly; for another activity, at once.
     Rectangle {
       id: pillLine
       visible: pill.progress >= 0 && !root.vertical && !root.pillCharging
@@ -1306,20 +1306,14 @@ Panel {
       property real value: 0
       property string valueOf: ""
       onTargetChanged: {
-        var a = root.pillItem
-        var id = a ? a.id : ""
+        var id = root.pillItem ? root.pillItem.id : ""
         pillGlide.stop()
         if (id !== valueOf || !root.motion) { valueOf = id; value = target; return }
-        var media = a.module === "media"
-        var ahead = (target - value) * (media ? a.length : 0)
-        var flowing = media && a.playing && ahead > 0 && ahead < 2.5
         pillGlide.to = target
-        pillGlide.duration = flowing ? 1050 : 320
-        pillGlide.easing.type = flowing ? Easing.Linear : Easing.OutCubic
         pillGlide.start()
       }
 
-      NumberAnimation { id: pillGlide; target: pillLine; property: "value" }
+      NumberAnimation { id: pillGlide; target: pillLine; property: "value"; duration: 320; easing.type: Easing.OutCubic }
     }
 
     // Slide the content in from the side it came from.

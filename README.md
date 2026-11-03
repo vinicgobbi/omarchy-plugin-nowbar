@@ -8,7 +8,8 @@ activities, and click it for the details and controls.
 ## What it does
 
 - **One pill for all live activities.** It shows the most important one, with
-  a thin progress line and a `2/4` position marker. The pill takes only the
+  a thin progress line (except for media, which shows it on its card) and a
+  `2/4` position marker. The pill takes only the
   room what it shows needs, up to a maximum width; longer text goes
   by whole each time it changes and then rests, faded where it's cut (or
   scrolls round and round, or is cut with "…").

@@ -1192,7 +1192,11 @@ Column {
       }
 
       More {
-        SwitchOption { key: "showProgress"; label: "Progress line in the pill" }
+        SwitchOption {
+          key: "showProgress"
+          label: "Progress line in the pill"
+          hint: "Timers, scripts and the like. Music shows it on its card."
+        }
         SwitchOption { key: "showCount"; label: "Position in the pill (2/4)" }
       }
     }
