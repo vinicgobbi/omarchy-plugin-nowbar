@@ -2352,6 +2352,62 @@ function entrySettings(prefs, existing) {
   return out
 }
 
+// --- options view --------------------------------------------------------------------
+
+// The pages of the options, and what `nowbar settings <name>` accepts: the
+// pages, plus the names of the tabs they used to be. null when unknown.
+var SETTINGS_PAGES = ["home", "media", "timers", "weather", "updates", "look", "shortcuts", "omarchy"]
+
+function settingsPage(name) {
+  var n = String(name || "")
+  if (n === "") return "home"
+  if (SETTINGS_PAGES.indexOf(n) !== -1) return n
+  if (n === "activities") return "home"
+  if (n === "popup" || n === "quick") return "shortcuts"
+  return null
+}
+
+// The line under a page's name in the list: where it stands now, so most of the
+// time there's no need to open it. `info`: { place, indicators, weatherWidget }.
+function settingsSummary(page, prefs, info) {
+  var p = prefs || {}
+  var i = info || {}
+  var modules = p.modules || {}
+  var off = "Off"
+  if (page === "media") {
+    if (modules.media === false) return off
+    var hidden = (p.ignoredPlayers || []).length
+    return [p.mediaPausedMinutes > 0 ? "Paused leaves after " + intervalLabel(p.mediaPausedMinutes) : "Paused stays in the pill",
+      hidden > 0 ? hidden + " hidden" : ""].filter(function(x) { return x }).join(" · ")
+  }
+  if (page === "timers") {
+    if (modules.timer === false) return off
+    return "Pomodoro " + p.pomodoroFocus + "/" + p.pomodoroBreak + " min · sound " + (p.timerSound ? "on" : "off")
+  }
+  if (page === "weather") {
+    if (modules.weather === false) return off
+    var unit = p.weatherUnit === "metric" ? "°C" : (p.weatherUnit === "imperial" ? "°F" : "")
+    return [i.place || "Automatic location", unit].filter(function(x) { return x }).join(" · ")
+  }
+  if (page === "updates") {
+    if (modules.updates === false) return off
+    var n = (p.updateSourceList || []).length
+    return "Every " + intervalLabel(p.updateInterval) + " · " + n + (n === 1 ? " source" : " sources")
+  }
+  if (page === "look") {
+    return (p.pillWidth === "fit" ? "Fits its text" : "Fixed width") + " · colors " + (p.coverAccent ? "from the cover" : "from the theme")
+  }
+  if (page === "shortcuts") {
+    var rows = [p.showQuickToggles ? "Quick toggles" : "", p.showQuickStart ? "Quick start" : ""].filter(function(x) { return x })
+    return rows.length ? rows.join(" and ") : "None shown"
+  }
+  if (page === "omarchy") {
+    var replaced = [i.indicators === "replaced" ? "indicators" : "", i.weatherWidget === "replaced" ? "weather" : ""].filter(function(x) { return x })
+    return replaced.length ? "Replacing its " + replaced.join(" and ") : "Using Omarchy's widgets"
+  }
+  return ""
+}
+
 function tooltipLabel(activity, index, count) {
   if (!activity) return "Now Bar · nothing going on"
   var lines = [activity.title]
@@ -2492,6 +2548,9 @@ if (typeof module !== "undefined") {
     parseIdList: parseIdList,
     toggleIdList: toggleIdList,
     rainNote: rainNote,
+    SETTINGS_PAGES: SETTINGS_PAGES,
+    settingsPage: settingsPage,
+    settingsSummary: settingsSummary,
     canDismiss: canDismiss,
     rememberKnown: rememberKnown,
     preferPlaying: preferPlaying,

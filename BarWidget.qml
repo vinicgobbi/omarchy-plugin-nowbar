@@ -85,7 +85,7 @@ Panel {
     target: root.service
     ignoreUnknownSignals: true
     function onSettingsRequested(tab) {
-      if (tab !== "") settingsView.tab = tab
+      settingsView.page = tab
       root.settingsRequestedAt = Date.now()
       if (root.opened) root.settingsOpen = true
     }
@@ -651,7 +651,7 @@ Panel {
 
   // Full size of the popup; the height follows the content (another card,
   // the options) smoothly once the popup is open.
-  // The options are a bit wider: five tabs in one row.
+  // The options are a bit wider: a list with switches and a line under each name.
   property real popupFullWidth: popup.fittedContentWidth(Style.space(settingsOpen ? 420 : 360))
   Behavior on popupFullWidth {
     enabled: root.motion && root.opened && root.reveal === 1
@@ -667,6 +667,7 @@ Panel {
 
   // Options <-> carousel: the one coming in slides from its side.
   onSettingsOpenChanged: {
+    if (!settingsOpen) settingsView.page = "home"
     viewIn.stop()
     columnShift.x = 0
     settingsShift.x = 0
@@ -1463,7 +1464,8 @@ Panel {
         blocked: (root.settingsOpen && settingsView.editing) || customTimer.activeFocus
 
         onMoveRequested: function(dx, dy) {
-          if (root.settingsOpen || !root.service) return
+          if (root.settingsOpen) { if (dy !== 0) settingsView.moveCursor(dy); return }
+          if (!root.service) return
           if (dx !== 0) root.service.step(dx)
           else if (dy !== 0) root.mediaVolumeStep(dy < 0 ? 0.05 : -0.05)
         }
@@ -1472,7 +1474,8 @@ Panel {
           else if (root.service) root.service.step(direction)
         }
         onActivateRequested: {
-          if (!root.settingsOpen && root.focused && root.focused.actions.length > 0) root.runAction(root.focused.actions[0])
+          if (root.settingsOpen) settingsView.activate()
+          else if (root.focused && root.focused.actions.length > 0) root.runAction(root.focused.actions[0])
         }
         onDeleteRequested: {
           if (!root.settingsOpen && root.focused && root.service) root.service.dismiss(root.focused.id)
@@ -1480,11 +1483,11 @@ Panel {
         // Esc first drops a pending "Replace the timer?".
         onCloseRequested: {
           if (root.pendingStart !== null) root.pendingStart = null
-          else if (root.settingsOpen) root.settingsOpen = false
+          else if (root.settingsOpen) { if (!settingsView.back()) root.settingsOpen = false }
           else root.close()
         }
         onTextKey: function(t) {
-          if (t === "q" || t === "Q") { if (root.settingsOpen) root.settingsOpen = false; else root.close(); return }
+          if (t === "q" || t === "Q") { if (!root.settingsOpen) root.close(); else if (!settingsView.back()) root.settingsOpen = false; return }
           if (t === "c" || t === "C") { root.settingsOpen = !root.settingsOpen; return }
           if (root.settingsOpen || !root.service) return
           if (t === "u" || t === "U") { root.service.showHidden(); return }
@@ -1514,8 +1517,18 @@ Panel {
             fontFamily: root.family
             onChanged: function(name, value) { root.setPref(name, value) }
             onResetRequested: root.resetPrefs()
-            // Each tab starts at its top.
-            onTabChanged: settingsFlick.contentY = 0
+            motion: root.motion
+            // Each page starts at its top.
+            onPageChanged: settingsFlick.contentY = 0
+            onScrollRequested: function(direction) {
+              var most = Math.max(0, settingsFlick.contentHeight - settingsFlick.height)
+              settingsFlick.contentY = Math.max(0, Math.min(most, settingsFlick.contentY + direction * Style.space(60)))
+            }
+            // The row the keyboard moved to stays in sight.
+            onEnsureVisible: function(y, h) {
+              if (y < settingsFlick.contentY) settingsFlick.contentY = Math.max(0, y)
+              else if (y + h > settingsFlick.contentY + settingsFlick.height) settingsFlick.contentY = y + h - settingsFlick.height
+            }
             weatherWidgetState: root.service ? root.service.weatherWidgetState : ""
             indicatorsState: root.service ? root.service.indicatorsState : ""
             updateSourcesAvailable: root.service ? root.service.availableUpdateSources : []
@@ -1678,7 +1691,7 @@ Panel {
                 loading: root.service ? root.service.weatherLoading : false
                 onRefreshRequested: if (root.service) root.service.refreshWeather()
                 // The place: straight to where it is chosen.
-                onPlaceClicked: { settingsView.tab = "weather"; root.settingsOpen = true }
+                onPlaceClicked: { settingsView.page = "weather"; root.settingsOpen = true }
                 foreground: root.popupFg
                 accent: root.accentFor(root.focused)
                 fontFamily: root.family

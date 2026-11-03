@@ -1104,6 +1104,36 @@ test("weather in the place's own time, past days dropped, age", () => {
   assert.equal(M.rainNote(rainy, true), null)
 })
 
+test("settingsPage: the pages, and the old tab names", () => {
+  assert.equal(M.settingsPage(""), "home")
+  assert.equal(M.settingsPage("look"), "look")
+  assert.equal(M.settingsPage("omarchy"), "omarchy")
+  assert.equal(M.settingsPage("activities"), "home")
+  assert.equal(M.settingsPage("popup"), "shortcuts")
+  assert.equal(M.settingsPage("quick"), "shortcuts")
+  assert.equal(M.settingsPage("timers"), "timers")
+  assert.equal(M.settingsPage("nope"), null)
+  assert.equal(M.settingsPage("constructor"), null)
+})
+
+test("settingsSummary says where each page stands", () => {
+  const p = M.normalizePrefs({})
+  assert.equal(M.settingsSummary("media", p), "Paused leaves after 15 min")
+  assert.equal(M.settingsSummary("media", M.normalizePrefs({ mediaPausedMinutes: 0, mediaIgnore: "a, b" })), "Paused stays in the pill · 2 hidden")
+  assert.equal(M.settingsSummary("media", M.normalizePrefs({ moduleMedia: false })), "Off")
+  assert.equal(M.settingsSummary("timers", p), "Pomodoro 25/5 min · sound on")
+  assert.equal(M.settingsSummary("weather", p, { place: "São Paulo" }), "São Paulo")
+  assert.equal(M.settingsSummary("weather", M.normalizePrefs({ weatherUnit: "metric" }), {}), "Automatic location · °C")
+  assert.match(M.settingsSummary("updates", p), /^Every 3 h · \d+ sources$/)
+  assert.equal(M.settingsSummary("updates", M.normalizePrefs({ moduleUpdates: false })), "Off")
+  assert.equal(M.settingsSummary("look", p), "Fixed width · colors from the cover")
+  assert.equal(M.settingsSummary("shortcuts", p), "Quick toggles and Quick start")
+  assert.equal(M.settingsSummary("shortcuts", M.normalizePrefs({ showQuickToggles: false, showQuickStart: false })), "None shown")
+  assert.equal(M.settingsSummary("omarchy", p, {}), "Using Omarchy's widgets")
+  assert.equal(M.settingsSummary("omarchy", p, { indicators: "replaced", weatherWidget: "replaced" }), "Replacing its indicators and weather")
+  assert.equal(M.settingsSummary("nope", p), "")
+})
+
 test("Clear all reminders asks first", () => {
   const r = [{ label: "a", at: 1000, minutes: 1, unit: "u1" }, { label: "b", at: 2000, minutes: 2, unit: "u2" }]
   const all = M.remindersActivity(r, 0)

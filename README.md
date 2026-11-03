@@ -177,7 +177,7 @@ media keys.
 | Key              | Effect                                           |
 | ---------------- | ------------------------------------------------ |
 | ← / → (h / l)    | Previous / next activity                         |
-| Tab / Shift+Tab  | Next / previous activity (in the options: tab)   |
+| Tab / Shift+Tab  | Next / previous activity (in the options: page)  |
 | Enter / Space    | Main action                                      |
 | ↑ / ↓ (k / j)    | Media card: volume up / down                     |
 | [ / ]            | Media card: 10 s back / forward                  |
@@ -263,7 +263,7 @@ on it.
 ### Choosing the place
 
 By default the place is a guess from your IP. To pick one, open the options'
-**Weather** tab and type a city under **Location**: matching places show up
+**Weather** page and type a city under **Place**: matching places show up
 as you type (↑/↓ and Enter, or a click), with their region and country.
 **Use automatic location** goes back to the guess.
 
@@ -281,7 +281,7 @@ omarchy-weather-location --set Iconha -20.7931,-40.8111   # or --clear for autom
 ### Replacing Omarchy's weather widget
 
 Click **Use instead of the weather widget** on the weather card, or **Replace
-the weather widget** in the options (Weather tab). That turns `omarchy.weather`
+the weather widget** in the options (Omarchy integration). That turns `omarchy.weather`
 off and points Omarchy's weather shortcut, SUPER+CTRL+ALT+W, at the weather
 card. **Restore**, in the same place, undoes both and puts the widget back
 where it was in the bar.
@@ -320,7 +320,7 @@ of switching on and off right there.
 ### Replacing Omarchy's indicators widget
 
 Click **Use instead of Omarchy's indicators** under the Quick toggles, or
-**Replace the indicators** in the options (Popup tab). That turns
+**Replace the indicators** in the options (Omarchy integration). That turns
 `omarchy.indicators` off; its place in the bar is remembered, and **Restore**
 puts it back there. With that widget off, the Now Bar also answers
 `omarchy-shell omarchy.indicators refresh` (called by `omarchy-reminder` and
@@ -400,7 +400,7 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 | `sleep <duration>`        | Pause the media after `30` (minutes), `1h`, or at `23:00`       |
 | `quick <id>`              | A Quick toggle: `dnd`, `nightlight`, `stayAwake`, `record`, `reminder`, `dictation` |
 | `weather`                 | Open the popup on the weather card                              |
-| `settings [tab]`          | Open the popup on the options (`activities`, `look`, `popup`, `weather`, `updates`) |
+| `settings [page]`         | Open the popup on the options (`media`, `timers`, `weather`, `updates`, `look`, `shortcuts`, `omarchy`) |
 | `updates`                 | Check for updates now                                           |
 | `push <id> <json>`        | Add or update an activity from a script                         |
 | `remove <id>`             | Remove a pushed activity                                        |
@@ -409,38 +409,40 @@ Everything goes through `omarchy-shell nowbar <method> [args]`:
 ## Options
 
 The gear in the popup (or `c`, or `omarchy-shell nowbar settings`) opens the
-options, one tab at a time (Tab / Shift+Tab to switch):
+options: a list that says what can show up and where each thing stands. Whatever
+has more to set opens a page of its own, and what is rarely changed waits under
+**More** there. ↑/↓ and Enter walk the list, Esc goes back, Tab goes through the
+pages.
 
-- **Activities:** which activities can show up (live ones: media, timers,
-  reminders, recording, dictation, camera/mic; system ones: modes and VPN,
-  battery, Bluetooth, screenshots, weather, scripts), and whether a new
-  activity takes the pill. **Media:** how long a paused player keeps the pill
-  (5 min, 15 min, 1 hour or always), and which players show up at all: a
-  hidden one (a browser, say) stays out of the Now Bar but still answers the
-  media keys.
-- **Look:** the pill's width (fixed, or fit to its text up to a maximum),
-  how long text behaves (once, in a loop, or cut), the
-  progress line, the `2/4` marker, what it shows when idle (the weather card,
-  an empty pill, or nothing), the dynamic colors, and the animations.
-- **Popup:** the two rows at the bottom of the popup. Quick toggles: show
-  them or not, which ones, and replacing (or restoring) Omarchy's indicators
-  widget. Quick start: show it or not, the timers (minutes, comma separated;
-  empty for none), which extras (stopwatch, Pomodoro, sleep timer) and how
-  long the sleep timer waits (30 min by default). When a timer ends: a sound
-  or not (on by default, never while Do Not Disturb is on), and how long
-  "Time's up" stays (until OK by default, or 1, 5 or 30 minutes). Then the
-  Pomodoro lengths, and Do Not Disturb while focusing (off by default; it
-  only turns off what it turned on).
-- **Weather:** the place (searched by name, or automatic), °C, °F or
-  automatic, and replacing (or restoring) Omarchy's weather widget.
-- **Updates:** which sources are checked (Omarchy, official, AUR, and
-  Flatpak, plugins and themes when there are some to check; a source whose
-  tool is missing isn't listed),
-  how often (30 min to 1 day, or any number of minutes from 5 to 7 days), and
-  whether to check once after the computer starts.
+- **Music & video:** how long a paused player keeps the pill (5 min, 15 min,
+  1 hour or always), and which players show up at all: a hidden one (a browser,
+  say) stays out of the Now Bar but still answers the media keys.
+- **Timers & Pomodoro:** when a timer ends, a sound or not (on by default, never
+  while Do Not Disturb is on) and how long "Time's up" stays (until OK by default,
+  or 1, 5 or 30 minutes). Then the Pomodoro lengths, and Do Not Disturb while
+  focusing (off by default; it only turns off what it turned on).
+- **Weather:** the place (searched by name, or automatic), and °C, °F or automatic.
+- **Updates:** which sources are checked (Omarchy, official, AUR, and Flatpak,
+  plugins and themes when there are some to check; a source whose tool is missing
+  isn't listed) and how often (30 min to 1 day). Under More: any number of minutes
+  from 5 to 7 days, and whether to check once after the computer starts.
+- The other activities (reminders, recording, dictation, camera/mic, modes and
+  VPN, battery, Bluetooth, screenshots, scripts) are just a switch on the list,
+  next to whether a new activity takes the pill.
+- **Appearance:** the pill's width (fixed, or fit to its text), how long text
+  behaves (once, in a loop, or cut), what it shows with nothing going on (the
+  weather, an empty pill, or nothing), the dynamic colors, and the animations.
+  Under More: the width in pixels, the progress line and the `2/4` marker.
+- **Popup shortcuts:** the two rows at the bottom of the popup. Quick toggles:
+  show them or not, and which ones. Quick start: show it or not, the timer buttons
+  (minutes, comma separated; empty for none), which extras (stopwatch, Pomodoro,
+  sleep timer) and how long the sleep timer waits (30 min by default).
+- **Omarchy integration:** replacing (or restoring) Omarchy's indicators and
+  weather widgets.
 
-The same options are in the widget's settings. **Reset** restores them all
-(every tab, hidden players included), so it asks for a second click first.
+The same options are in the widget's settings. **Restore defaults**, at the end
+of the list, restores them all (hidden players included), so it asks for a second
+click first.
 
 ## Details
 
@@ -488,7 +490,7 @@ The same options are in the widget's settings. **Reset** restores them all
 ## Uninstall
 
 If you replaced Omarchy's weather or indicators widget, **restore them first**
-(options: Weather tab and Popup tab), or from a terminal:
+(options: Omarchy integration), or from a terminal:
 
 ```bash
 ~/.config/omarchy/plugins/vinicgobbi.nowbar/bin/nowbar-weather-widget restore

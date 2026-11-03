@@ -2428,12 +2428,10 @@ Item {
   IpcHandler {
     target: "nowbar"
 
-    // Open the popup on the options: settings [activities|look|popup|weather|updates]
+    // Open the popup on the options: settings [media|timers|weather|updates|look|shortcuts|omarchy]
     function settings(tab: string): string {
-      var t = String(tab || "")
-      if (t === "timers" || t === "quick") t = "popup"   // the tab's old names
-      if (t !== "" && ["activities", "look", "popup", "weather", "updates"].indexOf(t) === -1)
-        return "unknown tab: use activities, look, popup, weather or updates"
+      var t = Model.settingsPage(tab)
+      if (t === null) return "unknown page: use " + Model.SETTINGS_PAGES.join(", ")
       root.settingsRequested(t)
       if (root.shell && !root.shell.isPluginOpen(root.pluginId)) root.shell.summon(root.pluginId, "{}")
       return "ok"
